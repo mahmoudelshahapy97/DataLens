@@ -1,0 +1,56 @@
+# Keep the build context small and free of secrets.
+#
+# node_modules is the big one: shipping the host's copy into the build would
+# both bloat the context and risk platform-specific binaries that do not match
+# the build image.
+
+.git
+.gitignore
+**/.git
+
+**/node_modules
+**/dist
+**/build
+**/.vite
+**/storybook-static
+
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+.tox
+.venv
+venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+
+# Secrets and local state must never enter an image layer -- a layer is
+# readable by anyone who can pull it, even if a later layer deletes the file.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+*.db
+*.sqlite
+*.sqlite3
+data/
+knowledge/
+generations.jsonl
+catalog.json
+
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+
+*.md
+!README.md
+docs/
+notebooks/
+img/

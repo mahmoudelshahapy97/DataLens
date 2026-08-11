@@ -1,0 +1,1401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vanna — Admin console</title>
+<!--
+  Operator console: workspaces, their members, and the knowledge the agent is
+  shown.
+
+  Deliberately a single dependency-free file. It is an internal tool used by a
+  handful of people; a build pipeline, a framework, and a node_modules tree
+  would all be more machinery than the job needs, and each is one more thing to
+  keep working.
+
+  Nothing here is a security control. Every route it calls enforces tenant
+  scoping and role membership server-side (see portal_routes.py and
+  admin_routes.py) -- hiding a button does not protect an endpoint. Tabs are
+  hidden when the caller cannot use them purely so the screen matches reality.
+
+  Identity is shared with the main app through localStorage, so signing in once
+  covers both.
+-->
+<style>
+  :root {
+    --bg: #f8fafc; --surface: #ffffff; --surface-2: #f1f5f9; --border: #e2e8f0;
+    --text: #0f172a; --muted: #64748b;
+    --primary: #4f46e5; --primary-fg: #ffffff;
+    --good: #059669; --bad: #dc2626; --warn: #d97706;
+    --radius: 10px;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1120; --surface: #111827; --surface-2: #0f172a; --border: #1f2937;
+    --text: #e5e7eb; --muted: #94a3b8; --primary: #6366f1;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--primary); }
+
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 15px 24px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  h1 { font-size: 1.05rem; margin: 0; font-weight: 650; }
+  .grow { flex: 1; }
+  main { max-width: 1120px; margin: 0 auto; padding: 22px 24px 40px; }
+
+  nav { display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }
+  nav button {
+    padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border);
+    background: transparent; cursor: pointer; font-size: .875rem;
+  }
+  nav button[aria-selected="true"] {
+    background: var(--primary); border-color: var(--primary); color: var(--primary-fg);
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+  }
+  .row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .q { font-weight: 600; margin: 0 0 8px; }
+  pre {
+    margin: 0; padding: 12px; overflow-x: auto; border-radius: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: .8125rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .meta { color: var(--muted); font-size: .8125rem; margin-top: 8px; }
+  .mono { font-family: ui-monospace, Menlo, monospace; }
+  .small { font-size: .8125rem; }
+  .muted { color: var(--muted); }
+
+  .tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: .6875rem; font-weight: 650; text-transform: uppercase; letter-spacing: .03em;
+    background: rgba(148,163,184,.18); color: var(--muted);
+  }
+  .tag.candidate { background: rgba(217,119,6,.15); color: var(--warn); }
+  .tag.verified, .tag.active   { background: rgba(5,150,105,.15); color: var(--good); }
+  .tag.rejected, .tag.inactive { background: rgba(220,38,38,.15); color: var(--bad); }
+  .tag.admin { background: rgba(79,70,229,.15); color: var(--primary); }
+
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  button.act {
+    padding: 6px 13px; border-radius: 7px; border: 1px solid var(--border);
+    background: transparent; cursor: pointer; font-size: .8125rem;
+  }
+  button.act:hover { border-color: var(--primary); }
+  button.act.primary { background: var(--good); border-color: var(--good); color: #fff; }
+  button.act.danger  { border-color: var(--bad); color: var(--bad); }
+  button.act:disabled { opacity: .5; cursor: not-allowed; }
+
+  input, textarea, select {
+    width: 100%; padding: 9px 11px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-2);
+  }
+  textarea { min-height: 84px; font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; }
+  label { display: block; font-size: .8125rem; color: var(--muted); margin: 10px 0 4px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+
+  table.data { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+  table.data th, table.data td {
+    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
+  }
+  table.data th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data select { width: auto; padding: 4px 8px; }
+  .scroll-x { overflow-x: auto; }
+
+  .empty { text-align: center; padding: 46px 22px; color: var(--muted); }
+  .banner {
+    border-left: 3px solid var(--warn); background: rgba(217,119,6,.08);
+    padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: .875rem;
+  }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px;
+    font-size: .875rem; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60;
+  }
+  .toast.show { opacity: 1; }
+  .stat { display: inline-block; margin-right: 18px; }
+  .stat b { display: block; font-size: 1.15rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Vanna — Admin console</h1>
+  <span class="tag" id="who">…</span>
+  <span class="grow"></span>
+  <button class="act" onclick="toggleTheme()">Theme</button>
+  <a class="act" href="/" style="text-decoration:none">← Back to app</a>
+  <button class="act" onclick="refresh()">Reload</button>
+</header>
+
+<main>
+  <nav id="tabs"></nav>
+  <div id="content"><div class="empty">Loading…</div></div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const STORAGE_KEY = 'vanna.identity';
+const THEME_KEY   = 'vanna.theme';
+
+let identity = null;
+let me = null;
+let tab = 'review';
+let scope = null;                      // tenant currently being administered
+let cache = { examples: [], instructions: [], tenants: [], users: [], starters: [], datasources: [] };
+
+const el = (id) => document.getElementById(id);
+
+/** Escape before interpolating anything into HTML.
+ *  Questions, SQL, tenant names and member names come from users and from an
+ *  LLM, and are rendered here verbatim -- so this is the boundary that keeps a
+ *  stored value containing markup from executing in a reviewer's browser. */
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function toast(message) {
+  const node = el('toast');
+  node.textContent = message;
+  node.classList.add('show');
+  setTimeout(() => node.classList.remove('show'), 2400);
+}
+
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem(THEME_KEY, next);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: 'include',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      // Identity is the session cookie (httpOnly, sent by credentials: include).
+      // Only the workspace selection travels as a header.
+      ...(identity && identity.tenant ? { 'X-Tenant-Id': identity.tenant } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    let detail = `Request failed (${response.status})`;
+    try {
+      const body = await response.json();
+      // Structured envelopes (code/phase/message) and validation arrays both
+      // arrive here; Error(object) would render "[object Object]".
+      const raw = body && body.detail;
+      if (raw) {
+        detail = typeof raw === 'string'
+          ? raw
+          : Array.isArray(raw)
+            ? raw.map((i) => (typeof i === 'string' ? i : i.message || JSON.stringify(i))).join('; ')
+            : (raw.message || JSON.stringify(raw));
+      }
+    } catch (_) { /* no JSON body */ }
+    // A 404 on an admin route means "not an admin" -- the server returns it
+    // rather than 403 so it does not confirm the route exists.
+    if (response.status === 404 && detail === 'Not found') {
+      detail = 'Not found, or your account lacks admin access.';
+    }
+    throw new Error(detail);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+// ----------------------------------------------------------------- tabs ---
+
+function tabsFor() {
+  const list = [];
+  if (me && me.is_platform_admin) list.push(['tenants', 'Workspaces']);
+  if (me && me.is_platform_admin) list.push(['accounts', 'Accounts']);
+  list.push(['members', 'Members']);
+  list.push(['billing', 'Billing']);
+  list.push(['review', 'Review queue']);
+  list.push(['verified', 'Verified examples']);
+  list.push(['rules', 'Instructions']);
+  list.push(['starters', 'Starter questions']);
+  list.push(['new', 'Add']);
+  return list;
+}
+
+function paintTabs() {
+  el('tabs').innerHTML = tabsFor().map(([id, label]) => (
+    `<button data-tab="${id}" aria-selected="${tab === id}">${esc(label)}</button>`
+  )).join('');
+  el('tabs').querySelectorAll('button').forEach((button) => {
+    button.onclick = () => showTab(button.dataset.tab);
+  });
+}
+
+function showTab(next) {
+  tab = next;
+  paintTabs();
+  render();
+}
+
+// -------------------------------------------------------------- loading ---
+
+async function refresh() {
+  el('content').innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    me = await api('/api/vanna/v2/me');
+  } catch (error) {
+    el('content').innerHTML = `
+      <div class="empty">
+        ${esc(error.message)}<br /><br />
+        <a href="/">Sign in from the main app</a>, then come back.
+      </div>`;
+    return;
+  }
+
+  scope = scope || me.tenant.id;
+  el('who').textContent = `${me.user.email} · ${me.tenant.name}`;
+  el('who').className = 'tag ' + (me.is_admin ? 'admin' : '');
+
+  if (!me.is_admin) {
+    el('content').innerHTML =
+      '<div class="empty">Your account is not an administrator of this workspace.</div>';
+    el('tabs').innerHTML = '';
+    return;
+  }
+
+  const [examples, instructions] = await Promise.all([
+    api('/api/vanna/v2/admin/examples').catch(() => ({ examples: [] })),
+    api('/api/vanna/v2/admin/instructions').catch(() => ({ instructions: [] })),
+  ]);
+  cache.examples = examples.examples || [];
+  cache.instructions = instructions.instructions || [];
+
+  if (me.is_platform_admin) {
+    const [tenants, datasources] = await Promise.all([
+      api('/api/vanna/v2/admin/tenants').catch(() => ({ tenants: [] })),
+      api('/api/vanna/v2/admin/datasources').catch(() => ({ datasources: [] })),
+    ]);
+    cache.tenants = tenants.tenants || [];
+    cache.datasources = datasources.datasources || [];
+  }
+
+  await loadScope();
+  paintTabs();
+  render();
+}
+
+async function loadScope() {
+  const [users, starters] = await Promise.all([
+    api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users`).catch(() => ({ users: [] })),
+    api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/starters`).catch(() => ({ starters: [] })),
+  ]);
+  cache.users = users.users || [];
+  cache.starters = starters.starters || [];
+}
+
+// -------------------------------------------------------------- renders ---
+
+function scopePicker() {
+  // Only a platform admin can act on a workspace other than their own; for a
+  // tenant admin there is nothing to pick.
+  if (!me.is_platform_admin || cache.tenants.length < 2) {
+    return `<p class="muted small">Workspace: <strong>${esc(scope)}</strong></p>`;
+  }
+  return `
+    <label for="scope">Workspace</label>
+    <select id="scope" style="max-width:340px">
+      ${cache.tenants.map((t) => (
+        `<option value="${esc(t.id)}" ${t.id === scope ? 'selected' : ''}>${esc(t.name)} (${esc(t.id)})</option>`
+      )).join('')}
+    </select>`;
+}
+
+function wireScopePicker() {
+  const picker = el('scope');
+  if (!picker) return;
+  picker.onchange = async () => {
+    scope = picker.value;
+    await loadScope();
+    render();
+  };
+}
+
+function render() {
+  const target = el('content');
+
+  if (tab === 'tenants')  return renderTenants(target);
+  if (tab === 'accounts') return renderAccounts(target);
+  if (tab === 'members')  return renderMembers(target);
+  if (tab === 'billing')  return renderBilling(target);
+  if (tab === 'starters') return renderStarters(target);
+  if (tab === 'review')   return renderReview(target);
+  if (tab === 'verified') return renderVerified(target);
+  if (tab === 'rules')    return renderRules(target);
+  return renderAdd(target);
+}
+
+// -- workspaces ------------------------------------------------------------
+
+function renderTenants(target) {
+  target.innerHTML = `
+    <div class="card scroll-x">
+      <table class="data">
+        <thead><tr>
+          <th>Workspace</th><th>Data source</th><th>Writes</th><th>Members</th>
+          <th>Questions (30d)</th><th>Rated</th><th>Last activity</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${cache.tenants.map((t, index) => `
+            <tr>
+              <td>
+                <strong>${esc(t.name)}</strong>
+                <span class="tag ${t.is_active ? 'active' : 'inactive'}">${t.is_active ? 'active' : 'disabled'}</span>
+                <div class="muted mono small">${esc(t.id)}</div>
+              </td>
+              <td class="mono small">${esc(t.data_source)}</td>
+              <td>${t.usage ? t.usage.members : '—'}</td>
+              <td>${t.usage ? t.usage.questions : '—'}</td>
+              <td class="small">
+                ${t.usage ? `<span style="color:var(--good)">▲ ${t.usage.liked}</span>
+                             <span style="color:var(--bad)">▼ ${t.usage.disliked}</span>` : '—'}
+              </td>
+              <td class="muted small">${t.usage && t.usage.last_activity
+                ? esc(new Date(t.usage.last_activity).toLocaleString()) : 'never'}</td>
+              <td style="white-space:nowrap">
+                <button class="act" data-act="manage" data-i="${index}">Manage</button>
+                <button class="act" data-act="edit" data-i="${index}">Data source</button>
+                <button class="act danger" data-act="del" data-i="${index}">Delete</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Create a workspace</h3>
+      <p class="muted small" style="margin-top:0">
+        A workspace is a tenant: its own database, its own members, its own
+        knowledge. You become its first admin. Credentials are stored
+        server-side and are never sent back to this page.
+      </p>
+      <div class="grid2">
+        <div>
+          <label>Identifier</label>
+          <input id="t-id" placeholder="acme" />
+        </div>
+        <div>
+          <label>Display name</label>
+          <input id="t-name" placeholder="Acme Corp" />
+        </div>
+      </div>
+      <label>Description</label>
+      <input id="t-desc" placeholder="Sales analytics for the Acme account" />
+
+      <label>Connection</label>
+      <select id="t-mode">
+        <option value="existing">Pick a database on this server</option>
+        <option value="fields">Connect to another server</option>
+        <option value="default">Use the server default</option>
+      </select>
+
+      <div id="t-existing">
+        ${datasourceField('t-url')}
+      </div>
+
+      <div id="t-fields" style="display:none">
+        <div class="grid2">
+          <div><label>Host</label><input id="t-host" placeholder="db.example.com" /></div>
+          <div><label>Port</label><input id="t-port" value="5432" /></div>
+        </div>
+        <div class="grid2">
+          <div><label>Database</label><input id="t-db" placeholder="analytics" /></div>
+          <div><label>SSL mode</label>
+            <select id="t-ssl">
+              <option value="">(driver default)</option>
+              <option value="require">require</option>
+              <option value="verify-full">verify-full</option>
+              <option value="disable">disable</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid2">
+          <div><label>User</label><input id="t-user" placeholder="readonly" /></div>
+          <div><label>Password</label><input id="t-pass" type="password" /></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="act" id="t-test">Test connection</button>
+        <button class="act primary" id="t-create">Create workspace</button>
+        <span id="t-status" class="small muted"></span>
+      </div>
+    </div>`;
+
+  target.querySelectorAll('[data-writes]').forEach((box) => {
+    const tenant = cache.tenants[Number(box.dataset.writes)];
+    box.onchange = async () => {
+      // Writes are the one setting that widens what a workspace may do, so it
+      // is confirmed rather than toggled, and it still needs VANNA_ALLOW_WRITES
+      // set on the deployment before it has any effect.
+      if (box.checked && !confirm(
+        `Allow admins of ${tenant.name} to run INSERT, UPDATE and DELETE?
+
+` +
+        'DROP and TRUNCATE stay blocked. Every write is audited. This also ' +
+        'requires VANNA_ALLOW_WRITES=true on the server.'
+      )) { box.checked = false; return; }
+      try {
+        await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+          method: 'PATCH', body: JSON.stringify({ allow_writes: box.checked }),
+        });
+        toast(box.checked ? 'Writes enabled' : 'Writes disabled');
+        await refresh();
+      } catch (error) { toast(error.message); box.checked = !box.checked; }
+    };
+  });
+
+  target.querySelectorAll('[data-act]').forEach((button) => {
+    const tenant = cache.tenants[Number(button.dataset.i)];
+    button.onclick = () => {
+      if (button.dataset.act === 'manage') {
+        scope = tenant.id;
+        loadScope().then(() => showTab('members'));
+        return;
+      }
+      if (button.dataset.act === 'edit') return editDataSource(tenant);
+      deleteTenant(tenant);
+    };
+  });
+
+  wireDatasourceField('t-url');
+
+  el('t-mode').onchange = () => {
+    const mode = el('t-mode').value;
+    el('t-existing').style.display = mode === 'existing' ? 'block' : 'none';
+    el('t-fields').style.display = mode === 'fields' ? 'block' : 'none';
+    el('t-status').textContent = '';
+  };
+
+  el('t-test').onclick = async () => {
+    const status = el('t-status');
+    status.textContent = 'Testing...';
+    status.style.color = '';
+    try {
+      const result = await api('/api/vanna/v2/admin/datasources/test', {
+        method: 'POST', body: JSON.stringify(newTenantConnection()),
+      });
+      status.textContent = result.ok ? `Connected to ${result.data_source}` : result.error;
+      status.style.color = result.ok ? 'var(--good)' : 'var(--bad)';
+    } catch (error) {
+      status.textContent = error.message;
+      status.style.color = 'var(--bad)';
+    }
+  };
+
+  el('t-create').onclick = createTenant;
+}
+
+/** A select of databases found on the server, plus a free-text escape hatch. */
+function datasourceField(id) {
+  return `
+    <select id="${id}-pick">
+      <option value="">Server default connection</option>
+      ${cache.datasources.map((d) => `<option value="${esc(d.url)}">${esc(d.label)}</option>`).join('')}
+      <option value="__custom">Custom connection string…</option>
+    </select>
+    <input id="${id}" style="display:none;margin-top:8px"
+           placeholder="postgresql://user:password@host:5432/database" />`;
+}
+
+function wireDatasourceField(id) {
+  const picker = el(`${id}-pick`);
+  const field = el(id);
+  if (!picker || !field) return;
+  picker.onchange = () => {
+    const custom = picker.value === '__custom';
+    field.style.display = custom ? 'block' : 'none';
+    if (!custom) field.value = picker.value;
+  };
+}
+
+function datasourceValue(id) {
+  const picker = el(`${id}-pick`);
+  return picker.value === '__custom' ? el(id).value.trim() : picker.value;
+}
+
+/** The connection half of the create form, in whichever mode is selected. */
+function newTenantConnection() {
+  const mode = el('t-mode').value;
+  if (mode === 'default') return {};
+  if (mode === 'existing') return { database_url: datasourceValue('t-url') || '' };
+  return {
+    host: el('t-host').value.trim(),
+    port: el('t-port').value.trim(),
+    database: el('t-db').value.trim(),
+    username: el('t-user').value.trim(),
+    password: el('t-pass').value,
+    sslmode: el('t-ssl').value,
+  };
+}
+
+async function createTenant() {
+  const body = {
+    id: el('t-id').value.trim().toLowerCase(),
+    name: el('t-name').value.trim(),
+    description: el('t-desc').value.trim(),
+    ...newTenantConnection(),
+  };
+  if (!body.id || !body.name) return toast('An identifier and a name are required');
+
+  // Test before creating. A workspace bound to a database nobody has reached
+  // is indistinguishable from a broken deployment for everyone invited to it,
+  // and the person who can tell the difference is the one filling in this form.
+  if (el('t-mode').value !== 'default') {
+    try {
+      const check = await api('/api/vanna/v2/admin/datasources/test', {
+        method: 'POST', body: JSON.stringify(newTenantConnection()),
+      });
+      if (!check.ok) return toast(`Not created: ${check.error}`);
+    } catch (error) { return toast(error.message); }
+  }
+  try {
+    await api('/api/vanna/v2/admin/tenants', { method: 'POST', body: JSON.stringify(body) });
+    toast(`Created ${body.name}`);
+    await refresh();
+  } catch (error) { toast(error.message); }
+}
+
+async function editDataSource(tenant) {
+  // A prompt() for a raw connection string was the previous version of this.
+  // It offered no way to check the connection before committing every member
+  // of a workspace to it, and no hint about what a valid string looks like.
+  const html = `
+    <div class="card">
+      <h3 style="margin-top:0">Data source for ${esc(tenant.name)}</h3>
+      <p class="muted small" style="margin-top:0">
+        Currently <span class="mono">${esc(tenant.data_source)}</span>.
+        Credentials are stored server-side and are never sent back to this page.
+      </p>
+      <div class="grid2">
+        <div><label>Host</label><input id="ds-host" placeholder="db.example.com" /></div>
+        <div><label>Port</label><input id="ds-port" value="5432" /></div>
+      </div>
+      <div class="grid2">
+        <div><label>Database</label><input id="ds-db" placeholder="analytics" /></div>
+        <div><label>SSL mode</label>
+          <select id="ds-ssl">
+            <option value="">(driver default)</option>
+            <option value="require">require</option>
+            <option value="verify-full">verify-full</option>
+            <option value="disable">disable</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid2">
+        <div><label>User</label><input id="ds-user" placeholder="readonly" /></div>
+        <div><label>Password</label><input id="ds-pass" type="password" /></div>
+      </div>
+      <label>...or paste a full connection string</label>
+      <input id="ds-url" placeholder="postgresql://user:password@host:5432/database" />
+      <div class="actions">
+        <button class="act" id="ds-test">Test connection</button>
+        <button class="act primary" id="ds-save" disabled>Save</button>
+        <button class="act" id="ds-clear">Use server default</button>
+        <span id="ds-status" class="small muted"></span>
+      </div>
+    </div>`;
+
+  el('content').innerHTML = html + el('content').innerHTML;
+
+  const payload = () => ({
+    host: el('ds-host').value.trim(),
+    port: el('ds-port').value.trim(),
+    database: el('ds-db').value.trim(),
+    username: el('ds-user').value.trim(),
+    password: el('ds-pass').value,
+    sslmode: el('ds-ssl').value,
+    database_url: el('ds-url').value.trim(),
+  });
+
+  let tested = null;
+
+  el('ds-test').onclick = async () => {
+    const status = el('ds-status');
+    status.textContent = 'Testing...';
+    status.style.color = '';
+    try {
+      const result = await api('/api/vanna/v2/admin/datasources/test', {
+        method: 'POST', body: JSON.stringify(payload()),
+      });
+      if (result.ok) {
+        tested = payload();
+        status.textContent = `Connected to ${result.data_source}`;
+        status.style.color = 'var(--good)';
+        el('ds-save').disabled = false;
+      } else {
+        tested = null;
+        el('ds-save').disabled = true;
+        status.textContent = result.error;
+        status.style.color = 'var(--bad)';
+      }
+    } catch (error) {
+      status.textContent = error.message;
+      status.style.color = 'var(--bad)';
+    }
+  };
+
+  el('ds-save').onclick = async () => {
+    // Only a tested payload can be saved. Binding a workspace to a database
+    // nobody has reached is how every member gets a broken app at once.
+    if (!tested) return toast('Test the connection first');
+    try {
+      await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+        method: 'PATCH',
+        // Structured fields go up as-is; the server composes the URL.
+        body: JSON.stringify(tested),
+      });
+      toast('Data source updated -- the next question uses it');
+      await refresh();
+    } catch (error) { toast(error.message); }
+  };
+
+  el('ds-clear').onclick = async () => {
+    if (!confirm(`Point ${tenant.name} back at the server default connection?`)) return;
+    try {
+      await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+        method: 'PATCH', body: JSON.stringify({ database_url: null }),
+      });
+      toast('Using the server default');
+      await refresh();
+    } catch (error) { toast(error.message); }
+  };
+}
+
+async function deleteTenant(tenant) {
+  if (!confirm(
+    `Delete ${tenant.name}?\n\nIts members, starters and saved queries go with it. ` +
+    'The record of questions asked is kept.'
+  )) return;
+  try {
+    await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, { method: 'DELETE' });
+    toast('Deleted');
+    if (scope === tenant.id) scope = me.tenant.id;
+    await refresh();
+  } catch (error) { toast(error.message); }
+}
+
+// -- accounts --------------------------------------------------------------
+//
+// Credentials, distinct from membership. An account can sign in; the Members tab
+// decides which workspaces it can then see. Creating one here does not put it in
+// any workspace -- that is a separate, deliberate act.
+
+async function renderAccounts(target) {
+  let accounts = [];
+  try {
+    ({ accounts } = await api('/api/vanna/v2/admin/accounts'));
+  } catch (error) {
+    target.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    return;
+  }
+
+  target.innerHTML = `
+    <div class="banner">
+      An account is a login. Membership of a workspace is granted separately, on the
+      Members tab -- so creating an account here gives someone a password and nothing
+      else to look at until you add them somewhere.
+    </div>
+
+    <div class="card scroll-x">
+      <table class="data">
+        <thead><tr><th>Account</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+        <tbody>
+          ${accounts.length ? accounts.map((a, index) => `
+            <tr>
+              <td>
+                <strong>${esc(a.full_name || a.email)}</strong>
+                <div class="muted small">${esc(a.email)}</div>
+              </td>
+              <td>
+                <span class="tag ${a.is_active ? 'active' : 'inactive'}">
+                  ${a.is_active ? 'active' : 'disabled'}</span>
+                ${a.must_change ? '<span class="tag candidate">temp password</span>' : ''}
+              </td>
+              <td class="muted small">${a.last_login_at
+                ? esc(new Date(a.last_login_at).toLocaleString()) : 'never'}</td>
+              <td style="white-space:nowrap">
+                <button class="act" data-reset="${index}">Reset password</button>
+                <button class="act ${a.is_active ? 'danger' : ''}" data-toggle="${index}">
+                  ${a.is_active ? 'Disable' : 'Enable'}
+                </button>
+              </td>
+            </tr>`).join('')
+          : '<tr><td colspan="4" class="empty">No accounts yet.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Create an account</h3>
+      <p class="muted small" style="margin-top:0">
+        A temporary password is generated and shown once. It is not stored in a form
+        anyone can read back, and the holder must change it on first sign-in.
+      </p>
+      <div class="grid2">
+        <div><label>Email</label><input id="a-email" placeholder="ada@example.com" /></div>
+        <div><label>Name</label><input id="a-name" placeholder="Ada Lovelace" /></div>
+      </div>
+      <div class="actions"><button class="act primary" id="a-create">Create</button></div>
+      <div id="a-result"></div>
+    </div>`;
+
+  target.querySelectorAll('[data-reset]').forEach((button) => {
+    const account = accounts[Number(button.dataset.reset)];
+    button.onclick = async () => {
+      if (!confirm(`Reset the password for ${account.email}? Their current one stops working immediately.`)) return;
+      try {
+        const result = await api(
+          `/api/vanna/v2/admin/accounts/${encodeURIComponent(account.email)}/reset`,
+          { method: 'POST' }
+        );
+        showTemporaryPassword(result.email, result.temporary_password);
+      } catch (error) { toast(error.message); }
+    };
+  });
+
+  target.querySelectorAll('[data-toggle]').forEach((button) => {
+    const account = accounts[Number(button.dataset.toggle)];
+    button.onclick = async () => {
+      const next = !account.is_active;
+      if (!next && !confirm(
+        `Disable ${account.email}? Their sessions and API tokens are revoked immediately.`
+      )) return;
+      try {
+        await api(`/api/vanna/v2/admin/accounts/${encodeURIComponent(account.email)}`, {
+          method: 'PATCH', body: JSON.stringify({ is_active: next }),
+        });
+        await refresh();
+      } catch (error) { toast(error.message); }
+    };
+  });
+
+  el('a-create').onclick = async () => {
+    const email = el('a-email').value.trim();
+    if (!email) return toast('An email address is required');
+    try {
+      const result = await api('/api/vanna/v2/admin/accounts', {
+        method: 'POST',
+        body: JSON.stringify({ email, full_name: el('a-name').value.trim() }),
+      });
+      showTemporaryPassword(result.email, result.temporary_password);
+      el('a-email').value = ''; el('a-name').value = '';
+    } catch (error) { toast(error.message); }
+  };
+}
+
+/** Show a generated password once, with the reason it will not be shown again. */
+function showTemporaryPassword(email, password) {
+  el('a-result').innerHTML = `
+    <div class="card" style="border-color:var(--good)">
+      <strong>Temporary password for ${esc(email)}</strong>
+      <pre style="margin-top:8px">${esc(password)}</pre>
+      <p class="muted small">
+        Only its hash is stored, so this cannot be shown again. Send it over a channel
+        you trust; they will be asked to change it on first sign-in.
+      </p>
+    </div>`;
+}
+
+// -- billing ---------------------------------------------------------------
+
+/** Cents as money. Integer arithmetic throughout -- see the payments table. */
+function money(cents, currency) {
+  return `${(Number(cents || 0) / 100).toFixed(2)} ${String(currency || 'usd').toUpperCase()}`;
+}
+
+/** Where a limit came from, in words. */
+const SOURCE_NOTE = {
+  override: 'set explicitly for this workspace, which beats the plan',
+  plan: 'from the plan',
+  default: 'the deployment default, since this workspace has no subscription',
+};
+
+async function renderBilling(target) {
+  let data;
+  try {
+    data = await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/billing`);
+  } catch (error) {
+    target.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    return;
+  }
+
+  const sub = data.subscription;
+  const limits = data.limits || {};
+  const used = (data.usage || {}).questions || 0;
+  const quota = limits.daily_quota || 0;
+  // Usage is 30 days and the quota is daily, so this is a ratio of unlike
+  // things -- shown as separate numbers rather than one misleading bar.
+  const expires = sub && sub.expires_at ? new Date(sub.expires_at) : null;
+  const expired = expires && expires < new Date();
+
+  target.innerHTML = `
+    ${scopePicker()}
+
+    <div class="card">
+      <h3 style="margin-top:0">
+        ${esc((data.plan || 'free').toUpperCase())}
+        ${sub ? `<span class="tag ${expired || sub.status !== 'active' ? 'inactive' : 'active'}">
+          ${esc(expired ? 'expired' : sub.status)}</span>` : ''}
+      </h3>
+      <p class="muted small" style="margin-top:0">
+        ${sub
+          ? (expires
+              ? `${expired ? 'Expired' : 'Renews or ends'} ${esc(expires.toLocaleDateString())}.
+                 ${expired ? 'The workspace has fallen back to the free plan -- it is not locked out.' : ''}`
+              : 'Open-ended, with no expiry date.')
+          : 'No subscription. This workspace runs on the deployment defaults.'}
+      </p>
+
+      <div class="grid2">
+        <div>
+          <label>Questions per day</label>
+          <div><strong>${quota.toLocaleString()}</strong>
+            <span class="muted small">— ${esc(SOURCE_NOTE[limits.quota_source] || '')}</span></div>
+        </div>
+        <div>
+          <label>Rows per query</label>
+          <div><strong>${(limits.max_rows || 0).toLocaleString()}</strong>
+            <span class="muted small">— ${esc(SOURCE_NOTE[limits.rows_source] || '')}</span></div>
+        </div>
+      </div>
+      <p class="muted small">
+        ${used.toLocaleString()} question${used === 1 ? '' : 's'} in the last 30 days,
+        across everyone in this workspace. The quota is counted per workspace per day,
+        not per person.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Change plan</h3>
+      <div class="grid2">
+        <div>
+          <label>Plan</label>
+          <select id="b-plan">
+            ${(data.available_plans || []).map((p) => (
+              `<option value="${esc(p.name)}" ${p.name === data.plan ? 'selected' : ''}>
+                 ${esc(p.label)} — ${p.daily_quota.toLocaleString()}/day, ${p.max_rows.toLocaleString()} rows
+               </option>`
+            )).join('')}
+          </select>
+        </div>
+        <div>
+          <label>Months</label>
+          <input id="b-months" type="number" min="1" value="12" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="act primary" id="b-set">Set plan</button>
+        ${sub && sub.status === 'active'
+          ? '<button class="act danger" id="b-cancel">Cancel</button>' : ''}
+      </div>
+      <p class="muted small">
+        Setting a plan here does not take payment. Use “Record a payment” below when
+        money actually changed hands — that is what leaves an audit trail.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Record a payment</h3>
+      <p class="muted small" style="margin-top:0">
+        For a payment taken elsewhere — invoice, transfer, or an internal arrangement.
+        The reference is what makes this safe to repeat: recording the same one twice
+        changes nothing and extends nothing.
+      </p>
+      <div class="grid2">
+        <div><label>Reference</label><input id="b-ref" placeholder="INV-2026-014" /></div>
+        <div><label>Amount</label><input id="b-amount" type="number" min="0" step="0.01" placeholder="499.00" /></div>
+        <div><label>Months to add</label><input id="b-pay-months" type="number" min="1" value="12" /></div>
+        <div><label>Note</label><input id="b-desc" placeholder="Annual, paid by transfer" /></div>
+      </div>
+      <div class="actions"><button class="act primary" id="b-pay">Record</button></div>
+    </div>
+
+    <div class="card scroll-x">
+      <h3 style="margin-top:0">Payment history</h3>
+      <table class="data">
+        <thead><tr>
+          <th>Date</th><th>Amount</th><th>Reference</th><th>Status</th><th>Note</th>
+        </tr></thead>
+        <tbody>
+          ${(data.payments || []).length ? data.payments.map((p) => `
+            <tr>
+              <td class="small">${esc(new Date(p.created_at).toLocaleDateString())}</td>
+              <td class="mono">${esc(money(p.amount_cents, p.currency))}</td>
+              <td class="mono small">${esc(p.provider_ref)}</td>
+              <td><span class="tag ${p.status === 'succeeded' ? 'active' : 'inactive'}">${esc(p.status)}</span></td>
+              <td class="small">${esc(p.description || '')}</td>
+            </tr>`).join('')
+          : '<tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+
+  wireScopePicker();
+
+  el('b-set').onclick = async () => {
+    try {
+      await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/billing/plan`, {
+        method: 'POST',
+        body: JSON.stringify({
+          plan: el('b-plan').value,
+          months: Number(el('b-months').value) || 1,
+        }),
+      });
+      toast('Plan updated. New limits apply from the next question.');
+      render();
+    } catch (error) { toast(error.message); }
+  };
+
+  const cancel = el('b-cancel');
+  if (cancel) cancel.onclick = async () => {
+    if (!confirm(
+      'Cancel this subscription? The workspace drops to the free plan — it keeps access to its data.'
+    )) return;
+    try {
+      await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/billing/cancel`, {
+        method: 'POST',
+      });
+      render();
+    } catch (error) { toast(error.message); }
+  };
+
+  el('b-pay').onclick = async () => {
+    const reference = el('b-ref').value.trim();
+    if (!reference) return toast('A reference is required — it is what stops a double entry.');
+    try {
+      const result = await api(
+        `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/billing/payments`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            reference,
+            // Cents on the wire. Money never becomes a float on the server.
+            amount_cents: Math.round((Number(el('b-amount').value) || 0) * 100),
+            months: Number(el('b-pay-months').value) || 1,
+            plan: el('b-plan').value,
+            description: el('b-desc').value.trim(),
+          }),
+        }
+      );
+      toast(result.recorded ? 'Payment recorded.' : result.note);
+      render();
+    } catch (error) { toast(error.message); }
+  };
+}
+
+// -- members ---------------------------------------------------------------
+
+function renderMembers(target) {
+  target.innerHTML = `
+    <div class="card">${scopePicker()}</div>
+
+    <div class="card scroll-x">
+      <table class="data">
+        <thead><tr>
+          <th>Member</th><th>Role</th><th>Status</th><th>Last seen</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${cache.users.length ? cache.users.map((u, index) => `
+            <tr>
+              <td>
+                <strong>${esc(u.full_name || u.email)}</strong>
+                <div class="muted small">${esc(u.email)}</div>
+              </td>
+              <td>
+                <select data-role="${index}">
+                  ${['admin', 'analyst', 'viewer'].map((role) => (
+                    `<option value="${role}" ${u.role === role ? 'selected' : ''}>${role}</option>`
+                  )).join('')}
+                </select>
+              </td>
+              <td><span class="tag ${u.is_active ? 'active' : 'inactive'}">
+                ${u.is_active ? 'active' : 'disabled'}</span></td>
+              <td class="muted small">${u.last_seen_at
+                ? esc(new Date(u.last_seen_at).toLocaleString()) : 'never'}</td>
+              <td style="white-space:nowrap">
+                <button class="act" data-toggle="${index}">${u.is_active ? 'Disable' : 'Enable'}</button>
+                <button class="act danger" data-remove="${index}">Remove</button>
+              </td>
+            </tr>`).join('')
+          : '<tr><td colspan="5" class="empty">No members yet.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Invite a member</h3>
+      <p class="muted small" style="margin-top:0">
+        <strong>admin</strong> manages members and knowledge ·
+        <strong>analyst</strong> asks questions and saves queries ·
+        <strong>viewer</strong> reads only.
+      </p>
+      <div class="grid2">
+        <div>
+          <label>Email</label>
+          <input id="u-email" placeholder="ada@example.com" />
+        </div>
+        <div>
+          <label>Name</label>
+          <input id="u-name" placeholder="Ada Lovelace" />
+        </div>
+      </div>
+      <label>Role</label>
+      <select id="u-role">
+        <option value="analyst">analyst</option>
+        <option value="admin">admin</option>
+        <option value="viewer">viewer</option>
+      </select>
+      <div class="actions">
+        <button class="act primary" id="u-add">Add member</button>
+      </div>
+    </div>`;
+
+  wireScopePicker();
+
+  target.querySelectorAll('[data-role]').forEach((select) => {
+    const user = cache.users[Number(select.dataset.role)];
+    select.onchange = () => updateUser(user, { role: select.value });
+  });
+  target.querySelectorAll('[data-toggle]').forEach((button) => {
+    const user = cache.users[Number(button.dataset.toggle)];
+    button.onclick = () => updateUser(user, { is_active: !user.is_active });
+  });
+  target.querySelectorAll('[data-remove]').forEach((button) => {
+    const user = cache.users[Number(button.dataset.remove)];
+    button.onclick = () => removeUser(user);
+  });
+
+  el('u-add').onclick = addUser;
+}
+
+async function updateUser(user, changes) {
+  try {
+    await api(
+      `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users/${encodeURIComponent(user.id)}`,
+      { method: 'PATCH', body: JSON.stringify(changes) }
+    );
+    toast('Updated');
+  } catch (error) { toast(error.message); }
+  await loadScope();
+  render();
+}
+
+async function removeUser(user) {
+  if (!confirm(`Remove ${user.email} from ${scope}?`)) return;
+  try {
+    await api(
+      `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users/${encodeURIComponent(user.id)}`,
+      { method: 'DELETE' }
+    );
+    toast('Removed');
+  } catch (error) { toast(error.message); }
+  await loadScope();
+  render();
+}
+
+async function addUser() {
+  const body = {
+    email: el('u-email').value.trim(),
+    full_name: el('u-name').value.trim(),
+    role: el('u-role').value,
+  };
+  if (!body.email) return toast('An email address is required');
+  try {
+    await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    toast(`Added ${body.email}`);
+  } catch (error) { return toast(error.message); }
+  await loadScope();
+  render();
+}
+
+// -- starters --------------------------------------------------------------
+
+function renderStarters(target) {
+  target.innerHTML = `
+    <div class="card">${scopePicker()}</div>
+    <div class="banner">
+      Starter questions appear above the chat for everyone in this workspace.
+      They are the fastest way to show new users what this data can answer.
+    </div>
+    ${cache.starters.length ? cache.starters.map((s, index) => `
+      <div class="card">
+        <div class="row">
+          <p class="q grow" style="flex:1">${esc(s.question)}</p>
+          <button class="act danger" data-del="${index}">Delete</button>
+        </div>
+      </div>`).join('')
+    : '<div class="empty">No starter questions yet.</div>'}
+    <div class="card">
+      <h3 style="margin-top:0">Add a starter</h3>
+      <label>Question</label>
+      <input id="s-text" placeholder="What was revenue by region last quarter?" />
+      <div class="actions"><button class="act primary" id="s-add">Add</button></div>
+    </div>`;
+
+  wireScopePicker();
+
+  target.querySelectorAll('[data-del]').forEach((button) => {
+    const starter = cache.starters[Number(button.dataset.del)];
+    button.onclick = async () => {
+      try {
+        await api(
+          `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/starters/${encodeURIComponent(starter.id)}`,
+          { method: 'DELETE' }
+        );
+      } catch (error) { return toast(error.message); }
+      await loadScope();
+      render();
+    };
+  });
+
+  el('s-add').onclick = async () => {
+    const question = el('s-text').value.trim();
+    if (!question) return toast('A question is required');
+    try {
+      await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/starters`, {
+        method: 'POST',
+        body: JSON.stringify({ question, sort_order: cache.starters.length }),
+      });
+    } catch (error) { return toast(error.message); }
+    await loadScope();
+    render();
+  };
+}
+
+// -- knowledge -------------------------------------------------------------
+
+function exampleCard(example) {
+  const status = esc(example.status);
+  return `
+    <div class="card">
+      <div class="row">
+        <p class="q grow" style="flex:1">${esc(example.question)}</p>
+        <span class="tag ${status}">${status}</span>
+      </div>
+      <pre>${esc(example.sql)}</pre>
+      <div class="meta">
+        ${example.tables && example.tables.length
+          ? 'Tables: ' + esc(example.tables.join(', ')) + ' · ' : ''}
+        ${example.created_by ? 'by ' + esc(example.created_by) : ''}
+        ${example.verified_by ? ' · verified by ' + esc(example.verified_by) : ''}
+      </div>
+      <div class="actions">
+        ${example.status === 'candidate' ? `
+          <button class="act primary" data-status="verified" data-id="${esc(example.id)}">
+            Promote to verified
+          </button>
+          <button class="act danger" data-status="rejected" data-id="${esc(example.id)}">
+            Reject
+          </button>` : ''}
+        ${example.status === 'verified' ? `
+          <button class="act" data-status="candidate" data-id="${esc(example.id)}">Unverify</button>` : ''}
+        <button class="act danger" data-delete="${esc(example.id)}">Delete</button>
+      </div>
+    </div>`;
+}
+
+function wireExampleCards(target) {
+  target.querySelectorAll('[data-status]').forEach((button) => {
+    button.onclick = () => setStatus(button.dataset.id, button.dataset.status);
+  });
+  target.querySelectorAll('[data-delete]').forEach((button) => {
+    button.onclick = () => removeExample(button.dataset.delete);
+  });
+}
+
+function renderReview(target) {
+  const pending = cache.examples.filter((e) => e.status === 'candidate');
+  target.innerHTML = pending.length
+    ? `<div class="banner">
+         These were captured automatically when a user rated an answer as
+         correct. A thumbs-up is a signal, not a review — confirm the SQL
+         actually answers the question before promoting it, because verified
+         examples are shown to the model as patterns to imitate.
+       </div>` + pending.map(exampleCard).join('')
+    : '<div class="empty">Nothing waiting for review.</div>';
+  wireExampleCards(target);
+}
+
+function renderVerified(target) {
+  const verified = cache.examples.filter((e) => e.status === 'verified');
+  target.innerHTML = verified.length
+    ? verified.map(exampleCard).join('')
+    : '<div class="empty">No verified examples yet.</div>';
+  wireExampleCards(target);
+}
+
+function renderRules(target) {
+  target.innerHTML = cache.instructions.length
+    ? cache.instructions.map((rule) => `
+        <div class="card">
+          <div class="row">
+            <p class="q grow" style="flex:1">${esc(rule.text)}</p>
+            <span class="tag ${rule.enabled ? 'verified' : 'rejected'}">
+              ${rule.enabled ? 'active' : 'disabled'}
+            </span>
+          </div>
+          <div class="meta">
+            scope: ${esc(rule.scope)}${rule.scope_ref ? ' → ' + esc(rule.scope_ref) : ''}
+            · priority ${esc(rule.priority)}
+          </div>
+          <div class="actions">
+            <button class="act" data-toggle="${esc(rule.id)}" data-enabled="${!rule.enabled}">
+              ${rule.enabled ? 'Disable' : 'Enable'}
+            </button>
+            <button class="act danger" data-delrule="${esc(rule.id)}">Delete</button>
+          </div>
+        </div>`).join('')
+    : '<div class="empty">No instructions defined.</div>';
+
+  target.querySelectorAll('[data-toggle]').forEach((button) => {
+    button.onclick = () => toggleRule(button.dataset.toggle, button.dataset.enabled === 'true');
+  });
+  target.querySelectorAll('[data-delrule]').forEach((button) => {
+    button.onclick = () => removeRule(button.dataset.delrule);
+  });
+}
+
+function renderAdd(target) {
+  target.innerHTML = `
+    <div class="card">
+      <h3 style="margin-top:0">Add a verified example</h3>
+      <label>Question</label>
+      <input id="nq" placeholder="What was revenue by region last quarter?" />
+      <label>SQL</label>
+      <textarea id="ns" placeholder="SELECT region, SUM(amount) ..."></textarea>
+      <div class="actions">
+        <button class="act primary" id="add-example">Save as verified</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Add an instruction</h3>
+      <label>Rule</label>
+      <input id="rt" placeholder="Monetary amounts are stored in cents." />
+      <label>Scope</label>
+      <select id="rs">
+        <option value="global">global — applies to every query</option>
+        <option value="data_source">data_source — one connection</option>
+        <option value="table">table — only when that table is in scope</option>
+        <option value="group">group — only for one user group</option>
+      </select>
+      <label>Scope reference (table, data source, or group name)</label>
+      <input id="rr" disabled placeholder="not needed for global scope" />
+      <div class="actions">
+        <button class="act primary" id="add-rule">Save rule</button>
+      </div>
+    </div>`;
+
+  el('rs').onchange = (event) => { el('rr').disabled = event.target.value === 'global'; };
+  el('add-example').onclick = addExample;
+  el('add-rule').onclick = addRule;
+}
+
+async function setStatus(id, status) {
+  try {
+    await api(`/api/vanna/v2/admin/examples/${encodeURIComponent(id)}/status`, {
+      method: 'POST', body: JSON.stringify({ status }),
+    });
+    toast(`Marked ${status}`);
+    refresh();
+  } catch (error) { toast(error.message); }
+}
+
+async function removeExample(id) {
+  if (!confirm('Delete this example permanently?')) return;
+  try {
+    await api(`/api/vanna/v2/admin/examples/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('Deleted');
+    refresh();
+  } catch (error) { toast(error.message); }
+}
+
+async function addExample() {
+  const question = el('nq').value.trim();
+  const sql = el('ns').value.trim();
+  if (!question || !sql) return toast('Both a question and SQL are required');
+  try {
+    await api('/api/vanna/v2/admin/examples', {
+      method: 'POST', body: JSON.stringify({ question, sql }),
+    });
+    el('nq').value = ''; el('ns').value = '';
+    toast('Saved');
+    refresh();
+  } catch (error) { toast(error.message); }
+}
+
+async function addRule() {
+  const text = el('rt').value.trim();
+  const scopeKind = el('rs').value;
+  const scopeRef = el('rr').value.trim();
+  if (!text) return toast('Rule text is required');
+  if (scopeKind !== 'global' && !scopeRef) return toast('This scope needs a reference');
+  try {
+    await api('/api/vanna/v2/admin/instructions', {
+      method: 'POST',
+      body: JSON.stringify({ text, scope: scopeKind, scope_ref: scopeRef || null, priority: 0 }),
+    });
+    toast('Saved');
+    tab = 'rules';
+    refresh();
+  } catch (error) { toast(error.message); }
+}
+
+async function toggleRule(id, enabled) {
+  try {
+    await api(`/api/vanna/v2/admin/instructions/${encodeURIComponent(id)}/enabled`, {
+      method: 'POST', body: JSON.stringify({ enabled }),
+    });
+    refresh();
+  } catch (error) { toast(error.message); }
+}
+
+async function removeRule(id) {
+  if (!confirm('Delete this instruction?')) return;
+  try {
+    await api(`/api/vanna/v2/admin/instructions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('Deleted');
+    refresh();
+  } catch (error) { toast(error.message); }
+}
+
+// ----------------------------------------------------------------- boot ---
+
+document.documentElement.setAttribute('data-theme', localStorage.getItem(THEME_KEY) || 'light');
+
+try {
+  identity = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+} catch (_) { identity = null; }
+
+// A stored workspace is not a session -- refresh() calls /me and finds out.
+refresh();
+</script>
+</body>
+</html>

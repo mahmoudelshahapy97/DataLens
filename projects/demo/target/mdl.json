@@ -1,0 +1,157 @@
+{
+  "catalog": "vanna",
+  "schema": "public",
+  "dataSource": "postgres",
+  "models": [
+    {
+      "name": "invoices",
+      "description": "One row per customer invoice.",
+      "tableReference": "invoice",
+      "columns": [
+        {
+          "name": "invoice_id",
+          "type": "INTEGER",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": true,
+          "isHidden": false
+        },
+        {
+          "name": "customer_id",
+          "type": "INTEGER",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": true
+        },
+        {
+          "name": "invoice_date",
+          "type": "TIMESTAMP",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "billing_country",
+          "type": "VARCHAR",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "total",
+          "type": "NUMERIC",
+          "description": "Invoice total in dollars.",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        }
+      ],
+      "rowLevelAccessControls": []
+    },
+    {
+      "name": "tracks",
+      "description": "One row per track in the catalogue.",
+      "tableReference": "track",
+      "columns": [
+        {
+          "name": "track_id",
+          "type": "INTEGER",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": true,
+          "isHidden": false
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR",
+          "description": "Track title.",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "genre_id",
+          "type": "INTEGER",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": true
+        },
+        {
+          "name": "unit_price",
+          "type": "NUMERIC",
+          "description": "List price in dollars.",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "milliseconds",
+          "type": "INTEGER",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": true
+        },
+        {
+          "name": "minutes",
+          "type": "DOUBLE",
+          "description": "Track length in minutes.",
+          "expression": "milliseconds / 60000.0",
+          "isCalculated": true,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        }
+      ],
+      "rowLevelAccessControls": []
+    }
+  ],
+  "relationships": [],
+  "views": [],
+  "cubes": [
+    {
+      "name": "sales",
+      "baseObject": "invoices",
+      "description": "Revenue from customer invoices.",
+      "measures": [
+        {
+          "name": "revenue",
+          "expression": "SUM(total)",
+          "type": "DOUBLE",
+          "description": "Total invoiced, in dollars."
+        },
+        {
+          "name": "invoice_count",
+          "expression": "COUNT(*)",
+          "type": "BIGINT"
+        },
+        {
+          "name": "average_invoice",
+          "expression": "AVG(total)",
+          "type": "DOUBLE"
+        }
+      ],
+      "dimensions": [
+        {
+          "name": "country",
+          "expression": "billing_country",
+          "type": "VARCHAR"
+        }
+      ],
+      "timeDimensions": [
+        {
+          "name": "invoiced_on",
+          "expression": "invoice_date",
+          "type": "TIMESTAMP"
+        }
+      ]
+    }
+  ]
+}

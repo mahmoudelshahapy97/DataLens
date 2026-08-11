@@ -1,0 +1,167 @@
+# Vanna — full stack, querying the shared multi-database sandbox.
+#
+# PREREQUISITE: the sandbox must be running first. It owns the Docker network
+# this stack joins, so starting out of order fails immediately with
+# "network multidb_network declared as external, but could not be found".
+#
+#   cd ../../text-to-sql-multi-tenant/databases && docker compose up -d
+#   docker compose up --build
+#
+#   App     http://localhost:3000        chat, schema, history, saved queries
+#   Console http://localhost:3000/admin/ workspaces, members, knowledge review
+#   API     http://localhost:8000/docs
+#
+# Sign in at the app as `demo@example.com` in the `demo` workspace. That account
+# is the platform admin: it can create more workspaces from the console, bind
+# each to a different one of the eight seeded datasets, and invite members with
+# admin / analyst / viewer roles. Each workspace queries only its own database.
+#
+# VANNA_DATABASE_URL below is the fallback for workspaces with no binding of
+# their own -- chinook by default. Changing it also needs the catalog cleared
+# (see .env.example).
+#
+# Set ANTHROPIC_API_KEY or OPENAI_API_KEY in a .env file for real answers.
+# Without one the stack still runs, using the mock LLM.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment:
+      # -- LLM. 'auto' picks whichever key is present, else the mock service.
+      VANNA_LLM_PROVIDER: ${VANNA_LLM_PROVIDER:-auto}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # -- Database. Reaches `db_postgres` by container name over the shared
+      #    sandbox network. Must not be left empty: app.py reads an empty value
+      #    as "use the built-in SQLite demo" and would silently query toy data
+      #    instead of failing.
+      VANNA_DATABASE_URL: ${VANNA_DATABASE_URL:-postgresql://postgres:postgres123@db_postgres:5432/chinook}
+      # Only used if VANNA_DATABASE_URL is explicitly cleared.
+      VANNA_SQLITE_PATH: /data/demo.db
+
+      # -- Control plane. Tenants, their members and roles, saved queries,
+      #    starter questions and the generation log all live here. A separate
+      #    database from the one being queried, on purpose: the analytics
+      #    connection is read-only and belongs to the customer, and our
+      #    bookkeeping has no business in it. Created on first start if absent.
+      VANNA_APP_DATABASE_URL: ${VANNA_APP_DATABASE_URL:-postgresql://postgres:postgres123@db_postgres:5432/vanna_app}
+      VANNA_DEFAULT_TENANT: ${VANNA_DEFAULT_TENANT:-demo}
+
+      # Lets the sign-in screen list a workspace's members so they can be
+      # picked rather than typed. Convenient for a demo, an email-address
+      # disclosure anywhere else -- leave it false in production.
+      VANNA_PUBLIC_USER_DIRECTORY: ${VANNA_PUBLIC_USER_DIRECTORY:-true}
+
+      # -- Storage. On a named volume, so a rebuild keeps the catalog,
+      #    generation log, and curated knowledge.
+      VANNA_DATA_DIR: /data
+      VANNA_KNOWLEDGE_DIR: /data/knowledge
+
+      # -- Guardrails
+      VANNA_MAX_ROWS: ${VANNA_MAX_ROWS:-1000}
+      VANNA_QUERY_TIMEOUT: ${VANNA_QUERY_TIMEOUT:-60}
+      VANNA_DAILY_QUOTA: ${VANNA_DAILY_QUOTA:-200}
+      VANNA_RATE_LIMIT_PER_MIN: ${VANNA_RATE_LIMIT_PER_MIN:-20}
+
+      # -- Access. Platform admins: create and delete workspaces, administer
+      #    any of them. Workspace-level admins are rows in the directory
+      #    instead, granted from the console.
+      #
+      #    Defaulted to the seeded demo account rather than left empty on
+      #    purpose. Empty means *everyone* is a platform admin, which would make
+      #    the multi-tenancy in this stack indistinguishable from having none --
+      #    every user could read every workspace.
+      VANNA_ADMIN_EMAILS: ${VANNA_ADMIN_EMAILS:-demo@example.com}
+
+      # -- Semantic layer. A manifest describes ONE database, so it is bound
+      #    to the workspace whose database it describes:
+      #
+      #      VANNA_PROJECT_DIR   applies to the default workspace only. This is
+      #                          the single-workspace case.
+      #      VANNA_PROJECTS_DIR  a directory of projects, one per workspace, at
+      #                          <root>/<tenant_id>/. Use this once there is
+      #                          more than one workspace.
+      #
+      #    Applying one manifest to every workspace -- which an earlier version
+      #    of this file did -- shows a workspace another workspace's models and
+      #    makes every query fail against a schema that lacks them.
+      VANNA_PROJECT_DIR: ${VANNA_PROJECT_DIR:-/project}
+      VANNA_PROJECTS_DIR: ${VANNA_PROJECTS_DIR:-/projects}
+
+      # Retrieval ranking. Dependency-free BM25 by default; name a vector
+      # integration to fuse one in. The effective backend is reported on
+      # /api/vanna/v2/schema so a downgrade is visible rather than silent.
+      VANNA_INDEX_BACKEND: ${VANNA_INDEX_BACKEND:-lexical}
+
+      # -- Authentication. Password + session cookie. The first admin is seeded
+      #    on an empty install; leave the password unset and one is generated
+      #    and logged once. Header auth is off unless deliberately re-enabled.
+      VANNA_ADMIN_PASSWORD: ${VANNA_ADMIN_PASSWORD:-}
+      VANNA_TRUST_HEADERS: ${VANNA_TRUST_HEADERS:-false}
+      VANNA_SECURE_COOKIES: ${VANNA_SECURE_COOKIES:-false}
+      VANNA_SESSION_TTL_HOURS: ${VANNA_SESSION_TTL_HOURS:-72}
+
+      VANNA_ALLOW_WRITES: ${VANNA_ALLOW_WRITES:-false}
+      VANNA_SCAN_ON_START: ${VANNA_SCAN_ON_START:-true}
+      VANNA_CORS_ORIGINS: ${VANNA_CORS_ORIGINS:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - vanna-data:/data
+      # Read-only: the manifest is built on the host and reviewed in
+      # git; the container consumes it and never rewrites it.
+      - ./projects/chinook:/project:ro
+      # One project per workspace, mounted read-only for the same reason: the
+      # manifest is built on the host and reviewed in git.
+      - ./projects:/projects:ro
+    networks:
+      # `default` for nginx -> api; `sandbox` to reach db_postgres. Only the
+      # api needs the database network.
+      - default
+      - sandbox
+    ports:
+      # Exposed for direct API access and /docs. Remove in production and let
+      # traffic reach the API only through nginx.
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        # Wait for healthy, not just started. nginx resolves the `api` upstream
+        # at startup and fails hard if the name is not yet resolvable, which
+        # turns a slow API boot into a dead web container.
+        condition: service_healthy
+    restart: unless-stopped
+
+# No database service here. PostgreSQL comes from the sandbox project, which
+# already serves eight seeded datasets and owns port 5432 -- a bundled instance
+# would both duplicate that and fail to bind.
+
+networks:
+  # Created implicitly for api <-> web.
+  default:
+
+  # Owned by ../../text-to-sql-multi-tenant/databases. `external` means join it,
+  # never create it, so this stack can never silently start a second, empty
+  # network that resolves no database names.
+  sandbox:
+    external: true
+    name: multidb_network
+
+volumes:
+  vanna-data:

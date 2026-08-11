@@ -1,0 +1,5 @@
+schema_version: 1
+name: acme
+dialect: postgres
+fanout_guard: warn
+description: Semantic layer over the ecommerce database.

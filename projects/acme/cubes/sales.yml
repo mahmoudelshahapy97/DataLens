@@ -1,0 +1,16 @@
+name: sales
+base_object: orders
+description: Order revenue.
+measures:
+  - name: revenue
+    expression: SUM(grand_total)
+    type: DOUBLE
+    description: Total order value in dollars.
+  - name: order_count
+    expression: COUNT(*)
+    type: BIGINT
+dimensions:
+  - name: status
+    expression: status
+  - name: region
+    expression: ship_region

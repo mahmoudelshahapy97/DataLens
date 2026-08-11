@@ -1,0 +1,208 @@
+# ============================================
+# Python
+# ============================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+.python-version
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+wheels/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+hypothesis/
+
+# Type checking
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ============================================
+# Environment / Secrets
+# ============================================
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ============================================
+# Logs
+# ============================================
+
+*.log
+logs/
+log/
+app.log
+error.log
+debug.log
+
+# ============================================
+# React / Node.js
+# ============================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Package manager
+.npm/
+.yarn/
+.pnpm-store/
+
+# React build
+build/
+dist/
+.next/
+.nuxt/
+.output/
+.vite/
+
+# Vite
+vite.config.*.timestamp-*
+
+# ============================================
+# Frontend caches
+# ============================================
+
+.cache/
+.parcel-cache/
+.turbo/
+
+# ============================================
+# IDE / Editors
+# ============================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# VS Code
+.history/
+
+# ============================================
+# OS
+# ============================================
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================
+# Docker
+# ============================================
+
+docker-compose.override.yml
+
+# ============================================
+# Databases / Local Data
+# ============================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# Local database data
+data/
+database/
+db_data/
+
+# ============================================
+# Uploads / Generated Files
+# ============================================
+
+uploads/
+media/
+staticfiles/
+tmp/
+temp/
+
+# ============================================
+# ML / AI
+# ============================================
+
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+*.bin
+
+models/
+checkpoints/
+runs/
+wandb/
+
+# ============================================
+# Redis
+# ============================================
+
+dump.rdb
+appendonly.aof
+
+# ============================================
+# Terraform
+# ============================================
+
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# ============================================
+# Secrets / Certificates
+# ============================================
+
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# ============================================
+# Misc
+# ============================================
+
+*.bak
+*.tmp
+*.temp
+*.orig
+.DS_Store

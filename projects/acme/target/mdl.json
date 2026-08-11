@@ -1,0 +1,133 @@
+{
+  "catalog": "vanna",
+  "schema": "public",
+  "dataSource": "postgres",
+  "models": [
+    {
+      "name": "orders",
+      "description": "One row per customer order.",
+      "tableReference": "orders",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "BIGINT",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": true,
+          "isHidden": false
+        },
+        {
+          "name": "user_id",
+          "type": "BIGINT",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": true
+        },
+        {
+          "name": "order_number",
+          "type": "TEXT",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "status",
+          "type": "TEXT",
+          "description": "Order lifecycle state.",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "currency",
+          "type": "CHAR",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "subtotal",
+          "type": "NUMERIC",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "discount_total",
+          "type": "NUMERIC",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "shipping_total",
+          "type": "NUMERIC",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "grand_total",
+          "type": "NUMERIC",
+          "description": "Order value in dollars, after discount and shipping.",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        },
+        {
+          "name": "ship_region",
+          "type": "TEXT",
+          "description": "Region the order shipped to.",
+          "isCalculated": false,
+          "notNull": false,
+          "isPrimaryKey": false,
+          "isHidden": false
+        }
+      ],
+      "rowLevelAccessControls": []
+    }
+  ],
+  "relationships": [],
+  "views": [],
+  "cubes": [
+    {
+      "name": "sales",
+      "baseObject": "orders",
+      "description": "Order revenue.",
+      "measures": [
+        {
+          "name": "revenue",
+          "expression": "SUM(grand_total)",
+          "type": "DOUBLE",
+          "description": "Total order value in dollars."
+        },
+        {
+          "name": "order_count",
+          "expression": "COUNT(*)",
+          "type": "BIGINT"
+        }
+      ],
+      "dimensions": [
+        {
+          "name": "status",
+          "expression": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "region",
+          "expression": "ship_region",
+          "type": "VARCHAR"
+        }
+      ],
+      "timeDimensions": []
+    }
+  ]
+}
