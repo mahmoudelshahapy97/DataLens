@@ -108,7 +108,7 @@
 
   table.data { width: 100%; border-collapse: collapse; font-size: .8125rem; }
   table.data th, table.data td {
-    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
+    text-align: start; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
   }
   table.data th { color: var(--muted); font-weight: 600; white-space: nowrap; }
   table.data tr:last-child td { border-bottom: 0; }
@@ -117,7 +117,7 @@
 
   .empty { text-align: center; padding: 46px 22px; color: var(--muted); }
   .banner {
-    border-left: 3px solid var(--warn); background: rgba(217,119,6,.08);
+    border-inline-start: 3px solid var(--warn); background: rgba(217,119,6,.08);
     padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: .875rem;
   }
   .toast {
@@ -126,24 +126,37 @@
     font-size: .875rem; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60;
   }
   .toast.show { opacity: 1; }
-  .stat { display: inline-block; margin-right: 18px; }
+  .stat { display: inline-block; margin-inline-end: 18px; }
   .stat b { display: block; font-size: 1.15rem; }
+
+  /* Right-to-left. The interface mirrors; SQL, identifiers and connection
+     strings do not -- they read left-to-right in every language. */
+  [dir="rtl"] pre,
+  [dir="rtl"] .mono,
+  [dir="rtl"] textarea,
+  [dir="rtl"] input[type="password"] { direction: ltr; text-align: start; }
+  [dir="rtl"] table.data td { unicode-bidi: plaintext; }
+
+  .arrow { display: inline-block; }
+  [dir="rtl"] .arrow { transform: scaleX(-1); }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Vanna — Admin console</h1>
+  <h1 data-i18n="console.title">Vanna — Admin console</h1>
   <span class="tag" id="who">…</span>
   <span class="grow"></span>
-  <button class="act" onclick="toggleTheme()">Theme</button>
-  <a class="act" href="/" style="text-decoration:none">← Back to app</a>
-  <button class="act" onclick="refresh()">Reload</button>
+  <button class="act" onclick="toggleTheme()" data-i18n="console.theme">Theme</button>
+  <a class="act" href="/" style="text-decoration:none"
+    ><span class="arrow">&larr;</span> <span data-i18n="console.back">Back to app</span></a>
+  <select id="locale-btn" class="act" aria-label="Language"></select>
+  <button class="act" onclick="refresh()" data-i18n="console.reload">Reload</button>
 </header>
 
 <main>
   <nav id="tabs"></nav>
-  <div id="content"><div class="empty">Loading…</div></div>
+  <div id="content"><div class="empty" data-i18n="common.loading">Loading…</div></div>
 </main>
 
 <div class="toast" id="toast"></div>
@@ -161,6 +174,66 @@ let scope = null;                      // tenant currently being administered
 let cache = { examples: [], instructions: [], tenants: [], users: [], starters: [], datasources: [] };
 
 const el = (id) => document.getElementById(id);
+
+// ------------------------------------------------------------ language ---
+//
+// The same mechanism as the main app, deliberately: one idea to learn, and the
+// two pages share `vanna.locale` so following the "Admin console" link from an
+// Arabic app does not land on an English page.
+//
+// Separate dictionaries though (`admin.en.json`, not `en.json`) -- the key sets
+// barely overlap, and merging them would ship every console string to every
+// user who only ever opens the chat.
+
+const LOCALE_KEY = 'vanna.locale';
+const LOCALES = { en: 'English', ar: 'العربية' };
+const RTL = new Set(['ar']);
+
+let locale = localStorage.getItem(LOCALE_KEY) || 'en';
+let strings = {};
+
+/** Translate a key, interpolating {placeholders}. Falls back to the key. */
+function t(key, values) {
+  let text = strings[key];
+  if (text === undefined) {
+    if (locale !== 'en') console.warn('[i18n] missing', locale, key);
+    text = key;
+  }
+  if (values) {
+    for (const name of Object.keys(values)) {
+      text = text.split(`{${name}}`).join(values[name]);
+    }
+  }
+  return text;
+}
+
+async function loadLocale(next) {
+  locale = LOCALES[next] ? next : 'en';
+  localStorage.setItem(LOCALE_KEY, locale);
+  try {
+    strings = await (await fetch(`/locales/admin.${locale}.json`, { cache: 'no-cache' })).json();
+  } catch (_) {
+    strings = {};   // t() falls back to keys rather than blanking the page
+  }
+  applyLocale();
+}
+
+function applyLocale() {
+  document.documentElement.setAttribute('lang', locale);
+  document.documentElement.setAttribute('dir', RTL.has(locale) ? 'rtl' : 'ltr');
+
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-attr]').forEach((node) => {
+    node.dataset.i18nAttr.split(',').forEach((pair) => {
+      const [attr, key] = pair.split(':');
+      if (attr && key) node.setAttribute(attr.trim(), t(key.trim()));
+    });
+  });
+
+  if (me) { paintTabs(); render(); }
+}
 
 /** Escape before interpolating anything into HTML.
  *  Questions, SQL, tenant names and member names come from users and from an
@@ -226,15 +299,15 @@ async function api(path, options = {}) {
 
 function tabsFor() {
   const list = [];
-  if (me && me.is_platform_admin) list.push(['tenants', 'Workspaces']);
-  if (me && me.is_platform_admin) list.push(['accounts', 'Accounts']);
-  list.push(['members', 'Members']);
-  list.push(['billing', 'Billing']);
-  list.push(['review', 'Review queue']);
-  list.push(['verified', 'Verified examples']);
-  list.push(['rules', 'Instructions']);
-  list.push(['starters', 'Starter questions']);
-  list.push(['new', 'Add']);
+  if (me && me.is_platform_admin) list.push(['tenants', t('tab.tenants')]);
+  if (me && me.is_platform_admin) list.push(['accounts', t('tab.accounts')]);
+  list.push(['members', t('tab.members')]);
+  list.push(['billing', t('tab.billing')]);
+  list.push(['review', t('tab.review')]);
+  list.push(['verified', t('tab.verified')]);
+  list.push(['rules', t('tab.rules')]);
+  list.push(['starters', t('tab.starters')]);
+  list.push(['new', t('tab.add')]);
   return list;
 }
 
@@ -263,7 +336,7 @@ async function refresh() {
     el('content').innerHTML = `
       <div class="empty">
         ${esc(error.message)}<br /><br />
-        <a href="/">Sign in from the main app</a>, then come back.
+        <a href="/">${t('console.signInLink')}</a>${t('console.thenComeBack')}
       </div>`;
     return;
   }
@@ -274,7 +347,7 @@ async function refresh() {
 
   if (!me.is_admin) {
     el('content').innerHTML =
-      '<div class="empty">Your account is not an administrator of this workspace.</div>';
+      `<div class="empty">${t('console.notAdmin')}</div>`;
     el('tabs').innerHTML = '';
     return;
   }
@@ -320,8 +393,8 @@ function scopePicker() {
   return `
     <label for="scope">Workspace</label>
     <select id="scope" style="max-width:340px">
-      ${cache.tenants.map((t) => (
-        `<option value="${esc(t.id)}" ${t.id === scope ? 'selected' : ''}>${esc(t.name)} (${esc(t.id)})</option>`
+      ${cache.tenants.map((ws) => (
+        `<option value="${esc(ws.id)}" ${ws.id === scope ? 'selected' : ''}>${esc(ws.name)} (${esc(ws.id)})</option>`
       )).join('')}
     </select>`;
 }
@@ -357,30 +430,35 @@ function renderTenants(target) {
     <div class="card scroll-x">
       <table class="data">
         <thead><tr>
-          <th>Workspace</th><th>Data source</th><th>Writes</th><th>Members</th>
-          <th>Questions (30d)</th><th>Rated</th><th>Last activity</th><th></th>
+          <th>${t('ws.workspace')}</th><th>${t('ws.dataSource')}</th><th>${t('ws.writes')}</th><th>${t('ws.ownKey')}</th>
+          <th>${t('tab.members')}</th>
+          <th>${t('ws.questions30')}</th><th>${t('ws.rated')}</th><th>${t('ws.lastActivity')}</th><th></th>
         </tr></thead>
         <tbody>
-          ${cache.tenants.map((t, index) => `
+          ${cache.tenants.map((ws, index) => `
             <tr>
               <td>
-                <strong>${esc(t.name)}</strong>
-                <span class="tag ${t.is_active ? 'active' : 'inactive'}">${t.is_active ? 'active' : 'disabled'}</span>
-                <div class="muted mono small">${esc(t.id)}</div>
+                <strong>${esc(ws.name)}</strong>
+                <span class="tag ${ws.is_active ? 'active' : 'inactive'}">${ws.is_active ? 'active' : 'disabled'}</span>
+                <div class="muted mono small">${esc(ws.id)}</div>
               </td>
-              <td class="mono small">${esc(t.data_source)}</td>
-              <td>${t.usage ? t.usage.members : '—'}</td>
-              <td>${t.usage ? t.usage.questions : '—'}</td>
+              <td class="mono small">${esc(ws.data_source)}</td>
+              <td><input type="checkbox" data-writes="${index}" ${ws.allow_writes ? 'checked' : ''}
+                    title="Allow INSERT/UPDATE/DELETE. Also needs VANNA_ALLOW_WRITES on the server." /></td>
+              <td><input type="checkbox" data-byo="${index}" ${ws.allow_byo_key !== false ? 'checked' : ''}
+                    title="Allow members to answer on their own LLM API key." /></td>
+              <td>${ws.usage ? ws.usage.members : '—'}</td>
+              <td>${ws.usage ? ws.usage.questions : '—'}</td>
               <td class="small">
-                ${t.usage ? `<span style="color:var(--good)">▲ ${t.usage.liked}</span>
-                             <span style="color:var(--bad)">▼ ${t.usage.disliked}</span>` : '—'}
+                ${ws.usage ? `<span style="color:var(--good)">▲ ${ws.usage.liked}</span>
+                             <span style="color:var(--bad)">▼ ${ws.usage.disliked}</span>` : '—'}
               </td>
-              <td class="muted small">${t.usage && t.usage.last_activity
-                ? esc(new Date(t.usage.last_activity).toLocaleString()) : 'never'}</td>
+              <td class="muted small">${ws.usage && ws.usage.last_activity
+                ? esc(new Date(ws.usage.last_activity).toLocaleString()) : 'never'}</td>
               <td style="white-space:nowrap">
-                <button class="act" data-act="manage" data-i="${index}">Manage</button>
-                <button class="act" data-act="edit" data-i="${index}">Data source</button>
-                <button class="act danger" data-act="del" data-i="${index}">Delete</button>
+                <button class="act" data-act="manage" data-i="${index}">${t('ws.manage')}</button>
+                <button class="act" data-act="edit" data-i="${index}">${t('ws.dataSource')}</button>
+                <button class="act danger" data-act="del" data-i="${index}">${t('common.delete')}</button>
               </td>
             </tr>`).join('')}
         </tbody>
@@ -388,7 +466,7 @@ function renderTenants(target) {
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0">Create a workspace</h3>
+      <h3 style="margin-top:0">${t('ws.create')}</h3>
       <p class="muted small" style="margin-top:0">
         A workspace is a tenant: its own database, its own members, its own
         knowledge. You become its first admin. Credentials are stored
@@ -396,22 +474,22 @@ function renderTenants(target) {
       </p>
       <div class="grid2">
         <div>
-          <label>Identifier</label>
+          <label>${t('ws.identifier')}</label>
           <input id="t-id" placeholder="acme" />
         </div>
         <div>
-          <label>Display name</label>
+          <label>${t('ws.displayName')}</label>
           <input id="t-name" placeholder="Acme Corp" />
         </div>
       </div>
-      <label>Description</label>
+      <label>${t('ws.description')}</label>
       <input id="t-desc" placeholder="Sales analytics for the Acme account" />
 
-      <label>Connection</label>
+      <label>${t('ws.connection')}</label>
       <select id="t-mode">
-        <option value="existing">Pick a database on this server</option>
-        <option value="fields">Connect to another server</option>
-        <option value="default">Use the server default</option>
+        <option value="existing">${t('ws.pickDb')}</option>
+        <option value="fields">${t('ws.otherServer')}</option>
+        <option value="default">${t('ws.serverDefault')}</option>
       </select>
 
       <div id="t-existing">
@@ -420,12 +498,12 @@ function renderTenants(target) {
 
       <div id="t-fields" style="display:none">
         <div class="grid2">
-          <div><label>Host</label><input id="t-host" placeholder="db.example.com" /></div>
-          <div><label>Port</label><input id="t-port" value="5432" /></div>
+          <div><label>${t('ws.host')}</label><input id="t-host" placeholder="db.example.com" /></div>
+          <div><label>${t('ws.port')}</label><input id="t-port" value="5432" /></div>
         </div>
         <div class="grid2">
-          <div><label>Database</label><input id="t-db" placeholder="analytics" /></div>
-          <div><label>SSL mode</label>
+          <div><label>${t('ws.database')}</label><input id="t-db" placeholder="analytics" /></div>
+          <div><label>${t('ws.sslmode')}</label>
             <select id="t-ssl">
               <option value="">(driver default)</option>
               <option value="require">require</option>
@@ -435,14 +513,14 @@ function renderTenants(target) {
           </div>
         </div>
         <div class="grid2">
-          <div><label>User</label><input id="t-user" placeholder="readonly" /></div>
-          <div><label>Password</label><input id="t-pass" type="password" /></div>
+          <div><label>${t('ws.user')}</label><input id="t-user" placeholder="readonly" /></div>
+          <div><label>${t('ws.password')}</label><input id="t-pass" type="password" /></div>
         </div>
       </div>
 
       <div class="actions">
-        <button class="act" id="t-test">Test connection</button>
-        <button class="act primary" id="t-create">Create workspace</button>
+        <button class="act" id="t-test">${t('ws.test')}</button>
+        <button class="act primary" id="t-create">${t('ws.createBtn')}</button>
         <span id="t-status" class="small muted"></span>
       </div>
     </div>`;
@@ -465,6 +543,28 @@ function renderTenants(target) {
           method: 'PATCH', body: JSON.stringify({ allow_writes: box.checked }),
         });
         toast(box.checked ? 'Writes enabled' : 'Writes disabled');
+        await refresh();
+      } catch (error) { toast(error.message); box.checked = !box.checked; }
+    };
+  });
+
+  target.querySelectorAll('[data-byo]').forEach((box) => {
+    const tenant = cache.tenants[Number(box.dataset.byo)];
+    box.onchange = async () => {
+      // Turning it *off* is the restrictive direction, so that is the one that
+      // gets confirmed: it stops members who rely on their own key from asking
+      // anything once the workspace quota is spent.
+      if (!box.checked && !confirm(
+        `Stop members of ${tenant.name} using their own LLM API key?\n\n` +
+        'Their questions will be answered on the server key and counted against ' +
+        'the workspace quota. Anyone relying on a personal key to work past the ' +
+        'limit will be blocked at it.'
+      )) { box.checked = true; return; }
+      try {
+        await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+          method: 'PATCH', body: JSON.stringify({ allow_byo_key: box.checked }),
+        });
+        toast(box.checked ? 'Personal keys allowed' : 'Personal keys blocked');
         await refresh();
       } catch (error) { toast(error.message); box.checked = !box.checked; }
     };
@@ -515,9 +615,9 @@ function renderTenants(target) {
 function datasourceField(id) {
   return `
     <select id="${id}-pick">
-      <option value="">Server default connection</option>
+      <option value="">${t('ws.defaultConn')}</option>
       ${cache.datasources.map((d) => `<option value="${esc(d.url)}">${esc(d.label)}</option>`).join('')}
-      <option value="__custom">Custom connection string…</option>
+      <option value="__custom">${t('ws.customConn')}</option>
     </select>
     <input id="${id}" style="display:none;margin-top:8px"
            placeholder="postgresql://user:password@host:5432/database" />`;
@@ -561,7 +661,7 @@ async function createTenant() {
     description: el('t-desc').value.trim(),
     ...newTenantConnection(),
   };
-  if (!body.id || !body.name) return toast('An identifier and a name are required');
+  if (!body.id || !body.name) return toast(t('ws.needIdName'));
 
   // Test before creating. A workspace bound to a database nobody has reached
   // is indistinguishable from a broken deployment for everyone invited to it,
@@ -593,12 +693,12 @@ async function editDataSource(tenant) {
         Credentials are stored server-side and are never sent back to this page.
       </p>
       <div class="grid2">
-        <div><label>Host</label><input id="ds-host" placeholder="db.example.com" /></div>
-        <div><label>Port</label><input id="ds-port" value="5432" /></div>
+        <div><label>${t('ws.host')}</label><input id="ds-host" placeholder="db.example.com" /></div>
+        <div><label>${t('ws.port')}</label><input id="ds-port" value="5432" /></div>
       </div>
       <div class="grid2">
-        <div><label>Database</label><input id="ds-db" placeholder="analytics" /></div>
-        <div><label>SSL mode</label>
+        <div><label>${t('ws.database')}</label><input id="ds-db" placeholder="analytics" /></div>
+        <div><label>${t('ws.sslmode')}</label>
           <select id="ds-ssl">
             <option value="">(driver default)</option>
             <option value="require">require</option>
@@ -608,15 +708,15 @@ async function editDataSource(tenant) {
         </div>
       </div>
       <div class="grid2">
-        <div><label>User</label><input id="ds-user" placeholder="readonly" /></div>
-        <div><label>Password</label><input id="ds-pass" type="password" /></div>
+        <div><label>${t('ws.user')}</label><input id="ds-user" placeholder="readonly" /></div>
+        <div><label>${t('ws.password')}</label><input id="ds-pass" type="password" /></div>
       </div>
-      <label>...or paste a full connection string</label>
+      <label>${t('conn.orPaste')}</label>
       <input id="ds-url" placeholder="postgresql://user:password@host:5432/database" />
       <div class="actions">
-        <button class="act" id="ds-test">Test connection</button>
-        <button class="act primary" id="ds-save" disabled>Save</button>
-        <button class="act" id="ds-clear">Use server default</button>
+        <button class="act" id="ds-test">${t('ws.test')}</button>
+        <button class="act primary" id="ds-save" disabled>${t('common.save')}</button>
+        <button class="act" id="ds-clear">${t('ws.useDefault')}</button>
         <span id="ds-status" class="small muted"></span>
       </div>
     </div>`;
@@ -663,14 +763,14 @@ async function editDataSource(tenant) {
   el('ds-save').onclick = async () => {
     // Only a tested payload can be saved. Binding a workspace to a database
     // nobody has reached is how every member gets a broken app at once.
-    if (!tested) return toast('Test the connection first');
+    if (!tested) return toast(t('ws.testFirst'));
     try {
       await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, {
         method: 'PATCH',
         // Structured fields go up as-is; the server composes the URL.
         body: JSON.stringify(tested),
       });
-      toast('Data source updated -- the next question uses it');
+      toast(t('ws.dsUpdated'));
       await refresh();
     } catch (error) { toast(error.message); }
   };
@@ -681,7 +781,7 @@ async function editDataSource(tenant) {
       await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, {
         method: 'PATCH', body: JSON.stringify({ database_url: null }),
       });
-      toast('Using the server default');
+      toast(t('ws.usingDefault'));
       await refresh();
     } catch (error) { toast(error.message); }
   };
@@ -694,7 +794,7 @@ async function deleteTenant(tenant) {
   )) return;
   try {
     await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(tenant.id)}`, { method: 'DELETE' });
-    toast('Deleted');
+    toast(t('common.deleted'));
     if (scope === tenant.id) scope = me.tenant.id;
     await refresh();
   } catch (error) { toast(error.message); }
@@ -724,7 +824,7 @@ async function renderAccounts(target) {
 
     <div class="card scroll-x">
       <table class="data">
-        <thead><tr><th>Account</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+        <thead><tr><th>${t('acc.account')}</th><th>${t('acc.status')}</th><th>${t('acc.lastSignIn')}</th><th></th></tr></thead>
         <tbody>
           ${accounts.length ? accounts.map((a, index) => `
             <tr>
@@ -740,28 +840,28 @@ async function renderAccounts(target) {
               <td class="muted small">${a.last_login_at
                 ? esc(new Date(a.last_login_at).toLocaleString()) : 'never'}</td>
               <td style="white-space:nowrap">
-                <button class="act" data-reset="${index}">Reset password</button>
+                <button class="act" data-reset="${index}">${t('acc.reset')}</button>
                 <button class="act ${a.is_active ? 'danger' : ''}" data-toggle="${index}">
-                  ${a.is_active ? 'Disable' : 'Enable'}
+                  ${a.is_active ? t('acc.disable') : t('acc.enable')}
                 </button>
               </td>
             </tr>`).join('')
-          : '<tr><td colspan="4" class="empty">No accounts yet.</td></tr>'}
+          : `<tr><td colspan="4" class="empty">${t('acc.none')}</td></tr>`}
         </tbody>
       </table>
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0">Create an account</h3>
+      <h3 style="margin-top:0">${t('acc.create')}</h3>
       <p class="muted small" style="margin-top:0">
         A temporary password is generated and shown once. It is not stored in a form
         anyone can read back, and the holder must change it on first sign-in.
       </p>
       <div class="grid2">
-        <div><label>Email</label><input id="a-email" placeholder="ada@example.com" /></div>
-        <div><label>Name</label><input id="a-name" placeholder="Ada Lovelace" /></div>
+        <div><label>${t('acc.email')}</label><input id="a-email" placeholder="ada@example.com" /></div>
+        <div><label>${t('acc.name')}</label><input id="a-name" placeholder="Ada Lovelace" /></div>
       </div>
-      <div class="actions"><button class="act primary" id="a-create">Create</button></div>
+      <div class="actions"><button class="act primary" id="a-create">${t('common.create')}</button></div>
       <div id="a-result"></div>
     </div>`;
 
@@ -797,7 +897,7 @@ async function renderAccounts(target) {
 
   el('a-create').onclick = async () => {
     const email = el('a-email').value.trim();
-    if (!email) return toast('An email address is required');
+    if (!email) return toast(t('acc.needEmail'));
     try {
       const result = await api('/api/vanna/v2/admin/accounts', {
         method: 'POST',
@@ -874,12 +974,12 @@ async function renderBilling(target) {
 
       <div class="grid2">
         <div>
-          <label>Questions per day</label>
+          <label>${t('bill.questionsPerDay')}</label>
           <div><strong>${quota.toLocaleString()}</strong>
             <span class="muted small">— ${esc(SOURCE_NOTE[limits.quota_source] || '')}</span></div>
         </div>
         <div>
-          <label>Rows per query</label>
+          <label>${t('bill.rowsPerQuery')}</label>
           <div><strong>${(limits.max_rows || 0).toLocaleString()}</strong>
             <span class="muted small">— ${esc(SOURCE_NOTE[limits.rows_source] || '')}</span></div>
         </div>
@@ -892,10 +992,10 @@ async function renderBilling(target) {
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0">Change plan</h3>
+      <h3 style="margin-top:0">${t('bill.changePlan')}</h3>
       <div class="grid2">
         <div>
-          <label>Plan</label>
+          <label>${t('bill.plan')}</label>
           <select id="b-plan">
             ${(data.available_plans || []).map((p) => (
               `<option value="${esc(p.name)}" ${p.name === data.plan ? 'selected' : ''}>
@@ -905,14 +1005,14 @@ async function renderBilling(target) {
           </select>
         </div>
         <div>
-          <label>Months</label>
+          <label>${t('bill.months')}</label>
           <input id="b-months" type="number" min="1" value="12" />
         </div>
       </div>
       <div class="actions">
-        <button class="act primary" id="b-set">Set plan</button>
+        <button class="act primary" id="b-set">${t('bill.setPlan')}</button>
         ${sub && sub.status === 'active'
-          ? '<button class="act danger" id="b-cancel">Cancel</button>' : ''}
+          ? `<button class="act danger" id="b-cancel">${t('common.cancel')}</button>` : ''}
       </div>
       <p class="muted small">
         Setting a plan here does not take payment. Use “Record a payment” below when
@@ -921,26 +1021,26 @@ async function renderBilling(target) {
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0">Record a payment</h3>
+      <h3 style="margin-top:0">${t('bill.record')}</h3>
       <p class="muted small" style="margin-top:0">
         For a payment taken elsewhere — invoice, transfer, or an internal arrangement.
         The reference is what makes this safe to repeat: recording the same one twice
         changes nothing and extends nothing.
       </p>
       <div class="grid2">
-        <div><label>Reference</label><input id="b-ref" placeholder="INV-2026-014" /></div>
-        <div><label>Amount</label><input id="b-amount" type="number" min="0" step="0.01" placeholder="499.00" /></div>
-        <div><label>Months to add</label><input id="b-pay-months" type="number" min="1" value="12" /></div>
-        <div><label>Note</label><input id="b-desc" placeholder="Annual, paid by transfer" /></div>
+        <div><label>${t('bill.reference')}</label><input id="b-ref" placeholder="INV-2026-014" /></div>
+        <div><label>${t('bill.amount')}</label><input id="b-amount" type="number" min="0" step="0.01" placeholder="499.00" /></div>
+        <div><label>${t('bill.monthsToAdd')}</label><input id="b-pay-months" type="number" min="1" value="12" /></div>
+        <div><label>${t('bill.note')}</label><input id="b-desc" placeholder="Annual, paid by transfer" /></div>
       </div>
-      <div class="actions"><button class="act primary" id="b-pay">Record</button></div>
+      <div class="actions"><button class="act primary" id="b-pay">${t('bill.recordBtn')}</button></div>
     </div>
 
     <div class="card scroll-x">
-      <h3 style="margin-top:0">Payment history</h3>
+      <h3 style="margin-top:0">${t('bill.history')}</h3>
       <table class="data">
         <thead><tr>
-          <th>Date</th><th>Amount</th><th>Reference</th><th>Status</th><th>Note</th>
+          <th>${t('bill.date')}</th><th>${t('bill.amount')}</th><th>${t('bill.reference')}</th><th>${t('acc.status')}</th><th>${t('bill.note')}</th>
         </tr></thead>
         <tbody>
           ${(data.payments || []).length ? data.payments.map((p) => `
@@ -951,7 +1051,7 @@ async function renderBilling(target) {
               <td><span class="tag ${p.status === 'succeeded' ? 'active' : 'inactive'}">${esc(p.status)}</span></td>
               <td class="small">${esc(p.description || '')}</td>
             </tr>`).join('')
-          : '<tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>'}
+          : `<tr><td colspan="5" class="empty">${t('bill.nothing')}</td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -967,7 +1067,7 @@ async function renderBilling(target) {
           months: Number(el('b-months').value) || 1,
         }),
       });
-      toast('Plan updated. New limits apply from the next question.');
+      toast(t('bill.planUpdated'));
       render();
     } catch (error) { toast(error.message); }
   };
@@ -987,7 +1087,7 @@ async function renderBilling(target) {
 
   el('b-pay').onclick = async () => {
     const reference = el('b-ref').value.trim();
-    if (!reference) return toast('A reference is required — it is what stops a double entry.');
+    if (!reference) return toast(t('bill.needReference'));
     try {
       const result = await api(
         `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/billing/payments`,
@@ -1018,7 +1118,7 @@ function renderMembers(target) {
     <div class="card scroll-x">
       <table class="data">
         <thead><tr>
-          <th>Member</th><th>Role</th><th>Status</th><th>Last seen</th><th></th>
+          <th>${t('mem.member')}</th><th>${t('mem.role')}</th><th>${t('acc.status')}</th><th>${t('mem.lastSeen')}</th><th></th>
         </tr></thead>
         <tbody>
           ${cache.users.length ? cache.users.map((u, index) => `
@@ -1039,17 +1139,17 @@ function renderMembers(target) {
               <td class="muted small">${u.last_seen_at
                 ? esc(new Date(u.last_seen_at).toLocaleString()) : 'never'}</td>
               <td style="white-space:nowrap">
-                <button class="act" data-toggle="${index}">${u.is_active ? 'Disable' : 'Enable'}</button>
-                <button class="act danger" data-remove="${index}">Remove</button>
+                <button class="act" data-toggle="${index}">${u.is_active ? t('acc.disable') : t('acc.enable')}</button>
+                <button class="act danger" data-remove="${index}">${t('common.remove')}</button>
               </td>
             </tr>`).join('')
-          : '<tr><td colspan="5" class="empty">No members yet.</td></tr>'}
+          : `<tr><td colspan="5" class="empty">${t('mem.none')}</td></tr>`}
         </tbody>
       </table>
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0">Invite a member</h3>
+      <h3 style="margin-top:0">${t('mem.invite')}</h3>
       <p class="muted small" style="margin-top:0">
         <strong>admin</strong> manages members and knowledge ·
         <strong>analyst</strong> asks questions and saves queries ·
@@ -1057,22 +1157,22 @@ function renderMembers(target) {
       </p>
       <div class="grid2">
         <div>
-          <label>Email</label>
+          <label>${t('acc.email')}</label>
           <input id="u-email" placeholder="ada@example.com" />
         </div>
         <div>
-          <label>Name</label>
+          <label>${t('acc.name')}</label>
           <input id="u-name" placeholder="Ada Lovelace" />
         </div>
       </div>
-      <label>Role</label>
+      <label>${t('mem.role')}</label>
       <select id="u-role">
         <option value="analyst">analyst</option>
         <option value="admin">admin</option>
         <option value="viewer">viewer</option>
       </select>
       <div class="actions">
-        <button class="act primary" id="u-add">Add member</button>
+        <button class="act primary" id="u-add">${t('mem.add')}</button>
       </div>
     </div>`;
 
@@ -1100,7 +1200,7 @@ async function updateUser(user, changes) {
       `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users/${encodeURIComponent(user.id)}`,
       { method: 'PATCH', body: JSON.stringify(changes) }
     );
-    toast('Updated');
+    toast(t('common.updated'));
   } catch (error) { toast(error.message); }
   await loadScope();
   render();
@@ -1113,7 +1213,7 @@ async function removeUser(user) {
       `/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users/${encodeURIComponent(user.id)}`,
       { method: 'DELETE' }
     );
-    toast('Removed');
+    toast(t('common.removed'));
   } catch (error) { toast(error.message); }
   await loadScope();
   render();
@@ -1125,7 +1225,7 @@ async function addUser() {
     full_name: el('u-name').value.trim(),
     role: el('u-role').value,
   };
-  if (!body.email) return toast('An email address is required');
+  if (!body.email) return toast(t('acc.needEmail'));
   try {
     await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/users`, {
       method: 'POST', body: JSON.stringify(body),
@@ -1149,15 +1249,15 @@ function renderStarters(target) {
       <div class="card">
         <div class="row">
           <p class="q grow" style="flex:1">${esc(s.question)}</p>
-          <button class="act danger" data-del="${index}">Delete</button>
+          <button class="act danger" data-del="${index}">${t('common.delete')}</button>
         </div>
       </div>`).join('')
-    : '<div class="empty">No starter questions yet.</div>'}
+    : `<div class="empty">${t('start.none')}</div>`}
     <div class="card">
-      <h3 style="margin-top:0">Add a starter</h3>
-      <label>Question</label>
+      <h3 style="margin-top:0">${t('start.add')}</h3>
+      <label>${t('start.question')}</label>
       <input id="s-text" placeholder="What was revenue by region last quarter?" />
-      <div class="actions"><button class="act primary" id="s-add">Add</button></div>
+      <div class="actions"><button class="act primary" id="s-add">${t('tab.add')}</button></div>
     </div>`;
 
   wireScopePicker();
@@ -1178,7 +1278,7 @@ function renderStarters(target) {
 
   el('s-add').onclick = async () => {
     const question = el('s-text').value.trim();
-    if (!question) return toast('A question is required');
+    if (!question) return toast(t('start.needQuestion'));
     try {
       await api(`/api/vanna/v2/admin/tenants/${encodeURIComponent(scope)}/starters`, {
         method: 'POST',
@@ -1216,8 +1316,8 @@ function exampleCard(example) {
             Reject
           </button>` : ''}
         ${example.status === 'verified' ? `
-          <button class="act" data-status="candidate" data-id="${esc(example.id)}">Unverify</button>` : ''}
-        <button class="act danger" data-delete="${esc(example.id)}">Delete</button>
+          <button class="act" data-status="candidate" data-id="${esc(example.id)}">${t('rev.unverify')}</button>` : ''}
+        <button class="act danger" data-delete="${esc(example.id)}">${t('common.delete')}</button>
       </div>
     </div>`;
 }
@@ -1240,7 +1340,7 @@ function renderReview(target) {
          actually answers the question before promoting it, because verified
          examples are shown to the model as patterns to imitate.
        </div>` + pending.map(exampleCard).join('')
-    : '<div class="empty">Nothing waiting for review.</div>';
+    : `<div class="empty">${t('rev.none')}</div>`;
   wireExampleCards(target);
 }
 
@@ -1248,7 +1348,7 @@ function renderVerified(target) {
   const verified = cache.examples.filter((e) => e.status === 'verified');
   target.innerHTML = verified.length
     ? verified.map(exampleCard).join('')
-    : '<div class="empty">No verified examples yet.</div>';
+    : `<div class="empty">${t('rev.noVerified')}</div>`;
   wireExampleCards(target);
 }
 
@@ -1268,12 +1368,12 @@ function renderRules(target) {
           </div>
           <div class="actions">
             <button class="act" data-toggle="${esc(rule.id)}" data-enabled="${!rule.enabled}">
-              ${rule.enabled ? 'Disable' : 'Enable'}
+              ${rule.enabled ? t('acc.disable') : t('acc.enable')}
             </button>
-            <button class="act danger" data-delrule="${esc(rule.id)}">Delete</button>
+            <button class="act danger" data-delrule="${esc(rule.id)}">${t('common.delete')}</button>
           </div>
         </div>`).join('')
-    : '<div class="empty">No instructions defined.</div>';
+    : `<div class="empty">${t('rules.none')}</div>`;
 
   target.querySelectorAll('[data-toggle]').forEach((button) => {
     button.onclick = () => toggleRule(button.dataset.toggle, button.dataset.enabled === 'true');
@@ -1286,30 +1386,30 @@ function renderRules(target) {
 function renderAdd(target) {
   target.innerHTML = `
     <div class="card">
-      <h3 style="margin-top:0">Add a verified example</h3>
-      <label>Question</label>
+      <h3 style="margin-top:0">${t('rev.addExample')}</h3>
+      <label>${t('start.question')}</label>
       <input id="nq" placeholder="What was revenue by region last quarter?" />
       <label>SQL</label>
       <textarea id="ns" placeholder="SELECT region, SUM(amount) ..."></textarea>
       <div class="actions">
-        <button class="act primary" id="add-example">Save as verified</button>
+        <button class="act primary" id="add-example">${t('rev.saveVerified')}</button>
       </div>
     </div>
     <div class="card">
-      <h3 style="margin-top:0">Add an instruction</h3>
-      <label>Rule</label>
-      <input id="rt" placeholder="Monetary amounts are stored in cents." />
-      <label>Scope</label>
+      <h3 style="margin-top:0">${t('rules.add')}</h3>
+      <label>${t('rules.rule')}</label>
+      <input id="rt" placeholder="${t('bill.inCents')}" />
+      <label>${t('rules.scope')}</label>
       <select id="rs">
         <option value="global">global — applies to every query</option>
         <option value="data_source">data_source — one connection</option>
         <option value="table">table — only when that table is in scope</option>
         <option value="group">group — only for one user group</option>
       </select>
-      <label>Scope reference (table, data source, or group name)</label>
-      <input id="rr" disabled placeholder="not needed for global scope" />
+      <label>${t('rules.scopeRef')}</label>
+      <input id="rr" disabled placeholder="${t('rules.scopeRefPlaceholder')}" />
       <div class="actions">
-        <button class="act primary" id="add-rule">Save rule</button>
+        <button class="act primary" id="add-rule">${t('rules.save')}</button>
       </div>
     </div>`;
 
@@ -1332,7 +1432,7 @@ async function removeExample(id) {
   if (!confirm('Delete this example permanently?')) return;
   try {
     await api(`/api/vanna/v2/admin/examples/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    toast('Deleted');
+    toast(t('common.deleted'));
     refresh();
   } catch (error) { toast(error.message); }
 }
@@ -1340,13 +1440,13 @@ async function removeExample(id) {
 async function addExample() {
   const question = el('nq').value.trim();
   const sql = el('ns').value.trim();
-  if (!question || !sql) return toast('Both a question and SQL are required');
+  if (!question || !sql) return toast(t('rev.needBoth'));
   try {
     await api('/api/vanna/v2/admin/examples', {
       method: 'POST', body: JSON.stringify({ question, sql }),
     });
     el('nq').value = ''; el('ns').value = '';
-    toast('Saved');
+    toast(t('common.saved'));
     refresh();
   } catch (error) { toast(error.message); }
 }
@@ -1355,14 +1455,14 @@ async function addRule() {
   const text = el('rt').value.trim();
   const scopeKind = el('rs').value;
   const scopeRef = el('rr').value.trim();
-  if (!text) return toast('Rule text is required');
-  if (scopeKind !== 'global' && !scopeRef) return toast('This scope needs a reference');
+  if (!text) return toast(t('rules.needText'));
+  if (scopeKind !== 'global' && !scopeRef) return toast(t('rules.needRef'));
   try {
     await api('/api/vanna/v2/admin/instructions', {
       method: 'POST',
       body: JSON.stringify({ text, scope: scopeKind, scope_ref: scopeRef || null, priority: 0 }),
     });
-    toast('Saved');
+    toast(t('common.saved'));
     tab = 'rules';
     refresh();
   } catch (error) { toast(error.message); }
@@ -1381,7 +1481,7 @@ async function removeRule(id) {
   if (!confirm('Delete this instruction?')) return;
   try {
     await api(`/api/vanna/v2/admin/instructions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    toast('Deleted');
+    toast(t('common.deleted'));
     refresh();
   } catch (error) { toast(error.message); }
 }
@@ -1394,8 +1494,15 @@ try {
   identity = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
 } catch (_) { identity = null; }
 
+const localePicker = el('locale-btn');
+localePicker.innerHTML = Object.entries(LOCALES)
+  .map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+localePicker.value = locale;
+localePicker.onchange = () => loadLocale(localePicker.value);
+
 // A stored workspace is not a session -- refresh() calls /me and finds out.
-refresh();
+// The dictionary is loaded first so the first paint is already translated.
+loadLocale(locale).then(refresh);
 </script>
 </body>
 </html>

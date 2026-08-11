@@ -11,6 +11,22 @@ class AgentError(Exception):
     pass
 
 
+class UserFacingError(Exception):
+    """An exception whose message was written for the person who asked.
+
+    The agent catches everything and replaces it with "an unexpected error
+    occurred", which is right for a stack trace and wrong for a refusal. A quota
+    wall is not a malfunction: the user needs to be told they hit a limit and
+    when it resets, and a generic apology instead leaves them retrying something
+    that cannot succeed.
+
+    Subclass this only when ``str(exc)`` is safe to show verbatim -- no SQL, no
+    connection strings, no internal identifiers.
+    """
+
+    pass
+
+
 class ToolExecutionError(AgentError):
     """Error during tool execution."""
 

@@ -191,6 +191,59 @@ class Accounts:
             f"DELETE FROM {SCHEMA}.sessions WHERE expires_at <= now()"
         )
 
+    async def list_sessions(
+        self, email: str, *, current_token: str = ""
+    ) -> List[Dict[str, Any]]:
+        """This account's live sessions, newest first.
+
+        The token hash is compared here rather than returned: the caller needs to know
+        which row is the browser it is talking to, and the only safe way to answer that
+        is to hash the cookie we were given and match it. Nothing derived from a token
+        ever goes back out -- the row identifies itself by user agent and age.
+        """
+        from vanna.core.auth import hash_token
+
+        rows = await self.db.fetch_all(
+            f"""SELECT token_hash, user_agent, ip, created_at, expires_at
+                  FROM {SCHEMA}.sessions
+                 WHERE email = %s AND expires_at > now()
+                 ORDER BY created_at DESC""",
+            (email.strip().lower(),),
+        )
+
+        current_hash = hash_token(current_token) if current_token else ""
+        sessions = []
+        for row in rows:
+            sessions.append(
+                {
+                    # A short, non-reversible label so the UI has something to key on.
+                    # Eight hex characters of a SHA-256 identify a row among an
+                    # account's handful of sessions and are useless for anything else.
+                    "id": row["token_hash"][:8],
+                    "user_agent": row["user_agent"] or "",
+                    "ip": row["ip"] or "",
+                    "created_at": _iso(row["created_at"]),
+                    "expires_at": _iso(row["expires_at"]),
+                    "is_current": row["token_hash"] == current_hash,
+                }
+            )
+        return sessions
+
+    async def delete_other_sessions(self, email: str, *, keep_token: str = "") -> int:
+        """Sign out everywhere else. Returns how many were ended.
+
+        Keeping the caller's own session is the point: someone who has just discovered a
+        session they do not recognise should not have to sign in again to act on it, and
+        being logged out by your own security action reads as the action failing.
+        """
+        from vanna.core.auth import hash_token
+
+        keep = hash_token(keep_token) if keep_token else ""
+        return await self.db.execute(
+            f"DELETE FROM {SCHEMA}.sessions WHERE email = %s AND token_hash <> %s",
+            (email.strip().lower(), keep),
+        )
+
     # ------------------------------------------------------------------
     # API tokens
     # ------------------------------------------------------------------

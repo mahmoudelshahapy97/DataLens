@@ -104,6 +104,14 @@ services:
       VANNA_TRUST_HEADERS: ${VANNA_TRUST_HEADERS:-false}
       VANNA_SECURE_COOKIES: ${VANNA_SECURE_COOKIES:-false}
       VANNA_SESSION_TTL_HOURS: ${VANNA_SESSION_TTL_HOURS:-72}
+      # Failed sign-ins per address and per IP, per process.
+      VANNA_LOGIN_MAX_ATTEMPTS: ${VANNA_LOGIN_MAX_ATTEMPTS:-8}
+      VANNA_LOGIN_WINDOW_SECONDS: ${VANNA_LOGIN_WINDOW_SECONDS:-300}
+
+      # -- Billing. Plans are code constants; only the provider is configurable,
+      #    and `manual` is the only implementation -- anything else warns and
+      #    falls back rather than failing at boot.
+      VANNA_PAYMENT_PROVIDER: ${VANNA_PAYMENT_PROVIDER:-manual}
 
       VANNA_ALLOW_WRITES: ${VANNA_ALLOW_WRITES:-false}
       VANNA_SCAN_ON_START: ${VANNA_SCAN_ON_START:-true}

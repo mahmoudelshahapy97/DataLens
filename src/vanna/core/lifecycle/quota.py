@@ -17,6 +17,7 @@ import time
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Deque, Dict, Optional
 
+from ..errors import UserFacingError
 from .base import LifecycleHook
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -25,11 +26,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 
-class QuotaExceededError(Exception):
-    """Raised when a user has exhausted their allowance."""
+class QuotaExceededError(UserFacingError):
+    """Raised when a user has exhausted their allowance.
+
+    User-facing: the message names the limit and when it resets, which is the
+    only thing that makes the refusal actionable.
+    """
 
 
-class RateLimitExceededError(Exception):
+class RateLimitExceededError(UserFacingError):
     """Raised when a user is sending requests too quickly."""
 
 
@@ -48,6 +53,11 @@ class InMemoryQuotaHook(LifecycleHook):
         window_seconds: Rolling window. Default 24 hours.
         exempt_groups: Groups the limit does not apply to.
         per_tenant: Count per tenant instead of per user, for plan-level caps.
+        exempt_metadata_flag: Name of a truthy key in ``user.metadata`` that
+            exempts the request. Intended for a caller supplying their own API
+            key: the quota exists to bound *your* spend, so it should not apply
+            to tokens somebody else is paying for. Whatever sets the flag is
+            responsible for having verified it -- this hook trusts it.
     """
 
     def __init__(
@@ -57,11 +67,13 @@ class InMemoryQuotaHook(LifecycleHook):
         window_seconds: int = 86_400,
         exempt_groups: tuple = ("admin",),
         per_tenant: bool = False,
+        exempt_metadata_flag: Optional[str] = None,
     ) -> None:
         self.max_messages = max_messages
         self.window_seconds = window_seconds
         self.exempt_groups = set(exempt_groups)
         self.per_tenant = per_tenant
+        self.exempt_metadata_flag = exempt_metadata_flag
         self._events: Dict[str, Deque[float]] = defaultdict(deque)
 
     def _key(self, user: "User") -> str:
@@ -83,6 +95,14 @@ class InMemoryQuotaHook(LifecycleHook):
 
     async def before_message(self, user: "User", message: str) -> Optional[str]:
         if self.exempt_groups & set(getattr(user, "group_memberships", []) or []):
+            return None
+
+        # Exempt from the *limit*, not from the record: whatever writes the
+        # generation log still writes it, so history, audit and the golden-SQL
+        # loop see these turns like any other.
+        if self.exempt_metadata_flag and (getattr(user, "metadata", None) or {}).get(
+            self.exempt_metadata_flag
+        ):
             return None
 
         now = time.time()

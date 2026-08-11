@@ -79,6 +79,10 @@ class TenantUpdate(BaseModel):
     daily_quota: Optional[int] = None
     max_rows: Optional[int] = None
     allow_writes: Optional[bool] = None
+    # Whether members may answer on their own LLM key. See the column comment in
+    # tenancy.py -- turning it off is how a workspace keeps its schema and
+    # questions away from accounts it does not control.
+    allow_byo_key: Optional[bool] = None
 
     # Structured connection fields, composed into a URL server-side. The
     # browser never assembles one, so a password only ever travels as a single
@@ -280,6 +284,10 @@ def register_portal_routes(
                     "name": row["name"],
                     "description": row["description"],
                     "data_source": describe_data_source(row["database_url"]),
+                    # So the account screen can hide the personal-key form when
+                    # the workspace forbids it. The server enforces this
+                    # independently -- hiding a form is a courtesy, not a control.
+                    "allow_byo_key": row.get("allow_byo_key", True),
                 }
             member = await directory.get_member(user.tenant_id, user.email or user.id)
             if member:
@@ -730,6 +738,14 @@ def register_portal_routes(
             "plan": limits.plan.name,
             "plan_label": limits.plan.label,
             "max_rows": limits.max_rows,
+            # A subscription that ran out falls back to free silently, which from
+            # the user's side is indistinguishable from a bug. Saying so turns
+            # "my limit dropped" into "the subscription ended".
+            "expired": bool(
+                subscription
+                and limits.plan.name == "free"
+                and (subscription.get("plan") or "free") != "free"
+            ),
             # "Why am I capped at 200?" is the question this answers without
             # anyone having to read code: override, plan, or deployment default.
             "limit_source": limits.quota_source,

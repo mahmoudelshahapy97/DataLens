@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.tenants (
 ALTER TABLE {SCHEMA}.tenants
     ADD COLUMN IF NOT EXISTS allow_writes boolean NOT NULL DEFAULT false;
 
+-- May members of this workspace answer questions with their own LLM API key?
+-- Defaults to true because the alternative -- hitting a quota wall with no way
+-- past it -- is the situation the feature exists for. A workspace that must not
+-- send its schema and questions to an account it does not control turns this
+-- off, and the server then ignores the header rather than merely hiding the form.
+ALTER TABLE {SCHEMA}.tenants
+    ADD COLUMN IF NOT EXISTS allow_byo_key boolean NOT NULL DEFAULT true;
+
 CREATE TABLE IF NOT EXISTS {SCHEMA}.tenant_users (
     id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id    text        NOT NULL REFERENCES {SCHEMA}.tenants(id) ON DELETE CASCADE,
@@ -415,6 +423,7 @@ def _row_to_tenant(row: Dict[str, Any], *, include_url: bool = False) -> Dict[st
         "is_active": row["is_active"],
         "daily_quota": row["daily_quota"],
         "allow_writes": row.get("allow_writes", False),
+        "allow_byo_key": row.get("allow_byo_key", True),
         "max_rows": row["max_rows"],
         "data_source": describe_data_source(row.get("database_url")),
         "created_at": _iso(row.get("created_at")),
@@ -497,7 +506,7 @@ class Directory:
 
     async def update_tenant(self, tenant_id: str, changes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         allowed = ("name", "description", "database_url", "is_active",
-                   "daily_quota", "max_rows", "allow_writes")
+                   "daily_quota", "max_rows", "allow_writes", "allow_byo_key")
         sets, params = [], []
         for key in allowed:
             if key in changes:

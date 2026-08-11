@@ -197,6 +197,37 @@ def register_auth_routes(
         return {"changed": True}
 
     # ------------------------------------------------------------------
+    # Sessions
+    # ------------------------------------------------------------------
+
+    @app.get("/api/vanna/v2/auth/sessions")
+    async def list_sessions(request: Request) -> Dict[str, Any]:
+        """Where this account is currently signed in."""
+        store = _require_accounts()
+        user = await _caller(request)
+        return {
+            "sessions": await store.list_sessions(
+                user.email, current_token=request.cookies.get(session_cookie, "")
+            )
+        }
+
+    @app.delete("/api/vanna/v2/auth/sessions")
+    async def sign_out_everywhere(request: Request) -> Dict[str, Any]:
+        """End every session except this one.
+
+        The self-service answer to a laptop left somewhere. Deliberately all-or-nothing
+        rather than per-row: picking a single session to kill requires identifying it by
+        something the browser holds, and the only such thing is the token itself.
+        """
+        store = _require_accounts()
+        user = await _caller(request)
+        ended = await store.delete_other_sessions(
+            user.email, keep_token=request.cookies.get(session_cookie, "")
+        )
+        logger.warning("%s ended %s other session(s)", user.email, ended)
+        return {"ended": ended}
+
+    # ------------------------------------------------------------------
     # API tokens
     # ------------------------------------------------------------------
 

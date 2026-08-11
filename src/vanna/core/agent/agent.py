@@ -20,6 +20,7 @@ from vanna.components import (
     Task,
 )
 from .config import AgentConfig
+from vanna.core.errors import UserFacingError
 from vanna.core.storage import ConversationStore
 from vanna.core.llm import LlmService
 from vanna.core.system_prompt import SystemPromptBuilder
@@ -164,12 +165,20 @@ class Agent:
             ):
                 yield component
         except Exception as e:
-            # Log full stack trace
-            stack_trace = traceback.format_exc()
-            logger.error(
-                f"Error in send_message (conversation_id={conversation_id}): {e}\n{stack_trace}",
-                exc_info=True,
-            )
+            if isinstance(e, UserFacingError):
+                # An enforced limit working as designed. Logged at INFO without a
+                # stack trace -- an ERROR with a traceback for every user who hits
+                # their quota trains everyone to ignore the error log.
+                logger.info(
+                    "Refused (conversation_id=%s): %s", conversation_id, e
+                )
+            else:
+                # Log full stack trace
+                stack_trace = traceback.format_exc()
+                logger.error(
+                    f"Error in send_message (conversation_id={conversation_id}): {e}\n{stack_trace}",
+                    exc_info=True,
+                )
 
             # Log to observability provider if available
             if self.observability_provider:
@@ -195,29 +204,49 @@ class Agent:
                         exc_info=True,
                     )
 
-            # Yield error component to UI (simple, user-friendly message)
-            error_description = "An unexpected error occurred while processing your message. Please try again."
-            if conversation_id:
-                error_description += f"\n\nConversation ID: {conversation_id}"
+            # A refusal is not a malfunction. When the exception was raised to be
+            # read -- a quota wall, a rate limit -- its own message is shown, and
+            # the conversation ID is left off: it is support-desk noise on an
+            # outcome the user can resolve themselves by waiting.
+            expected = isinstance(e, UserFacingError)
+
+            if expected:
+                title = "Cannot continue"
+                error_description = str(e)
+                summary = str(e)
+            else:
+                title = "Error Processing Message"
+                error_description = (
+                    "An unexpected error occurred while processing your message. "
+                    "Please try again."
+                )
+                if conversation_id:
+                    error_description += f"\n\nConversation ID: {conversation_id}"
+                summary = (
+                    "Error: An unexpected error occurred. Please try again."
+                    f"{f' (Conversation ID: {conversation_id})' if conversation_id else ''}"
+                )
 
             yield UiComponent(
                 rich_component=StatusCardComponent(
-                    title="Error Processing Message",
+                    title=title,
                     status="error",
                     description=error_description,
-                    icon="⚠️",
+                    icon="!",
                 ),
-                simple_component=SimpleTextComponent(
-                    text=f"Error: An unexpected error occurred. Please try again.{f' (Conversation ID: {conversation_id})' if conversation_id else ''}"
-                ),
+                simple_component=SimpleTextComponent(text=summary),
             )
 
             # Update status bar to show error state
             yield UiComponent(  # type: ignore
                 rich_component=StatusBarUpdateComponent(
                     status="error",
-                    message="Error occurred",
-                    detail="An unexpected error occurred while processing your message",
+                    message="Cannot continue" if expected else "Error occurred",
+                    detail=(
+                        str(e)
+                        if expected
+                        else "An unexpected error occurred while processing your message"
+                    ),
                 )
             )
 

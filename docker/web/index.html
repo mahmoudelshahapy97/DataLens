@@ -94,14 +94,67 @@
   .chip.err    { background: rgba(220,38,38,.15);  color: var(--bad); }
   .chip.warn   { background: rgba(217,119,6,.15);  color: var(--warn); }
 
+  .warn { color: var(--warn); }
+
+  /* Right-to-left.
+     The interface mirrors; the *content* does not. SQL, result grids, charts and
+     identifiers read left-to-right in every language -- a mirrored SELECT is not
+     Arabic, it is unreadable. So these opt back out, and `unicode-bidi: plaintext`
+     lets a mixed cell (Arabic label, Latin id) lay out per its own direction
+     rather than inheriting the page's. */
+  [dir="rtl"] pre,
+  [dir="rtl"] code,
+  [dir="rtl"] .sql,
+  [dir="rtl"] .mono,
+  [dir="rtl"] table.data,
+  [dir="rtl"] .chart,
+  [dir="rtl"] input[type="password"],
+  [dir="rtl"] input[type="email"] {
+    direction: ltr;
+    text-align: start;
+  }
+  [dir="rtl"] table.data td,
+  [dir="rtl"] table.data th { unicode-bidi: plaintext; }
+
+  /* A directional arrow means "onward", which is leftward in Arabic. Flipped
+     rather than swapped for a different glyph, so there is one arrow to maintain. */
+  .arrow { display: inline-block; }
+  [dir="rtl"] .arrow { transform: scaleX(-1); }
+
+  .locale-pick {
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 8px; font: inherit; font-size: .8125rem; cursor: pointer;
+  }
+
+  /* A labelled row with its action pushed to the far end. Used by the account
+     screen for tokens and sessions. */
+  .row-line {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .row-line:last-child { border-bottom: 0; }
+  .row-line > div:first-child { flex: 1; min-width: 0; }
+
+  /* Stacked label+input pairs. Two columns where there is room, one where
+     there is not -- three password fields side by side are unreadable. */
+  .form-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+  .form-grid label {
+    display: flex; flex-direction: column; gap: 5px;
+    font-size: .8125rem; color: var(--muted);
+  }
+
   .body { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 0; }
 
   nav.side {
-    background: var(--surface); border-right: 1px solid var(--border);
+    background: var(--surface); border-inline-end: 1px solid var(--border);
     padding: 14px 10px; display: flex; flex-direction: column; gap: 3px; min-height: 0;
   }
   nav.side button {
-    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: start;
     padding: 9px 12px; border: 0; border-radius: 8px; background: transparent;
     cursor: pointer; font-size: .9rem;
   }
@@ -180,7 +233,7 @@
 
   table.data { width: 100%; border-collapse: collapse; font-size: .8125rem; }
   table.data th, table.data td {
-    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+    text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--border);
     vertical-align: top;
   }
   table.data th { color: var(--muted); font-weight: 600; white-space: nowrap; }
@@ -196,7 +249,7 @@
   #view-ask { display: none; height: 100%; grid-template-rows: auto 1fr; min-height: 0; }
   #view-ask.on { display: grid; }
   .starters { padding: 14px 24px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .starters .lead { font-size: .8125rem; color: var(--muted); margin-right: 2px; }
+  .starters .lead { font-size: .8125rem; color: var(--muted); margin-inline-end: 2px; }
   .starter {
     padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface); cursor: pointer; font-size: .8125rem;
@@ -209,7 +262,7 @@
   .schema-grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
   .table-list { max-height: calc(100vh - 230px); overflow: auto; }
   .table-list button {
-    display: block; width: 100%; text-align: left; padding: 8px 11px; border: 0;
+    display: block; width: 100%; text-align: start; padding: 8px 11px; border: 0;
     border-radius: 7px; background: transparent; cursor: pointer; font-size: .875rem;
   }
   .table-list button:hover { background: var(--surface-2); }
@@ -280,7 +333,7 @@
 
   @media (max-width: 820px) {
     .body { grid-template-columns: 1fr; }
-    nav.side { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    nav.side { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--border); }
     nav.side .spacer, nav.side .note { display: none; }
     .schema-grid { grid-template-columns: 1fr; }
   }
@@ -291,22 +344,26 @@
 <!-- ------------------------------------------------------------ sign in -->
 <div id="signin">
   <div class="panel">
-    <h1>Sign in to Vanna</h1>
-    <p class="lede">Pick a workspace and identify yourself. Each workspace has its
-      own database, its own members, and its own curated knowledge.</p>
+    <h1 data-i18n="signin.title">Sign in to Vanna</h1>
+    <p class="lede" data-i18n="signin.lede">Pick a workspace and identify yourself. Each
+      workspace has its own database, its own members, and its own curated knowledge.</p>
 
-    <label for="si-tenant">Workspace</label>
+    <label for="si-tenant" data-i18n="signin.workspace">Workspace</label>
     <select id="si-tenant"></select>
 
-    <label for="si-email">Your email</label>
-    <input id="si-email" type="email" placeholder="you@example.com" autocomplete="email" />
+    <label for="si-email" data-i18n="signin.email">Your email</label>
+    <!-- dir=ltr: an address is not Arabic text, and mirroring it makes it
+         unreadable. Same for the password field. -->
+    <input id="si-email" type="email" placeholder="you@example.com" dir="ltr" autocomplete="email" />
 
-    <label for="si-password">Password</label>
-    <input id="si-password" type="password" placeholder="********"
+    <label for="si-password" data-i18n="signin.password">Password</label>
+    <input id="si-password" type="password" placeholder="********" dir="ltr"
            autocomplete="current-password" />
     <div class="roster" id="si-roster"></div>
 
-    <button class="go" id="si-go">Continue</button>
+    <select id="si-locale" class="locale-pick" data-i18n-attr="aria-label:header.language,title:header.language" aria-label="Language"></select>
+
+    <button class="go" id="si-go" data-i18n="signin.continue">Continue</button>
     <div class="error" id="si-error"></div>
   </div>
 </div>
@@ -316,15 +373,17 @@
   <header class="top">
     <span class="brand"><span class="dot"></span> Vanna</span>
 
-    <button class="pill" id="tenant-pill" title="Switch workspace">
+    <button class="pill" id="tenant-pill" data-i18n-attr="title:header.switchWorkspace" title="Switch workspace">
       <span id="tenant-name">—</span>
       <span class="sub" id="tenant-source"></span>
     </button>
 
     <span class="grow"></span>
 
-    <button class="btn" id="theme-btn" title="Toggle light/dark">Theme</button>
-    <button class="pill" id="user-pill" title="Sign out">
+    <select id="locale-btn" class="locale-pick" data-i18n-attr="aria-label:header.language,title:header.language" aria-label="Language"></select>
+    <button class="btn" id="theme-btn" data-i18n="header.theme"
+            data-i18n-attr="title:header.themeTitle" title="Toggle light/dark">Theme</button>
+    <button class="pill" id="user-pill" data-i18n-attr="title:header.signOut" title="Sign out">
       <span id="user-email">—</span>
       <span class="chip" id="user-role">user</span>
     </button>
@@ -333,17 +392,19 @@
   <div class="body">
     <nav class="side">
       <div class="threads" id="threads">
-        <button class="new-chat" id="new-chat">+ New chat</button>
+        <button class="new-chat" id="new-chat" data-i18n="nav.newChat">+ New chat</button>
         <div id="thread-list"></div>
       </div>
-      <button data-view="ask"     aria-current="true">Ask</button>
-      <button data-view="schema">Schema</button>
-      <button data-view="history">History</button>
-      <button data-view="saved">Saved queries</button>
-      <button data-view="dashboards">Dashboards</button>
-      <button data-view="cubes" id="nav-cubes" style="display:none">Metrics</button>
+      <button data-view="ask" aria-current="true" data-i18n="nav.ask">Ask</button>
+      <button data-view="schema" data-i18n="nav.schema">Schema</button>
+      <button data-view="history" data-i18n="nav.history">History</button>
+      <button data-view="saved" data-i18n="nav.saved">Saved queries</button>
+      <button data-view="dashboards" data-i18n="nav.dashboards">Dashboards</button>
+      <button data-view="cubes" id="nav-cubes" style="display:none" data-i18n="nav.metrics">Metrics</button>
+      <button data-view="account" data-i18n="nav.account">Account</button>
       <div class="spacer"></div>
-      <a class="note" id="console-link" href="/admin/" style="display:none">Admin console →</a>
+      <a class="note" id="console-link" href="/admin/" style="display:none"
+        ><span data-i18n="nav.console">Admin console</span> <span class="arrow">&rarr;</span></a>
       <div class="note" id="usage-note"></div>
       <div class="note" id="ds-note"></div>
     </nav>
@@ -422,15 +483,37 @@ function toast(message) {
   setTimeout(() => node.classList.remove('show'), 2400);
 }
 
+/**
+ * How long ago. For instants in the **past** only.
+ *
+ * The clamp below means a future instant reads "just now", so do not reach for
+ * this to render an expiry -- use until(). Kept one-directional on purpose: a
+ * helper that quietly handles both is how "expires just now" shipped on every
+ * live session.
+ */
 function relative(iso) {
   if (!iso) return '';
   const then = new Date(iso).getTime();
   const seconds = Math.max(0, (Date.now() - then) / 1000);
-  if (seconds < 60)    return 'just now';
-  if (seconds < 3600)  return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
-  return new Date(iso).toLocaleDateString();
+  if (seconds < 60)    return t('time.justNow');
+  if (seconds < 3600)  return t('time.minutesAgo', { n: Math.floor(seconds / 60) });
+  if (seconds < 86400) return t('time.hoursAgo',   { n: Math.floor(seconds / 3600) });
+  if (seconds < 604800) return t('time.daysAgo',   { n: Math.floor(seconds / 86400) });
+  return new Date(iso).toLocaleDateString(locale);
+}
+
+/** How long until. For instants in the **future** -- expiries, renewals. */
+function until(iso) {
+  if (!iso) return '';
+  const when = new Date(iso).getTime();
+  const seconds = (when - Date.now()) / 1000;
+  // Already gone. Sessions past their expiry are filtered out server-side, so
+  // this shows up only for a row that lapsed between the query and the render.
+  if (seconds <= 0)     return t('time.expired');
+  if (seconds < 3600)   return t('time.inMinutes', { n: Math.max(1, Math.floor(seconds / 60)) });
+  if (seconds < 86400)  return t('time.inHours',   { n: Math.floor(seconds / 3600) });
+  if (seconds < 604800) return t('time.inDays',    { n: Math.floor(seconds / 86400) });
+  return new Date(iso).toLocaleDateString(locale);
 }
 
 // ------------------------------------------------------------------ api ---
@@ -441,8 +524,49 @@ function relative(iso) {
  *  read, sent automatically with `credentials: include`. Only the *workspace*
  *  travels as a header, and the server still checks membership before honouring
  *  it -- a header that selects a workspace is a preference, not a credential. */
+/**
+ * A personal LLM key, held in this browser and nowhere else.
+ *
+ * Deliberately not stored on the server. Doing that would mean a third-party
+ * credential sitting in our database in plaintext -- we have no cipher in the
+ * dependency set and no key-management story to add one honestly. The cost is
+ * real and is stated on the Account screen: the key does not follow you to
+ * another device, and any script running on this page can read it.
+ */
+const LLM_KEY = 'vanna.llm';
+
+function llmConfig() {
+  try { return JSON.parse(localStorage.getItem(LLM_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+
+function setLlmConfig(config) {
+  if (config && config.key) localStorage.setItem(LLM_KEY, JSON.stringify(config));
+  else localStorage.removeItem(LLM_KEY);
+}
+
 function authHeaders() {
   return identity && identity.tenant ? { 'X-Tenant-Id': identity.tenant } : {};
+}
+
+/**
+ * Headers for the chat endpoints, which are the only ones that can use a
+ * personal LLM key.
+ *
+ * Kept separate from authHeaders() on purpose: /usage, /schema and the rest have
+ * no possible use for the key, and a secret should not be sent to endpoints that
+ * cannot need it. Narrowing this costs one function and removes the key from
+ * roughly a dozen request paths.
+ */
+function chatHeaders() {
+  const headers = authHeaders();
+  const llm = llmConfig();
+  if (llm.key) {
+    headers['X-LLM-Key'] = llm.key;
+    headers['X-LLM-Provider'] = llm.provider || 'openai';
+    if (llm.model) headers['X-LLM-Model'] = llm.model;
+  }
+  return headers;
 }
 
 async function api(path, options = {}) {
@@ -485,12 +609,12 @@ async function startSignIn(message) {
   if (message) showSignInError(message);
 
   const select = $('si-tenant');
-  select.innerHTML = '<option>Loading…</option>';
+  select.innerHTML = `<option>${t('common.loading')}</option>`;
 
   try {
     const { tenants } = await api('/api/vanna/v2/tenants');
     select.innerHTML = tenants.length
-      ? tenants.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')
+      ? tenants.map((ws) => `<option value="${esc(ws.id)}">${esc(ws.name)}</option>`).join('')
       : '<option value="demo">demo</option>';
   } catch (error) {
     select.innerHTML = '<option value="demo">demo</option>';
@@ -590,7 +714,92 @@ async function signOut() {
     await api('/api/vanna/v2/auth/logout', { method: 'POST' });
   } catch (_) { /* signing out locally matters more than the round trip */ }
   localStorage.removeItem(STORAGE_KEY);
+  // The personal API key belongs to the person signing out, not to the browser.
+  // Leaving it would mean the next account to sign in here silently spends
+  // someone else's key -- and the theme survives a sign-out precisely because
+  // it is the kind of thing that should.
+  setLlmConfig(null);
   location.reload();
+}
+
+// ------------------------------------------------------------ language ---
+//
+// Dictionary lookup rather than a framework. The rest of this page has no
+// dependencies and adding one to translate a hundred strings is not a trade
+// worth making -- t() plus an attribute sweep is the whole of it.
+//
+// Two ways in: static markup carries data-i18n (and data-i18n-attr for
+// placeholders and titles), while text built in JS calls t() directly. Both are
+// needed because most of this UI is rendered from template literals.
+
+const LOCALE_KEY = 'vanna.locale';
+const LOCALES = { en: 'English', ar: 'العربية' };
+
+/** Locales written right-to-left. Only the interface flips; see applyLocale. */
+const RTL = new Set(['ar']);
+
+let locale = localStorage.getItem(LOCALE_KEY) || 'en';
+let strings = {};
+
+/**
+ * Translate a key, interpolating {placeholders}.
+ *
+ * Falls back to the key itself rather than to empty text: a missing string
+ * should look like a missing string, not like a blank label nobody notices.
+ */
+function t(key, values) {
+  let text = strings[key];
+  if (text === undefined) {
+    if (locale !== 'en') console.warn('[i18n] missing', locale, key);
+    text = key;
+  }
+  if (values) {
+    for (const name of Object.keys(values)) {
+      text = text.split(`{${name}}`).join(values[name]);
+    }
+  }
+  return text;
+}
+
+async function loadLocale(next) {
+  locale = LOCALES[next] ? next : 'en';
+  localStorage.setItem(LOCALE_KEY, locale);
+  try {
+    strings = await (await fetch(`/locales/${locale}.json`, { cache: 'no-cache' })).json();
+  } catch (_) {
+    // An unreachable dictionary must not blank the interface. t() falls back to
+    // the key, and for English the keys are close enough to read.
+    strings = {};
+  }
+  applyLocale();
+}
+
+function applyLocale() {
+  const rtl = RTL.has(locale);
+  document.documentElement.setAttribute('lang', locale);
+  document.documentElement.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  // "placeholder" and "title" carry real instructions, so they need translating
+  // too: data-i18n-attr="placeholder:signin.email".
+  document.querySelectorAll('[data-i18n-attr]').forEach((node) => {
+    node.dataset.i18nAttr.split(',').forEach((pair) => {
+      const [attr, key] = pair.split(':');
+      if (attr && key) node.setAttribute(attr.trim(), t(key.trim()));
+    });
+  });
+
+  // The chat is a separate component with its own bundled strings; it is told,
+  // not re-created -- destroying it would throw away the conversation on screen.
+  if (chatEl) chatEl.setAttribute('locale', locale);
+
+  // Re-render whatever view is open; its text came from t() at render time.
+  if (typeof view !== 'undefined' && view && view !== 'ask' && $('view-other').style.display !== 'none') {
+    switchView(view);
+  }
+  if (typeof me !== 'undefined' && me) paintChrome();
 }
 
 // ------------------------------------------------------------- chrome ----
@@ -649,13 +858,14 @@ function switchView(next) {
   ask.classList.remove('on');
   other.style.display = 'block';
   main.classList.remove('flush');
-  other.innerHTML = '<div class="empty">Loading…</div>';
+  other.innerHTML = `<div class="empty">${t('common.loading')}</div>`;
 
   if (next === 'schema')     renderSchema();
   if (next === 'history')    renderHistory();
   if (next === 'saved')      renderSaved();
   if (next === 'dashboards') renderDashboards();
   if (next === 'cubes')      renderCubes();
+  if (next === 'account')    renderAccount();
 }
 
 // ----------------------------------------------------------------- ask ---
@@ -665,12 +875,13 @@ function mountChat() {
   chat.setAttribute('title', 'Ask your data');
   chat.setAttribute('sse-endpoint', '/api/vanna/v2/chat_sse');
   chat.setAttribute('theme', document.documentElement.getAttribute('data-theme') || 'light');
+  chat.setAttribute('locale', locale);
 
   // Attach the listener before the element is connected: the component fires
   // vanna-ready in its first render, and its very first backend call follows
   // immediately after. Setting headers any later means that call goes out
   // unauthenticated.
-  chat.addEventListener('vanna-ready', () => chat.setCustomHeaders(authHeaders()));
+  chat.addEventListener('vanna-ready', () => chat.setCustomHeaders(chatHeaders()));
   chat.addEventListener('vanna-feedback', () => { historyCache = []; });
   // A new thread only gets a title once its first question is stored, so the
   // list is refreshed when an answer finishes rather than when it starts.
@@ -697,9 +908,18 @@ async function loadUsage() {
     if (!usage.enabled) return;
     const note = $('usage-note');
     const near = usage.used >= usage.limit * 0.8;
-    note.textContent = `${usage.used} / ${usage.limit} questions today`;
+    const label = usage.plan_label || '';
+    // The plan belongs next to the number: "184 / 200" prompts "says who?", and
+    // the answer is one word away.
+    note.textContent = label
+      ? `${label} · ${usage.used} / ${usage.limit} today`
+      : `${usage.used} / ${usage.limit} questions today`;
     note.style.color = near ? 'var(--warn)' : '';
-    note.title = 'Counted across the whole workspace, over the last 24 hours.';
+    note.style.cursor = 'pointer';
+    note.title = usage.expired
+      ? 'This workspace\'s subscription has ended; free limits apply. Open Account for detail.'
+      : 'Counted across the whole workspace over the last 24 hours. Open Account for detail.';
+    note.onclick = () => switchView('account');
   } catch (_) { /* usage is informational; never block the app on it */ }
 }
 
@@ -746,21 +966,21 @@ async function renderSchema() {
   const noun = showingPhysical ? 'table' : (semantic ? 'model' : 'table');
 
   root.innerHTML = `
-    <h2 class="view-title">Schema</h2>
+    <h2 class="view-title">${t('schema.title')}</h2>
     <p class="view-sub">
       ${tables.length} ${noun}${tables.length === 1 ? '' : 's'} in
       <span class="mono">${esc(data_source || dialect)}</span>.
       ${semantic && !showingPhysical
-        ? 'This is the semantic layer — business names, computed columns and declared joins. It is exactly what the model is shown.'
-        : 'This is exactly what the model is shown — if a table is missing here, it cannot be queried.'}
+        ? t('schema.subSemantic')
+        : t('schema.subPhysical')}
     </p>
     <div class="toolbar">
-      <input type="search" id="schema-search" placeholder="Filter tables and columns…" />
+      <input type="search" id="schema-search" placeholder="${t('schema.filter')}" />
       ${semantic ? `
         <button class="btn" id="layer-toggle">
-          ${showingPhysical ? 'Show semantic layer' : 'Show physical tables'}
+          ${showingPhysical ? t('schema.showSemantic') : t('schema.showPhysical')}
         </button>` : ''}
-      ${me.is_admin ? '<button class="btn" id="rescan">Rescan database</button>' : ''}
+      ${me.is_admin ? `<button class="btn" id="rescan">${t('schema.rescan')}</button>` : ''}
     </div>
     <div class="schema-grid">
       <div class="card table-list" id="table-list"></div>
@@ -779,18 +999,18 @@ async function renderSchema() {
 
   function paintList(filter) {
     const needle = (filter || '').toLowerCase();
-    const shown = tables.filter((t) =>
+    const shown = tables.filter((tbl) =>
       !needle ||
-      t.name.toLowerCase().includes(needle) ||
-      t.columns.some((c) => c.name.toLowerCase().includes(needle))
+      tbl.name.toLowerCase().includes(needle) ||
+      tbl.columns.some((c) => c.name.toLowerCase().includes(needle))
     );
 
     $('table-list').innerHTML = shown.length
-      ? shown.map((t) => `
-          <button data-table="${esc(t.name)}" aria-current="${t.name === selected}">
-            ${esc(t.name)}<span class="count">${t.columns.length}</span>
+      ? shown.map((tbl) => `
+          <button data-table="${esc(tbl.name)}" aria-current="${tbl.name === selected}">
+            ${esc(tbl.name)}<span class="count">${tbl.columns.length}</span>
           </button>`).join('')
-      : '<div class="empty small">No match.</div>';
+      : `<div class="empty small">${t('schema.noMatch')}</div>`;
 
     $('table-list').querySelectorAll('button').forEach((button) => {
       button.onclick = () => { selected = button.dataset.table; paintList(filter); paintDetail(); };
@@ -798,7 +1018,7 @@ async function renderSchema() {
   }
 
   function paintDetail() {
-    const table = tables.find((t) => t.name === selected);
+    const table = tables.find((tbl) => tbl.name === selected);
     if (!table) return;
 
     const related = relationships.filter(
@@ -811,11 +1031,11 @@ async function renderSchema() {
           <h3 style="margin:0;font-size:1rem">${esc(table.name)}</h3>
           ${table.schema ? `<span class="chip">${esc(table.schema)}</span>` : ''}
           ${table.row_count_estimate != null
-            ? `<span class="muted small">~${Number(table.row_count_estimate).toLocaleString()} rows</span>`
+            ? `<span class="muted small">${t('schema.rows', { n: Number(table.row_count_estimate).toLocaleString() })}</span>`
             : ''}
           <span class="grow"></span>
           <button class="btn" data-ask="Describe the ${esc(table.name)} table and show me 10 rows.">
-            Ask about this table
+            ${t('schema.askAbout')}
           </button>
         </div>
         ${table.description ? `<p class="muted small" style="margin:9px 0 0">${esc(table.description)}</p>` : ''}
@@ -824,7 +1044,7 @@ async function renderSchema() {
       <div class="card scroll-x">
         <table class="data">
           <thead><tr>
-            <th>Column</th><th>Type</th><th>Key</th><th>Values seen</th><th>Notes</th>
+            <th>${t('schema.colColumn')}</th><th>${t('schema.colType')}</th><th>${t('schema.colKey')}</th><th>${t('schema.colValues')}</th><th>${t('schema.colNotes')}</th>
           </tr></thead>
           <tbody>
             ${table.columns.map((c) => `
@@ -850,7 +1070,7 @@ async function renderSchema() {
 
       ${related.length ? `
         <div class="card">
-          <h4 style="margin:0 0 9px;font-size:.875rem">Joins</h4>
+          <h4 style="margin:0 0 9px;font-size:.875rem">${t('schema.joins')}</h4>
           ${related.map((r) => `
             <div class="small mono" style="padding:3px 0">
               ${esc(r.from_table)}.${esc(r.from_column)} → ${esc(r.to_table)}.${esc(r.to_column)}
@@ -909,16 +1129,16 @@ async function renderHistory(options = {}) {
   const mine   = options.mine ?? false;
 
   root.innerHTML = `
-    <h2 class="view-title">History</h2>
+    <h2 class="view-title">${t('history.title')}</h2>
     <p class="view-sub">Every question asked in this workspace, the SQL it produced,
       and how it went. Shared on purpose — the fastest way to answer a question is
       often to find where a colleague already did.</p>
     <div class="toolbar">
-      <input type="search" id="h-search" placeholder="Search questions and SQL…" value="${esc(search)}" />
+      <input type="search" id="h-search" placeholder="${t('history.search')}" value="${esc(search)}" />
       <label class="inline"><input type="checkbox" id="h-mine" ${mine ? 'checked' : ''} /> Only mine</label>
-      <button class="btn" id="h-reload">Reload</button>
+      <button class="btn" id="h-reload">${t('history.reload')}</button>
     </div>
-    <div id="h-body"><div class="empty">Loading…</div></div>`;
+    <div id="h-body"><div class="empty">${t('common.loading')}</div></div>`;
 
   const rerun = () => renderHistory({ search: $('h-search').value, mine: $('h-mine').checked });
   $('h-reload').onclick = rerun;
@@ -934,7 +1154,7 @@ async function renderHistory(options = {}) {
     const payload = await api(`/api/vanna/v2/history?${params}`);
     rows = payload.history;
     if (!payload.control_plane) {
-      $('h-body').innerHTML = '<div class="empty">History needs a control-plane database.</div>';
+      $('h-body').innerHTML = `<div class="empty">${t('history.needsDb')}</div>`;
       return;
     }
   } catch (error) {
@@ -945,7 +1165,7 @@ async function renderHistory(options = {}) {
   historyCache = rows;
 
   if (!rows.length) {
-    $('h-body').innerHTML = '<div class="empty">Nothing here yet. Ask a question and it will show up.</div>';
+    $('h-body').innerHTML = `<div class="empty">${t('history.empty')}</div>`;
     return;
   }
 
@@ -965,10 +1185,10 @@ async function renderHistory(options = {}) {
       ${row.sql ? `<pre class="sql">${esc(row.sql)}</pre>` : ''}
       ${row.error ? `<div class="small" style="color:var(--bad);margin-top:8px">${esc(row.error)}</div>` : ''}
       <div class="toolbar" style="margin:12px 0 0">
-        <button class="btn" data-act="ask"  data-i="${index}">Ask again</button>
-        <button class="btn" data-act="run"  data-i="${index}">Run SQL</button>
-        <button class="btn" data-act="save" data-i="${index}">Save</button>
-        <button class="btn" data-act="copy" data-i="${index}">Copy SQL</button>
+        <button class="btn" data-act="ask"  data-i="${index}">${t('history.askAgain')}</button>
+        <button class="btn" data-act="run"  data-i="${index}">${t('history.runSql')}</button>
+        <button class="btn" data-act="save" data-i="${index}">${t('common.save')}</button>
+        <button class="btn" data-act="copy" data-i="${index}">${t('result.copySql')}</button>
       </div>
     </div>`).join('');
 
@@ -978,7 +1198,7 @@ async function renderHistory(options = {}) {
       if (button.dataset.act === 'ask')  return ask(row.question);
       if (button.dataset.act === 'run')  return runSql(row.sql, { question: row.question, title: 'Run SQL' });
       if (button.dataset.act === 'save') return openSaveSheet(row.question, row.sql);
-      navigator.clipboard.writeText(row.sql || '').then(() => toast('SQL copied'));
+      navigator.clipboard.writeText(row.sql || '').then(() => toast(t('common.copied')));
     };
   });
 }
@@ -996,11 +1216,10 @@ async function renderSaved() {
   }
 
   root.innerHTML = `
-    <h2 class="view-title">Saved queries</h2>
-    <p class="view-sub">Shared with everyone in this workspace. Run them as they are,
-      or use one as the starting point for a new question.</p>
+    <h2 class="view-title">${t('saved.title')}</h2>
+    <p class="view-sub">${t('saved.sub')}</p>
     <div class="toolbar">
-      <button class="btn primary" id="new-saved">New saved query</button>
+      <button class="btn primary" id="new-saved">${t('saved.new')}</button>
     </div>
     <div id="saved-body">
       ${saved.length ? saved.map((item, index) => `
@@ -1012,13 +1231,13 @@ async function renderSaved() {
           ${item.question ? `<p class="muted small" style="margin:6px 0 9px">${esc(item.question)}</p>` : ''}
           <pre class="sql">${esc(item.sql)}</pre>
           <div class="toolbar" style="margin:12px 0 0">
-            <button class="btn primary" data-act="run" data-i="${index}">Run</button>
-            <button class="btn" data-act="ask"  data-i="${index}">Ask about it</button>
-            <button class="btn" data-act="copy" data-i="${index}">Copy</button>
-            <button class="btn danger" data-act="del" data-i="${index}">Delete</button>
+            <button class="btn primary" data-act="run" data-i="${index}">${t('common.run')}</button>
+            <button class="btn" data-act="ask"  data-i="${index}">${t('saved.askAbout')}</button>
+            <button class="btn" data-act="copy" data-i="${index}">${t('common.copy')}</button>
+            <button class="btn danger" data-act="del" data-i="${index}">${t('common.delete')}</button>
           </div>
         </div>`).join('')
-      : '<div class="empty">Nothing saved yet. Save a query from History, or add one here.</div>'}
+      : `<div class="empty">${t('saved.empty')}</div>`}
     </div>`;
 
   $('new-saved').onclick = () => openSaveSheet('', '');
@@ -1030,31 +1249,324 @@ async function renderSaved() {
       if (action === 'run') return runSql(item.sql, { question: item.question, title: item.title });
       if (action === 'ask') return ask(item.question || `Explain what this query returns: ${item.sql}`);
       if (action === 'copy') {
-        navigator.clipboard.writeText(item.sql).then(() => toast('SQL copied'));
+        navigator.clipboard.writeText(item.sql).then(() => toast(t('common.copied')));
         return;
       }
-      if (!confirm(`Delete “${item.title}”?`)) return;
+      if (!confirm(t('saved.deleteConfirm', { title: item.title }))) return;
       try {
         await api(`/api/vanna/v2/saved-queries/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-        toast('Deleted');
+        toast(t('common.deleted'));
         renderSaved();
       } catch (error) { toast(error.message); }
     };
   });
 }
 
+// ------------------------------------------------------------- account ---
+
+/**
+ * Where a limit came from, in the words a capped user would use.
+ *
+ * This is the provenance the Billing tab shows admins, said to the person it
+ * actually constrains -- "why am I capped at 200?" has a real answer and it
+ * should not require reading code or asking an admin.
+ */
+function limitSourceText(usage) {
+  const key = `plan.source.${usage.limit_source}`;
+  const text = t(key, { plan: usage.plan_label || usage.plan || '' });
+  return text === key ? '' : text;   // unknown source: say nothing rather than a key
+}
+
+/** A browser's user-agent, shortened to the part a person recognises. */
+function deviceName(userAgent) {
+  if (!userAgent) return t('device.unknown');
+  const browser = /Edg\//.test(userAgent) ? 'Edge'
+    : /OPR\//.test(userAgent) ? 'Opera'
+    : /Chrome\//.test(userAgent) ? 'Chrome'
+    : /Safari\//.test(userAgent) ? 'Safari'
+    : /Firefox\//.test(userAgent) ? 'Firefox'
+    : /curl|python|node/i.test(userAgent) ? t('device.script') : t('device.browser');
+  const os = /Windows/.test(userAgent) ? 'Windows'
+    : /Mac OS X|Macintosh/.test(userAgent) ? 'macOS'
+    : /Android/.test(userAgent) ? 'Android'
+    : /iPhone|iPad/.test(userAgent) ? 'iOS'
+    : /Linux/.test(userAgent) ? 'Linux' : '';
+  // Browser and OS names are proper nouns and stay as they are; only the
+  // joining word is translated.
+  return os ? t('device.on', { browser, os }) : browser;
+}
+
+async function renderAccount() {
+  const root = $('view-other');
+
+  // Each panel is independent: a deployment without a control plane has no
+  // sessions or tokens, and that should cost the password form nothing.
+  const [usage, tokens, sessions] = await Promise.all([
+    api('/api/vanna/v2/usage').catch(() => ({ enabled: false })),
+    api('/api/vanna/v2/auth/tokens').catch(() => ({ tokens: [] })),
+    api('/api/vanna/v2/auth/sessions').catch(() => ({ sessions: [] })),
+  ]);
+
+  const plan = usage.enabled ? `
+    <div class="card">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <strong style="font-size:1.05rem">${esc((usage.plan_label || usage.plan || 'Free'))}</strong>
+        ${usage.expired ? `<span class="chip warn">${t('plan.expired')}</span>` : ''}
+        <span class="grow"></span>
+        <span class="${usage.used >= usage.limit * 0.8 ? 'warn' : 'muted'}">
+          ${usage.used.toLocaleString()} / ${usage.limit.toLocaleString()} ${t('plan.questionsToday')}
+        </span>
+      </div>
+      <p class="muted small" style="margin:10px 0 0">
+        ${t('plan.rowsPerQuery', { rows: (usage.max_rows || 0).toLocaleString() })}
+        ${t('plan.limitIs', { source: limitSourceText(usage) })}
+      </p>
+      ${usage.expired ? `<p class="muted small" style="margin:8px 0 0">
+        ${t('plan.expiredNote')}
+      </p>` : ''}
+      <p class="muted small" style="margin:8px 0 0">
+        ${me && me.is_admin
+          ? `<a href="/admin/">${t('plan.adminChange')}</a>`
+          : t('plan.askAdmin')}
+      </p>
+    </div>` : '';
+
+  // The workspace can forbid personal keys outright. When it does, the form is
+  // not rendered at all -- but the header is also ignored server-side, so this
+  // is presentation, not enforcement.
+  const llm = llmConfig();
+  const byoCard = me.tenant.allow_byo_key === false ? `
+    <div class="card">
+      <h3 style="margin:0 0 4px">${t('account.ownKey')}</h3>
+      <p class="muted small" style="margin:0">
+        ${t('account.ownKeyBlocked')}
+      </p>
+    </div>` : `
+    <div class="card">
+      <h3 style="margin:0 0 4px">${t('account.ownKey')}</h3>
+      <p class="muted small" style="margin:0 0 12px">${t('account.ownKeyHelp')}</p>
+      <div class="form-grid">
+        <label>${t('account.provider')}
+          <select id="llm-provider">
+            <option value="openai"${llm.provider !== 'anthropic' ? ' selected' : ''}>OpenAI</option>
+            <option value="anthropic"${llm.provider === 'anthropic' ? ' selected' : ''}>Anthropic</option>
+          </select>
+        </label>
+        <label>${t('account.apiKey')}
+          <input type="password" id="llm-key" dir="ltr" autocomplete="off"
+                 placeholder="${llm.key ? '•••••••• (saved)' : 'sk-…'}" />
+        </label>
+        <label>${t('account.model')} <span class="muted small">${t('account.optional')}</span>
+          <input id="llm-model" dir="ltr" value="${esc(llm.model || '')}" placeholder="${t('account.modelDefault')}" />
+        </label>
+      </div>
+      <div class="toolbar" style="margin:12px 0 0">
+        <button class="btn primary" id="llm-save">${llm.key ? t('account.replaceKey') : t('account.saveKey')}</button>
+        ${llm.key ? `<button class="btn danger" id="llm-clear">${t('account.removeKey')}</button>` : ''}
+        <span class="chip ${llm.key ? 'ok' : ''}">${llm.key ? t('account.keyInUse') : t('account.keyNotSet')}</span>
+      </div>
+      <p class="muted small" style="margin:12px 0 0">${t('account.keyWarning')}</p>
+    </div>`;
+
+  root.innerHTML = `
+    <h2 class="view-title">${t('account.title')}</h2>
+    <p class="view-sub">${esc(me.user.email)} &middot; ${esc(me.user.role)} in
+      ${esc(me.tenant.name)}</p>
+
+    ${plan}
+
+    <div class="card">
+      <h3 style="margin:0 0 4px">${t('account.password')}</h3>
+      <p class="muted small" style="margin:0 0 12px">
+        ${t('account.passwordHelp')}
+      </p>
+      <div class="form-grid">
+        <label>${t('account.currentPassword')}<input type="password" id="pw-current" dir="ltr" autocomplete="current-password" /></label>
+        <label>${t('account.newPassword')}<input type="password" id="pw-new" dir="ltr" autocomplete="new-password" /></label>
+        <label>${t('account.repeatPassword')}<input type="password" id="pw-again" dir="ltr" autocomplete="new-password" /></label>
+      </div>
+      <div class="toolbar" style="margin:12px 0 0">
+        <button class="btn primary" id="pw-save">${t('account.changePassword')}</button>
+        <span class="muted small">${t('account.passwordLength')}</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 4px">${t('account.tokens')}</h3>
+      <p class="muted small" style="margin:0 0 12px">
+        ${t('account.tokensHelp')}
+      </p>
+      <div id="token-list">
+        ${tokens.length ? tokens.map((token, i) => `
+          <div class="row-line">
+            <div>
+              <strong>${esc(token.name || t('account.unnamedToken'))}</strong>
+              <div class="muted small">
+                ${t('account.created')} ${esc(relative(token.created_at))} &middot;
+                ${token.last_used_at
+                    ? `${t('account.lastUsed')} ${esc(relative(token.last_used_at))}`
+                    : t('account.neverUsed')}
+                ${token.expires_at ? ` &middot; ${t('account.expires')} ${esc(until(token.expires_at))}` : ''}
+              </div>
+            </div>
+            <button class="btn danger" data-revoke="${i}">${t('account.revoke')}</button>
+          </div>`).join('')
+        : `<div class="empty">${t('account.noTokens')}</div>`}
+      </div>
+      <div class="toolbar" style="margin:12px 0 0">
+        <input id="token-name" placeholder="${t('account.tokenName')}" style="max-width:260px" />
+        <button class="btn primary" id="token-new">${t('account.createToken')}</button>
+      </div>
+      <div id="token-result"></div>
+    </div>
+
+    ${byoCard}
+
+    <div class="card">
+      <h3 style="margin:0 0 4px">${t('account.sessions')}</h3>
+      <p class="muted small" style="margin:0 0 12px">
+        ${t('account.sessionsHelp')}
+      </p>
+      <div>
+        ${sessions.length ? sessions.map((s) => `
+          <div class="row-line">
+            <div>
+              <strong>${esc(deviceName(s.user_agent))}</strong>
+              ${s.is_current ? `<span class="chip">${t('account.thisBrowser')}</span>` : ''}
+              <div class="muted small">
+                ${esc(s.ip || t('account.unknownAddress'))} &middot;
+                ${t('account.signedIn')} ${esc(relative(s.created_at))} &middot;
+                ${t('account.expires')} ${esc(until(s.expires_at))}
+              </div>
+            </div>
+          </div>`).join('')
+        : `<div class="empty">${t('account.noSessions')}</div>`}
+      </div>
+      ${sessions.length > 1 ? `
+        <div class="toolbar" style="margin:12px 0 0">
+          <button class="btn danger" id="sess-purge">${t('account.signOutOthers')}</button>
+        </div>` : ''}
+    </div>`;
+
+  // -- password
+  $('pw-save').onclick = async () => {
+    const current = $('pw-current').value;
+    const next    = $('pw-new').value;
+    if (next !== $('pw-again').value) return toast(t('account.passwordMismatch'));
+    if (next.length < 10) return toast(t('account.passwordTooShort'));
+    try {
+      await api('/api/vanna/v2/auth/password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      toast(t('account.passwordChanged'));
+      renderAccount();
+    } catch (error) { toast(error.message); }
+  };
+
+  // -- tokens
+  $('token-new').onclick = async () => {
+    const name = $('token-name').value.trim();
+    if (!name) return toast(t('account.tokenNeedsName'));
+    try {
+      const result = await api('/api/vanna/v2/auth/tokens', {
+        method: 'POST', body: JSON.stringify({ name }),
+      });
+      // Rendered outside the list, and not re-fetchable: only the hash is stored,
+      // so this is the only moment the value exists anywhere but the server's reply.
+      $('token-result').innerHTML = `
+        <div class="card" style="border-color:var(--good);margin:12px 0 0">
+          <strong>${t('account.newToken')}</strong>
+          <pre class="sql" style="margin:8px 0" dir="ltr">${esc(result.token)}</pre>
+          <p class="muted small" style="margin:0">${t('account.tokenOnce')}</p>
+        </div>`;
+      $('token-name').value = '';
+      loadTokenList();
+    } catch (error) { toast(error.message); }
+  };
+
+  async function loadTokenList() {
+    // Refresh the list without wiping the just-issued token off the screen.
+    const { tokens: fresh } = await api('/api/vanna/v2/auth/tokens').catch(() => ({ tokens: [] }));
+    $('token-list').innerHTML = fresh.length ? fresh.map((token, i) => `
+      <div class="row-line">
+        <div>
+          <strong>${esc(token.name || t('account.unnamedToken'))}</strong>
+          <div class="muted small">${t('account.created')} ${esc(relative(token.created_at))} &middot;
+            ${token.last_used_at
+                ? `${t('account.lastUsed')} ${esc(relative(token.last_used_at))}`
+                : t('account.neverUsed')}</div>
+        </div>
+        <button class="btn danger" data-revoke="${i}">${t('account.revoke')}</button>
+      </div>`).join('') : `<div class="empty">${t('account.noTokens')}</div>`;
+    wireRevoke(fresh);
+  }
+
+  function wireRevoke(list) {
+    $('token-list').querySelectorAll('[data-revoke]').forEach((button) => {
+      const token = list[Number(button.dataset.revoke)];
+      button.onclick = async () => {
+        if (!confirm(t('account.revokeConfirm', { name: token.name || t('account.thisToken') }))) return;
+        try {
+          await api(`/api/vanna/v2/auth/tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' });
+          toast(t('common.revoked'));
+          loadTokenList();
+        } catch (error) { toast(error.message); }
+      };
+    });
+  }
+  wireRevoke(tokens);
+
+  // -- personal key
+  if ($('llm-save')) $('llm-save').onclick = () => {
+    const key = $('llm-key').value.trim();
+    if (!key) return toast(t('account.keyNeeded'));
+    setLlmConfig({
+      key,
+      provider: $('llm-provider').value,
+      model: $('llm-model').value.trim(),
+    });
+    // Headers are read fresh per request, but the chat component caches the set
+    // it was given at startup -- so it has to be told again.
+    if (chatEl && typeof chatEl.setCustomHeaders === 'function') {
+      chatEl.setCustomHeaders(chatHeaders());
+    }
+    toast(t('account.keySaved'));
+    renderAccount();
+  };
+
+  if ($('llm-clear')) $('llm-clear').onclick = () => {
+    setLlmConfig(null);
+    if (chatEl && typeof chatEl.setCustomHeaders === 'function') {
+      chatEl.setCustomHeaders(chatHeaders());
+    }
+    toast(t('account.keyRemoved'));
+    renderAccount();
+  };
+
+  // -- sessions
+  if ($('sess-purge')) $('sess-purge').onclick = async () => {
+    if (!confirm(t('account.signOutOthersConfirm'))) return;
+    try {
+      const { ended } = await api('/api/vanna/v2/auth/sessions', { method: 'DELETE' });
+      toast(`${ended} session${ended === 1 ? '' : 's'} ended`);
+      renderAccount();
+    } catch (error) { toast(error.message); }
+  };
+}
+
 function openSaveSheet(question, sql) {
   openSheet(`
-    <h3>Save a query</h3>
-    <label for="sv-title">Title</label>
+    <h3>${t('saved.sheetTitle')}</h3>
+    <label for="sv-title">${t('saved.fieldTitle')}</label>
     <input id="sv-title" placeholder="Monthly revenue by region" />
-    <label for="sv-question">Question it answers (optional)</label>
+    <label for="sv-question">${t('saved.fieldQuestion')}</label>
     <input id="sv-question" value="${esc(question || '')}" />
     <label for="sv-sql">SQL</label>
     <textarea id="sv-sql">${esc(sql || '')}</textarea>
     <div class="actions">
-      <button class="btn" data-close>Cancel</button>
-      <button class="btn primary" id="sv-save">Save</button>
+      <button class="btn" data-close>${t('common.cancel')}</button>
+      <button class="btn primary" id="sv-save">${t('common.save')}</button>
     </div>`);
 
   const titleField = $('sv-title');
@@ -1068,11 +1580,11 @@ function openSaveSheet(question, sql) {
       question: $('sv-question').value.trim(),
       sql: $('sv-sql').value.trim(),
     };
-    if (!title || !body.sql) return toast('A title and SQL are required');
+    if (!title || !body.sql) return toast(t('saved.needTitleAndSql'));
     try {
       await api('/api/vanna/v2/saved-queries', { method: 'POST', body: JSON.stringify(body) });
       closeSheet();
-      toast('Saved');
+      toast(t('saved.saved'));
       if (view === 'saved') renderSaved();
     } catch (error) { toast(error.message); }
   };
@@ -1089,7 +1601,7 @@ async function previewPrompt() {
   const question = prompt('Preview the context assembled for which question?');
   if (!question || !question.trim()) return;
 
-  openSheet('<h3>Assembling…</h3><div class="empty">Running retrieval.</div>');
+  openSheet(`<h3>${t('preview.assembling')}</h3><div class="empty">${t('preview.running')}</div>`);
 
   let payload;
   try {
@@ -1097,9 +1609,9 @@ async function previewPrompt() {
       `/api/vanna/v2/prompt-preview?question=${encodeURIComponent(question.trim())}`
     );
   } catch (error) {
-    openSheet(`<h3>Preview failed</h3>
+    openSheet(`<h3>${t('preview.failed')}</h3>
       <div class="small" style="color:var(--bad)">${esc(error.message)}</div>
-      <div class="actions"><button class="btn" data-close>Close</button></div>`);
+      <div class="actions"><button class="btn" data-close>${t('common.close')}</button></div>`);
     return;
   }
 
@@ -1112,7 +1624,7 @@ async function previewPrompt() {
     ${payload.sections.length ? `
       <div class="card scroll-x" style="margin-top:12px">
         <table class="data">
-          <thead><tr><th>Section</th><th>Tokens</th><th>Dropped</th></tr></thead>
+          <thead><tr><th>${t('preview.section')}</th><th>${t('preview.tokens')}</th><th>${t('preview.dropped')}</th></tr></thead>
           <tbody>${payload.sections.map((s) => `
             <tr>
               <td>${esc(s.name)}${s.truncated ? ' <span class="chip warn">truncated</span>' : ''}</td>
@@ -1124,9 +1636,9 @@ async function previewPrompt() {
         </table>
       </div>` : `<div class="empty">${esc(payload.note || 'Nothing retrieved.')}</div>`}
     ${payload.text ? `
-      <div class="muted small" style="margin:14px 0 6px">Assembled context</div>
+      <div class="muted small" style="margin:14px 0 6px">${t('preview.title')}</div>
       <pre class="sql" style="max-height:38vh;overflow:auto">${esc(payload.text)}</pre>` : ''}
-    <div class="actions"><button class="btn" data-close>Close</button></div>`);
+    <div class="actions"><button class="btn" data-close>${t('common.close')}</button></div>`);
 }
 
 // --------------------------------------------------------------- cubes ---
@@ -1147,30 +1659,28 @@ async function renderCubes() {
   }
 
   if (!cubeCache.length) {
-    root.innerHTML = `<div class="empty">No metrics defined. Add a cube under
-      <span class="mono">cubes/</span> in the project and rebuild.</div>`;
+    root.innerHTML = `<div class="empty">${t('cubes.emptyBefore')}
+      <span class="mono" dir="ltr">cubes/</span> ${t('cubes.emptyAfter')}</div>`;
     return;
   }
 
   let selected = cubeCache[0];
 
   root.innerHTML = `
-    <h2 class="view-title">Metrics</h2>
-    <p class="view-sub">Pick what to measure and how to break it down. The
-      aggregation is defined once, in the project, so these totals cannot be
-      computed at the wrong grain.</p>
+    <h2 class="view-title">${t('cubes.title')}</h2>
+    <p class="view-sub">${t('cubes.sub')}</p>
     <div class="toolbar">
       <select id="cube-pick" style="max-width:280px">
         ${cubeCache.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('')}
       </select>
-      <button class="btn primary" id="cube-run">Run</button>
+      <button class="btn primary" id="cube-run">${t('common.run')}</button>
     </div>
     <div class="card" id="cube-controls"></div>
     <div id="cube-result"></div>`;
 
   function paintControls() {
     $('cube-controls').innerHTML = `
-      <label class="inline" style="display:block;margin-bottom:6px">Measures</label>
+      <label class="inline" style="display:block;margin-bottom:6px">${t('cubes.measures')}</label>
       <div class="roster" id="cube-measures">
         ${selected.measures.map((m, i) => `
           <label class="inline" title="${esc(m.expression)}">
@@ -1179,7 +1689,7 @@ async function renderCubes() {
           </label>`).join('')}
       </div>
       ${selected.dimensions.length ? `
-        <label class="inline" style="display:block;margin:12px 0 6px">Break down by</label>
+        <label class="inline" style="display:block;margin:12px 0 6px">${t('cubes.breakdown')}</label>
         <div class="roster">
           ${selected.dimensions.map((d) => `
             <label class="inline">
@@ -1187,12 +1697,12 @@ async function renderCubes() {
             </label>`).join('')}
         </div>` : ''}
       ${selected.time_dimensions.length ? `
-        <label class="inline" style="display:block;margin:12px 0 6px">Over time</label>
+        <label class="inline" style="display:block;margin:12px 0 6px">${t('cubes.overTime')}</label>
         <select id="cube-time" style="max-width:200px;display:inline-block">
           <option value="">(none)</option>
           ${selected.time_dimensions.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}
         </select>
-        <select id="cube-grain" style="max-width:160px;display:inline-block;margin-left:8px">
+        <select id="cube-grain" style="max-width:160px;display:inline-block;margin-inline-start:8px">
           ${['day','week','month','quarter','year'].map((g) =>
             `<option value="${g}" ${g === 'month' ? 'selected' : ''}>${g}</option>`).join('')}
         </select>` : ''}`;
@@ -1213,9 +1723,9 @@ async function renderCubes() {
       .map((el) => el.dataset.dimension);
     const time = $('cube-time') ? $('cube-time').value : '';
 
-    if (!measures.length) return toast('Pick at least one measure');
+    if (!measures.length) return toast(t('cubes.pickMeasure'));
 
-    $('cube-result').innerHTML = '<div class="empty">Running…</div>';
+    $('cube-result').innerHTML = `<div class="empty">${t('cubes.running')}</div>`;
     let payload;
     try {
       payload = await api(`/api/vanna/v2/cubes/${encodeURIComponent(selected.name)}/query`, {
@@ -1326,7 +1836,7 @@ function newThread() {
 }
 
 async function renameThread(id) {
-  const thread = threads.find((t) => t.id === id);
+  const thread = threads.find((item) => item.id === id);
   const title = prompt('Rename this conversation', thread ? thread.title : '');
   if (title === null || !title.trim()) return;
   try {
@@ -1338,7 +1848,7 @@ async function renameThread(id) {
 }
 
 async function deleteThread(id) {
-  if (!confirm('Delete this conversation and its messages?')) return;
+  if (!confirm(t('thread.deleteConfirm'))) return;
   try {
     await api(`/api/vanna/v2/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch (error) { return toast(error.message); }
@@ -1359,9 +1869,8 @@ async function renderDashboards() {
   }
 
   root.innerHTML = `
-    <h2 class="view-title">Dashboards</h2>
-    <p class="view-sub">Tiles are executed with <em>your</em> permissions when you
-      open one — two people can open the same dashboard and see different numbers.</p>
+    <h2 class="view-title">${t('dash.title')}</h2>
+    <p class="view-sub">${t('dash.sub')}</p>
     <div id="dash-body">
       ${dashboards.length ? dashboards.map((d, index) => `
         <div class="card">
@@ -1370,12 +1879,11 @@ async function renderDashboards() {
             <span class="muted small">${esc(d.created_by)} · ${esc(relative(d.updated_at))}</span>
           </div>
           <div class="toolbar" style="margin:12px 0 0">
-            <button class="btn primary" data-open="${index}">Open</button>
-            <button class="btn danger" data-del="${index}">Delete</button>
+            <button class="btn primary" data-open="${index}">${t('dash.open')}</button>
+            <button class="btn danger" data-del="${index}">${t('common.delete')}</button>
           </div>
         </div>`).join('')
-      : `<div class="empty">No dashboards yet. Ask in chat: “build me a dashboard
-           of revenue by region”.</div>`}
+      : `<div class="empty">${t('dash.empty')}</div>`}
     </div>`;
 
   root.querySelectorAll('[data-open]').forEach((button) => {
@@ -1384,7 +1892,7 @@ async function renderDashboards() {
   root.querySelectorAll('[data-del]').forEach((button) => {
     const dashboard = dashboards[Number(button.dataset.del)];
     button.onclick = async () => {
-      if (!confirm(`Delete “${dashboard.title}”?`)) return;
+      if (!confirm(t('dash.deleteConfirm', { title: dashboard.title }))) return;
       try {
         await api(`/api/vanna/v2/dashboards/${encodeURIComponent(dashboard.id)}`,
                   { method: 'DELETE' });
@@ -1395,7 +1903,7 @@ async function renderDashboards() {
 }
 
 async function openDashboard(summary) {
-  openSheet(`<h3>${esc(summary.title)}</h3><div class="empty">Running tiles…</div>`);
+  openSheet(`<h3>${esc(summary.title)}</h3><div class="empty">${t('dash.runningTiles')}</div>`);
 
   let payload;
   try {
@@ -1403,7 +1911,7 @@ async function openDashboard(summary) {
   } catch (error) {
     openSheet(`<h3>${esc(summary.title)}</h3>
       <div class="small" style="color:var(--bad)">${esc(error.message)}</div>
-      <div class="actions"><button class="btn" data-close>Close</button></div>`);
+      <div class="actions"><button class="btn" data-close>${t('common.close')}</button></div>`);
     return;
   }
 
@@ -1468,8 +1976,8 @@ async function openDashboard(summary) {
       </div>`;
   }).join('');
 
-  openSheet(`<h3>${esc(summary.title)}</h3>${body || '<div class="empty">No tiles.</div>'}
-    <div class="actions"><button class="btn" data-close>Close</button></div>`);
+  openSheet(`<h3>${esc(summary.title)}</h3>${body || `<div class="empty">${t('dash.noTiles')}</div>`}
+    <div class="actions"><button class="btn" data-close>${t('common.close')}</button></div>`);
 
   // Charts are mounted after the sheet exists, because <plotly-chart> receives
   // its series as element properties rather than attributes.
@@ -1487,7 +1995,7 @@ function mountChart(mount, tile, result) {
   const columns = result.columns || [];
   const rows = result.rows || [];
   if (!columns.length || !rows.length) {
-    mount.innerHTML = '<div class="empty small">No data.</div>';
+    mount.innerHTML = `<div class="empty small">${t('dash.noData')}</div>`;
     return;
   }
 
@@ -1533,7 +2041,7 @@ function mountChart(mount, tile, result) {
 // ----------------------------------------------------------- run result ---
 
 async function runSql(sql, options = {}) {
-  if (!sql) return toast('There is no SQL on this entry');
+  if (!sql) return toast(t('result.noSql'));
 
   // The statement stays editable while the result is on screen. Adjusting a
   // LIMIT or a filter and re-running is the single most common thing anyone
@@ -1555,8 +2063,8 @@ async function runSql(sql, options = {}) {
         <button class="btn primary" id="sql-run" ${state.running ? 'disabled' : ''}>
           ${state.running ? 'Running…' : 'Run'}
         </button>
-        <button class="btn" id="sql-save">Save as query</button>
-        <span class="muted small">Ctrl+Enter to run</span>
+        <button class="btn" id="sql-save">${t('result.saveAsQuery')}</button>
+        <span class="muted small">${t('result.ctrlEnter')}</span>
       </div>
       ${state.error ? `
         <div class="card small" style="color:var(--bad);margin-top:12px">${esc(state.error)}</div>` : ''}
@@ -1574,8 +2082,8 @@ async function runSql(sql, options = {}) {
           </table>
         </div>` : ''}
       <div class="actions">
-        ${state.result ? '<button class="btn" id="dl-csv">Download CSV</button>' : ''}
-        <button class="btn" data-close>Close</button>
+        ${state.result ? `<button class="btn" id="dl-csv">${t('result.downloadCsv')}</button>` : ''}
+        <button class="btn" data-close>${t('common.close')}</button>
       </div>`);
 
     const editor = $('sql-edit');
@@ -1593,7 +2101,7 @@ async function runSql(sql, options = {}) {
   }
 
   async function execute() {
-    if (!state.sql.trim()) return toast('Nothing to run');
+    if (!state.sql.trim()) return toast(t('result.nothingToRun'));
     state.running = true;
     state.error = null;
     render();
@@ -1657,21 +2165,21 @@ function closeSheet() {
 // ---------------------------------------------------- workspace switch ---
 
 function openWorkspaceSheet() {
-  const others = (me.memberships || []).filter((t) => t !== me.tenant.id);
+  const others = (me.memberships || []).filter((id) => id !== me.tenant.id);
   openSheet(`
-    <h3>Workspace</h3>
-    <p class="muted small">You are in <strong>${esc(me.tenant.name)}</strong>${
-      me.tenant.data_source ? `, querying <span class="mono">${esc(me.tenant.data_source)}</span>` : ''
+    <h3>${t('ws.title')}</h3>
+    <p class="muted small">${t('ws.youAreIn')} <strong>${esc(me.tenant.name)}</strong>${
+      me.tenant.data_source ? `, ${t('ws.querying')} <span class="mono" dir="ltr">${esc(me.tenant.data_source)}</span>` : ''
     }.</p>
     ${others.length ? `
-      <label>Switch to</label>
+      <label>${t('ws.switchTo')}</label>
       <div class="roster">
-        ${others.map((t) => `<button data-tenant="${esc(t)}">${esc(t)}</button>`).join('')}
+        ${others.map((id) => `<button data-tenant="${esc(id)}">${esc(id)}</button>`).join('')}
       </div>`
-    : '<p class="muted small">This is the only workspace you belong to.</p>'}
+    : `<p class="muted small">${t('ws.only')}</p>`}
     <div class="actions">
-      <button class="btn danger" id="ws-signout">Sign out</button>
-      <button class="btn" data-close>Close</button>
+      <button class="btn danger" id="ws-signout">${t('header.signOut')}</button>
+      <button class="btn" data-close>${t('common.close')}</button>
     </div>`);
 
   $('sheet').querySelectorAll('[data-tenant]').forEach((button) => {
@@ -1688,6 +2196,25 @@ function openWorkspaceSheet() {
 
 async function boot() {
   applyTheme(localStorage.getItem(THEME_KEY) || 'light');
+
+  // Before anything renders, so the sign-in screen is already translated -- the
+  // first screen is exactly the one that must not be in a language you cannot read.
+  const options = Object.entries(LOCALES)
+    .map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+  ['locale-btn', 'si-locale'].forEach((id) => {
+    const picker = $(id);
+    if (!picker) return;
+    picker.innerHTML = options;
+    picker.value = locale;
+    picker.onchange = async () => {
+      await loadLocale(picker.value);
+      // Both pickers show the same setting; keep the other in step.
+      ['locale-btn', 'si-locale'].forEach((other) => {
+        if ($(other)) $(other).value = locale;
+      });
+    };
+  });
+  await loadLocale(locale);
 
   $('theme-btn').onclick = () => {
     const current = document.documentElement.getAttribute('data-theme');

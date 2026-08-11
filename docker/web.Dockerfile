@@ -41,6 +41,12 @@ COPY --from=builder /build/dist/ /usr/share/nginx/html/assets/
 COPY docker/web/index.html /usr/share/nginx/html/index.html
 COPY frontends/admin-console/index.html /usr/share/nginx/html/admin/index.html
 
+# Interface translations, fetched at runtime by the page. A missing file here
+# does not break the app -- t() falls back to the key -- so the failure mode is
+# an interface that quietly reverts to English, which is easy to miss. Keep this
+# COPY in step with docker/web/locales/.
+COPY docker/web/locales/ /usr/share/nginx/html/locales/
+
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

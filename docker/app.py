@@ -273,6 +273,17 @@ def build_user_resolver(directory, accounts=None):
             lowered = {k.lower(): v for k, v in headers.items()}
             cookies = getattr(request_context, "cookies", {}) or {}
 
+            # Take the caller's API key *out* of the context before it goes any
+            # further. Every server route builds this dict with
+            # `headers=dict(request.headers)`, and the context is then passed
+            # around freely -- so leaving a third-party secret in it means the
+            # first person to log request_context.headers while debugging leaks
+            # it. `lowered` above is a copy and keeps the value for the one
+            # caller that needs it (TenantDispatchChatHandler._delegate, which
+            # reads it before calling this method).
+            for name in [k for k in headers if k.lower() == "x-llm-key"]:
+                headers.pop(name, None)
+
             email = await self._authenticate(lowered, cookies)
             tenant = (lowered.get("x-tenant-id") or DEFAULT_TENANT).strip().lower()
 
@@ -312,6 +323,32 @@ def build_user_resolver(directory, accounts=None):
             if role == "admin" or is_platform_admin:
                 groups.append("admin")
 
+            # Is this request being answered on the caller's own LLM key? Decided
+            # here because this is where the workspace row is already in hand, and
+            # the workspace gets the final say: a tenant with allow_byo_key off has
+            # the header ignored, not merely the form hidden.
+            #
+            # Two signals, because this method runs **twice per request**: once in
+            # TenantDispatchChatHandler._delegate, and again inside Agent._send_message.
+            # The first call sees the header; by the second it has been stripped just
+            # above, so the header alone would report False exactly when the quota hook
+            # is about to consult it -- and the caller would be charged for a question
+            # answered on their own key. The already-installed override is the durable
+            # signal for that second pass.
+            #
+            # Only the *fact* is carried. The key itself never enters User.metadata,
+            # which is persisted into conversations and audit records -- a secret in
+            # there would outlive the request by months.
+            from vanna.core.llm import current_llm_service
+
+            using_own_key = bool(
+                (row or {}).get("allow_byo_key", True)
+                and (
+                    (lowered.get("x-llm-key") or "").strip()
+                    or current_llm_service() is not None
+                )
+            )
+
             return User(
                 id=email,
                 email=email,
@@ -320,7 +357,11 @@ def build_user_resolver(directory, accounts=None):
                 group_memberships=groups,
                 # Carried so route handlers can distinguish analyst from viewer
                 # without a second directory round trip.
-                metadata={"role": role, "platform_admin": is_platform_admin},
+                metadata={
+                    "role": role,
+                    "platform_admin": is_platform_admin,
+                    "byo_key": using_own_key,
+                },
             )
 
     return DirectoryUserResolver()
@@ -368,6 +409,79 @@ def build_llm_service():
         "or OPENAI_API_KEY for real answers."
     )
     return MockLlmService()
+
+
+#: Providers a caller may name in X-LLM-Provider. An allow-list rather than free
+#: text: the value selects which client class is constructed, and "whatever the
+#: header says" is not a decision to hand to a request.
+BYO_PROVIDERS = ("openai", "anthropic")
+
+
+def build_byo_llm_service(headers: Dict[str, str]):
+    """Build an LLM service from a caller's own key, or return None.
+
+    The key arrives per request and is never stored: no column, no cache, no log
+    line. It exists for the life of the client object built here, which lives for
+    the life of the request.
+
+    Returns None on anything unexpected -- an unknown provider, a missing key, a
+    client that will not construct -- so the caller silently falls back to the
+    server's own service. Failing the whole question because a personal key was
+    malformed would be a worse outcome than answering it normally.
+    """
+    key = (headers.get("x-llm-key") or "").strip()
+    if not key:
+        return None
+
+    provider = (headers.get("x-llm-provider") or "openai").strip().lower()
+    model = (headers.get("x-llm-model") or "").strip() or None
+
+    if provider not in BYO_PROVIDERS:
+        logger.warning("Ignoring personal key: unknown provider %r", provider)
+        return None
+
+    try:
+        if provider == "anthropic":
+            from vanna.integrations.anthropic import AnthropicLlmService
+
+            return AnthropicLlmService(api_key=key, model=model)
+
+        from vanna.integrations.openai import OpenAILlmService
+
+        return OpenAILlmService(api_key=key, model=model)
+    except Exception as exc:  # noqa: BLE001 - never fail a request over this
+        # Note the *type*, never the exception text: client libraries have been
+        # known to echo the key back in their error messages.
+        logger.warning(
+            "Ignoring personal key: %s could not be constructed (%s)",
+            provider,
+            type(exc).__name__,
+        )
+        return None
+
+
+def close_llm_service(service: Any) -> None:
+    """Release a per-request LLM service's HTTP connections.
+
+    Each personal-key request builds its own client, and each client holds a
+    connection pool. Without this they accumulate for the life of the worker
+    until it runs out of file descriptors.
+
+    Deliberately *not* a client cache keyed by the key: that would keep users'
+    API keys resident in memory long after their request, to save a connection
+    setup on a call that already takes seconds. Wrong trade.
+
+    Best-effort, because neither integration exposes close() on the service --
+    only on the client underneath it, and only on some versions.
+    """
+    client = getattr(service, "_client", None)
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - a failed cleanup must not fail a request
+        logger.debug("Could not close per-request LLM client: %s", type(exc).__name__)
 
 
 # ----------------------------------------------------------------------
@@ -711,7 +825,12 @@ class Platform:
         # workspace gets the deployment defaults, which is the correct behaviour
         # for a deployment that is not billing anyone.
         self.billing: Any = None
-        self.llm = build_llm_service()
+        # Wrapped so a request can redirect LLM calls to the caller's own key.
+        # The agent binds its service once at construction and agents are cached
+        # per tenant, so this indirection is the only place the swap can happen.
+        from vanna.core.llm import DelegatingLlmService
+
+        self.llm = DelegatingLlmService(build_llm_service())
         # Ranked retrieval. `lexical` is dependency-free BM25 and the default;
         # naming a vector integration fuses it with lexical via RRF. A backend
         # that cannot be built downgrades *loudly* -- a silent fall back to
@@ -1066,7 +1185,12 @@ class Platform:
             lifecycle_hooks=[
                 # Order matters only in that the quota check should reject
                 # before anything else does work.
-                InMemoryQuotaHook(max_messages=quota),
+                # A caller spending their own tokens is not spending the
+                # workspace's budget, so the cap does not apply to them. The
+                # generation is still recorded -- see the hook's docstring.
+                InMemoryQuotaHook(
+                    max_messages=quota, exempt_metadata_flag="byo_key"
+                ),
                 RateLimitHook(max_requests=RATE_LIMIT),
                 _question_capture_hook(),
             ],
@@ -1295,22 +1419,67 @@ def create_app():
         def __init__(self) -> None:  # deliberately no super().__init__
             self.agent = None
 
-        async def _delegate(self, request) -> ChatHandler:
+        async def _delegate(self, request):
+            """Resolve the caller, pick their tenant's handler, and their LLM.
+
+            Returns ``(handler, token)``; the token must be released in a
+            ``finally`` or the next request handled by this worker could inherit
+            somebody else's API key.
+            """
+            from vanna.core.llm import use_llm_service
+
+            # Read the key BEFORE resolving, because resolve_user strips it from
+            # the request context on the way past -- see the comment there.
+            headers = getattr(request.request_context, "headers", {}) or {}
+            lowered = {k.lower(): v for k, v in headers.items()}
+
             user = await resolver.resolve_user(request.request_context)
-            return (await platform.runtime_for(user.tenant_id)).handler
+            handler = (await platform.runtime_for(user.tenant_id)).handler
+
+            token = None
+            service = None
+            # The resolver decides whether the key may be used at all -- it knows
+            # the workspace, and a workspace can forbid personal keys.
+            if (user.metadata or {}).get("byo_key"):
+                service = build_byo_llm_service(lowered)
+                if service is not None:
+                    token = use_llm_service(service)
+                    logger.info(
+                        "Answering for %s on their own key (quota not charged)",
+                        user.email,
+                    )
+            return handler, token, service
 
         async def handle_stream(self, request):
             # PermissionError from the resolver propagates into the route's
             # error handling, which turns it into an SSE `error` event. That is
             # the right place for it to land: the user is looking at the chat
             # transcript, not at a status code.
-            handler = await self._delegate(request)
-            async for chunk in handler.handle_stream(request):
-                yield chunk
+            from vanna.core.llm import release_llm_service
+
+            handler, token, service = await self._delegate(request)
+            try:
+                async for chunk in handler.handle_stream(request):
+                    yield chunk
+            finally:
+                # Also runs when the client disconnects mid-stream, which is the
+                # case that would otherwise leak both the override and the socket.
+                if token is not None:
+                    release_llm_service(token)
+                if service is not None:
+                    close_llm_service(service)
 
         async def handle_poll(self, request):
-            handler = await self._delegate(request)
-            return await handler.handle_poll(request)
+            from vanna.core.llm import release_llm_service
+
+            handler, token, service = await self._delegate(request)
+            try:
+                return await handler.handle_poll(request)
+            finally:
+                if token is not None:
+                    release_llm_service(token)
+                if service is not None:
+                    close_llm_service(service)
 
     register_auth_routes(
         app,

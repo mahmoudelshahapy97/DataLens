@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { vannaDesignTokens } from '../styles/vanna-design-tokens.js';
 import { VannaApiClient, ChatStreamChunk } from '../services/api-client.js';
 import { ComponentManager, RichComponent } from './rich-component-system.js';
+import { isRtl, translate } from '../locales/index.js';
 import './vanna-status-bar.js';
 import './vanna-progress-tracker.js';
 import './rich-card.js';
@@ -790,7 +791,18 @@ export class VannaChat extends LitElement {
   ];
 
   @property() title = 'Vanna AI Chat';
-  @property() placeholder = 'Ask me anything...';
+  /**
+   * Interface language. The host page owns this: the chat is one panel inside a
+   * page that already has a language picker, and two independent language
+   * settings on one screen is a bug, not a feature.
+   */
+  @property({ reflect: true }) locale = 'en';
+  /**
+   * Empty means "use the locale's default". A host that sets `placeholder`
+   * explicitly keeps it in every language -- an explicit value from the embedder
+   * is a decision, and silently translating over it would be wrong.
+   */
+  @property() placeholder = '';
   @property({ type: Boolean }) disabled = false;
   @property({ type: Boolean }) showProgress = true;
   @property({ type: Boolean }) allowMinimize = true;
@@ -801,6 +813,11 @@ export class VannaChat extends LitElement {
   @property({ attribute: 'poll-endpoint' }) pollEndpoint = '/api/vanna/v2/chat_poll';
   @property() subtitle = '';
   @property() startingState: 'normal' | 'maximized' | 'minimized' = 'normal';
+
+  /** Shorthand for a translated string in the current locale. */
+  private t(key: string): string {
+    return translate(this.locale, key);
+  }
 
   @state() private currentMessage = '';
   @state() private status: 'idle' | 'working' | 'error' | 'success' = 'idle';
@@ -969,6 +986,15 @@ export class VannaChat extends LitElement {
       this.classList.add(this._windowState);
       console.log('Applied CSS classes:', this.className);
     }
+
+    // Text direction is set on the host, not inside the shadow root, so it
+    // inherits into the shadow tree the way `dir` is meant to. The interface
+    // mirrors; SQL, tables and charts inside the answer do not -- those carry
+    // their own dir, because a mirrored query is unreadable in any language.
+    if (changedProperties.has('locale')) {
+      this.setAttribute('dir', isRtl(this.locale) ? 'rtl' : 'ltr');
+      this.setAttribute('lang', this.locale);
+    }
   }
 
   private handleInput(e: Event) {
@@ -1042,13 +1068,13 @@ export class VannaChat extends LitElement {
         document.body.removeChild(scratch);
       }
       this.copiedLabel = 'Copied';
-      this.announce('Answer copied to clipboard');
+      this.announce(this.t('chat.copied'));
       setTimeout(() => {
         this.copiedLabel = '';
       }, 1800);
     } catch (error) {
       console.warn('Copy failed:', error);
-      this.announce('Could not copy to clipboard');
+      this.announce(this.t('chat.copyFailed'));
     }
   }
 
@@ -1093,7 +1119,7 @@ export class VannaChat extends LitElement {
     if (container.querySelector('plotly-chart, .js-plotly-plot')) {
       parts.push('a chart was produced');
     }
-    return parts.length ? parts.join(', ') + '.' : 'See the response area.';
+    return parts.length ? parts.join(', ') + '.' : this.t('status.seeResponse');
   }
 
   /** Cancel the in-flight response. */
@@ -1102,8 +1128,8 @@ export class VannaChat extends LitElement {
     this.abortController.abort();
     this.abortController = null;
     this.isStreaming = false;
-    this.setStatus('idle', 'Stopped', 'Response cancelled');
-    this.announce('Response stopped');
+    this.setStatus('idle', this.t('status.stopped'), this.t('status.cancelled'));
+    this.announce(this.t('status.stopped'));
     this.dispatchEvent(
       new CustomEvent('vanna-stopped', {
         detail: { conversationId: this.conversationId },
@@ -1270,7 +1296,7 @@ export class VannaChat extends LitElement {
     this.requestUpdate();
 
     // Update status to working (initial frontend status before backend responds)
-    this.setStatus('working', 'Sending message...', '');
+    this.setStatus('working', this.t('status.sending'), '');
 
     // Clear input only if we're sending from the input field
     if (messageText === this.currentMessage) {
@@ -1303,7 +1329,7 @@ export class VannaChat extends LitElement {
       this.lastRequestId = request.request_id;
       this.lastQuestion = messageText;
       this.lastFeedback = null;
-      this.announce('Question sent, working on the answer');
+      this.announce(this.t('status.sent'));
 
       // Stream the response
       await this.handleStreamingResponse(request);
@@ -1453,7 +1479,7 @@ export class VannaChat extends LitElement {
       // fallback below is still part of the same logical turn.
       this.isStreaming = false;
       this.abortController = null;
-      this.announce('Answer ready. ' + this.answerSummaryForScreenReader());
+      this.announce(this.t('status.ready') + ' ' + this.answerSummaryForScreenReader());
 
       // Backend is responsible for final status via StatusBarUpdateComponent
       // No frontend status clearing here
@@ -1465,14 +1491,14 @@ export class VannaChat extends LitElement {
       if (this.wasAborted(error)) {
         this.isStreaming = false;
         this.abortController = null;
-        this.setStatus('idle', 'Stopped', 'Response cancelled');
+        this.setStatus('idle', this.t('status.stopped'), this.t('status.cancelled'));
         return true;
       }
       console.warn('SSE streaming failed, falling back to polling:', error);
 
       try {
         // Fallback to polling - show user we're retrying
-        this.setStatus('working', 'Connection issue, retrying...', 'Using fallback method');
+        this.setStatus('working', this.t('status.retrying'), this.t('status.fallback'));
         const response = await this.apiClient.sendPollMessage(request);
 
         for (const chunk of response.chunks) {
@@ -1483,7 +1509,7 @@ export class VannaChat extends LitElement {
 
       } catch (pollError) {
         // Only set error status if polling also fails (connection error)
-        this.setStatus('error', 'Connection failed', 'Unable to reach server');
+        this.setStatus('error', this.t('status.failed'), this.t('status.unreachable'));
         throw pollError;
       }
     }
@@ -1573,7 +1599,7 @@ export class VannaChat extends LitElement {
     const componentType = chunk.rich?.type;
     switch (componentType) {
       case 'text':
-        return 'Generating response';
+        return this.t('status.working');
       case 'thinking':
         return 'Thinking';
       case 'tool_execution':
@@ -1891,8 +1917,8 @@ export class VannaChat extends LitElement {
                   <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
                 </svg>
               </div>
-              <div class="empty-state-text">Start a conversation</div>
-              <div class="empty-state-subtitle">Type your message below to begin chatting</div>
+              <div class="empty-state-text">${this.t('chat.emptyTitle')}</div>
+              <div class="empty-state-subtitle">${this.t('chat.emptySubtitle')}</div>
             </div>
 
             <!-- Rich Components Container - all content renders here via ComponentManager -->
@@ -1922,7 +1948,7 @@ export class VannaChat extends LitElement {
             <div class="chat-input-container">
               <textarea
                 class="message-input"
-                .placeholder=${this.placeholder}
+                .placeholder=${this.placeholder || this.t('chat.placeholder')}
                 .disabled=${this.disabled}
                 @input=${this.handleInput}
                 @keydown=${this.handleKeyPress}
@@ -1933,8 +1959,8 @@ export class VannaChat extends LitElement {
                     <button
                       class="send-button stop-button"
                       type="button"
-                      aria-label="Stop generating"
-                      title="Stop generating"
+                      aria-label=${this.t('chat.stop')}
+                      title=${this.t('chat.stop')}
                       @click=${this.stopStreaming}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -1946,7 +1972,7 @@ export class VannaChat extends LitElement {
                     <button
                       class="send-button"
                       type="button"
-                      aria-label="Send message"
+                      aria-label=${this.t('chat.send')}
                       .disabled=${this.disabled || !this.currentMessage.trim()}
                       @click=${this.sendMessage}
                     >
