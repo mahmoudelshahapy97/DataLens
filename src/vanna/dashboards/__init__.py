@@ -20,11 +20,14 @@ from .models import (
     TileKind,
     TileResult,
 )
+from .export import export_filename, export_html
 from .render import MAX_TILE_ROWS, render_dashboard
 from .store import DashboardStore, LocalDashboardStore, validated
 from .verify import VerifyIssue, has_errors, verify_dashboard, verify_tile
 
 __all__ = [
+    "export_html",
+    "export_filename",
     "Dashboard",
     "Tile",
     "TileKind",

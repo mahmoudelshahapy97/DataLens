@@ -246,6 +246,77 @@ def from_catalog(path: Optional[Path], catalog: Optional[Path], overwrite: bool)
     click.echo("\nNext: edit models/, then `vanna project validate && vanna project build`.")
 
 
+@project.command("from-osi")
+@click.option("--path", type=click.Path(path_type=Path), default=None)
+@click.argument("source", type=click.Path(path_type=Path, exists=True))
+@click.option("--overwrite", is_flag=True, help="Replace models that already exist.")
+def from_osi(path: Optional[Path], source: Path, overwrite: bool) -> None:
+    """Draft models, relationships and cubes from an OSI semantic model.
+
+    Open Semantic Interchange is a vendor-neutral format backed by Snowflake,
+    dbt Labs, Databricks, Cube and AtScale. If your team already publishes one,
+    this reads it rather than asking you to write the same definitions twice.
+
+    Warnings are printed rather than swallowed: anything OSI expresses that this
+    project cannot represent is named, because a model that looks complete and
+    quietly computes the wrong number is the failure worth avoiding.
+    """
+    from ..semantic import write_model_yaml, write_relationships_yaml
+    from ..semantic.from_osi import manifest_from_osi_file
+
+    found = Project.load(path)
+
+    try:
+        manifest, warnings = manifest_from_osi_file(source)
+    except ImportError as exc:
+        raise click.ClickException(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(f"Could not read {source}: {exc}")
+
+    if not manifest.models:
+        raise click.ClickException(
+            f"{source} produced no models. Check it has a `semantic_model` section."
+        )
+
+    existing = {d.name.lower() for d in found.paths.model_dirs()}
+    written, skipped = 0, 0
+    for model in manifest.models:
+        if model.name.lower() in existing and not overwrite:
+            skipped += 1
+            continue
+        write_model_yaml(found.paths, model)
+        written += 1
+
+    if manifest.relationships and (
+        overwrite
+        or not found.paths.relationships_file.exists()
+        or _relationships_are_empty(found.paths)
+    ):
+        write_relationships_yaml(found.paths, manifest.relationships)
+
+    click.secho(f"Wrote {written} model(s).", fg="green")
+    if manifest.relationships:
+        click.echo(f"  {len(manifest.relationships)} relationship(s).")
+    if manifest.cubes:
+        measures = sum(len(c.measures) for c in manifest.cubes)
+        click.echo(f"  {len(manifest.cubes)} cube(s) with {measures} measure(s).")
+        click.echo("  Cubes are not written yet -- add them under cubes/ by hand:")
+        for cube in manifest.cubes:
+            for measure in cube.measures:
+                click.echo(f"    {measure.name}: {measure.expression}")
+    if skipped:
+        click.echo(f"Skipped {skipped} that already exist (use --overwrite).")
+
+    if warnings:
+        click.echo("")
+        click.secho(f"{len(warnings)} thing(s) did not map cleanly:", fg="yellow")
+        for warning in warnings:
+            click.echo(f"  - {warning}")
+
+    click.echo("")
+    click.echo("Next: edit models/, then `vanna project validate && vanna project build`.")
+
+
 def _relationships_are_empty(paths) -> bool:
     """Whether relationships.yml is still the scaffolded placeholder."""
     import yaml

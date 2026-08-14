@@ -5,6 +5,7 @@ This implementation uses Qdrant for vector storage of tool usage patterns.
 """
 
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -34,6 +35,8 @@ from vanna.capabilities.agent_memory import (
     ToolMemorySearchResult,
 )
 from vanna.core.tool import ToolContext
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantAgentMemory(AgentMemory):
@@ -80,11 +83,50 @@ class QdrantAgentMemory(AgentMemory):
         return self._client
 
     def _create_embedding(self, text: str) -> List[float]:
-        """Create a simple embedding from text (placeholder)."""
-        import hashlib
+        """Embed text for similarity search.
 
-        hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
-        return [(hash_val >> i) % 100 / 100.0 for i in range(self.dimension)]
+        This used to slice an md5 digest into floats. That produced a vector of
+        the right shape and no meaning: two ways of asking the same question
+        hash to unrelated points, so "find similar memories" returned arbitrary
+        ones while appearing to work. Recall from this store was therefore noise.
+
+        Now it uses the same local model as the knowledge index. Vectors written
+        by the old code are meaningless and cannot be compared with these -- if
+        this collection has old contents, drop it and let it refill.
+        """
+        embedder = self._get_embedder()
+        if embedder is None:
+            # No embeddings available. A zero vector ranks nothing above
+            # anything else, which is honest: it makes recall useless rather
+            # than confidently wrong, and the warning below says why.
+            if not getattr(self, "_warned_no_embedder", False):
+                logger.warning(
+                    "No embedding model available; Qdrant memory recall is "
+                    "disabled. Install with: pip install 'vanna[qdrant]'"
+                )
+                self._warned_no_embedder = True
+            return [0.0] * self.dimension
+        return embedder.embed_query(text)
+
+    def _get_embedder(self):
+        """The shared local embedder, built once per instance."""
+        if not hasattr(self, "_embedder"):
+            from ...capabilities.index.embeddings import build_embedder
+
+            self._embedder = build_embedder()
+            if self._embedder is not None:
+                # The collection was created at self.dimension; a model of a
+                # different width cannot write into it.
+                if self._embedder.dimension != self.dimension:
+                    logger.warning(
+                        "Embedding model is %d dimensions but the collection is "
+                        "%d. Recreate %r to use this model.",
+                        self._embedder.dimension,
+                        self.dimension,
+                        self.collection_name,
+                    )
+                    self._embedder = None
+        return self._embedder
 
     async def save_tool_usage(
         self,

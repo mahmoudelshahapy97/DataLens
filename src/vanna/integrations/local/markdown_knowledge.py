@@ -262,6 +262,7 @@ class MarkdownExampleStore(ExampleStore):
         path = self._path_for(context, example)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self._to_markdown(example), encoding="utf-8")
+        self._index_one(context, example)
         return example
 
     async def search(
@@ -327,21 +328,34 @@ class MarkdownExampleStore(ExampleStore):
     ) -> Optional[List[ExampleHit]]:
         """Rank through the configured index, or None to fall back.
 
-        The index is rebuilt from ``candidates`` on each call rather than kept
-        in sync with the files. That sounds wasteful and is not: the corpus is a
-        few hundred short documents, building it is sub-millisecond, and the
-        alternative -- an index that can disagree with the markdown someone just
-        edited in their editor -- is the failure this store was designed to
-        avoid.
+        The index is brought into step with ``candidates`` on each call rather
+        than trusted to be current. That matters because the markdown is the
+        source of truth and someone may have just edited it in their editor --
+        an index that disagrees with the files is the failure this store was
+        designed to avoid.
+
+        *How* it is brought into step is the index's business, not this store's.
+        ``sync_documents`` rebuilds the in-process BM25 index outright, because
+        doing so is sub-millisecond; for a persistent vector index it compares
+        content hashes and re-embeds only what changed. This used to be a
+        hard-coded clear-and-add here, which for a vector backend would have
+        meant re-embedding the whole corpus once per question.
         """
         from vanna.capabilities.agent_memory import tenant_scope
 
         try:
-            from vanna.capabilities.index import documents_for_examples
+            from vanna.capabilities.index import documents_for_examples, sync_documents
 
             tenant = tenant_scope(context)
-            self.index.clear(tenant_id=tenant)
-            self.index.add(documents_for_examples(candidates, tenant_id=tenant))
+            sync_documents(
+                self.index,
+                documents_for_examples(candidates, tenant_id=tenant),
+                tenant_id=tenant,
+                # This store owns examples and nothing else. Claiming a wider
+                # scope would delete the catalog's table documents, which share
+                # the index.
+                kinds="example",
+            )
 
             by_id = {f"example:{e.id}": e for e in candidates}
             hits = []
@@ -387,6 +401,9 @@ class MarkdownExampleStore(ExampleStore):
             self._path_for(context, example).write_text(
                 self._to_markdown(example), encoding="utf-8"
             )
+            # Verifying an example raises its boost, so the stored entry is now
+            # wrong even though its text is unchanged.
+            self._index_one(context, example)
             return True
         return False
 
@@ -396,8 +413,45 @@ class MarkdownExampleStore(ExampleStore):
                 path = self._path_for(context, example)
                 if path.exists():
                     path.unlink()
+                    self._unindex_one(context, example)
                     return True
         return False
+
+    # ------------------------------------------------------------------
+    # Keeping a persistent index current
+    #
+    # A write knows exactly which document changed, so it updates that one
+    # rather than leaving it to the next search to notice. For the in-process
+    # index this is redundant -- it rebuilds on every search anyway -- and
+    # harmless. For a persistent one it is the difference between a rule being
+    # retrievable now and only after something else triggers a sync.
+    # ------------------------------------------------------------------
+
+    def _index_one(self, context: "ToolContext", example: Example) -> None:
+        if self.index is None:
+            return
+        try:
+            from vanna.capabilities.agent_memory import tenant_scope
+            from vanna.capabilities.index import documents_for_examples, fingerprint
+
+            documents = list(
+                documents_for_examples([example], tenant_id=tenant_scope(context))
+            )
+            for document in documents:
+                document.metadata.setdefault("fingerprint", fingerprint(document))
+            self.index.add(documents)
+        except Exception as exc:  # noqa: BLE001
+            # The markdown is written and is the source of truth; a failed index
+            # update costs freshness until the next sync, not the example.
+            logger.warning("Could not index example %s: %s", example.id, exc)
+
+    def _unindex_one(self, context: "ToolContext", example: Example) -> None:
+        if self.index is None:
+            return
+        try:
+            self.index.remove([f"example:{example.id}"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not unindex example %s: %s", example.id, exc)
 
 
 class MarkdownInstructionStore(InstructionStore):

@@ -18,8 +18,10 @@ from .indexer import (
     documents_for_table,
     documents_for_tables,
 )
+from .embeddings import Embedder, build_embedder
 from .lexical import LexicalIndex, tokenize
 from .resolve import resolve_index
+from .sync import SyncReport, fingerprint, sync_documents
 
 __all__ = [
     "SearchIndex",
@@ -33,4 +35,9 @@ __all__ = [
     "documents_for_tables",
     "documents_for_examples",
     "MAX_VALUES_PER_COLUMN",
+    "sync_documents",
+    "SyncReport",
+    "fingerprint",
+    "Embedder",
+    "build_embedder",
 ]

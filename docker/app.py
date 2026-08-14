@@ -504,17 +504,23 @@ def build_sql_runner(
 
     policy = ExecutionPolicy(max_rows=max_rows, timeout_seconds=QUERY_TIMEOUT)
 
-    if database_url.startswith("postgres"):
-        from vanna.integrations.postgres import PostgresRunner
+    from vanna.core.datasource.runners import UnsupportedDataSource, build_runner
 
-        return PostgresRunner(
-            connection_string=database_url, policy=policy, read_only=read_only
-        )
+    # No URL at all: the built-in demo database, which is the zero-configuration
+    # path that makes `docker compose up` work with an empty .env.
+    if not database_url.strip():
+        from vanna.integrations.sqlite import SqliteRunner
 
-    from vanna.integrations.sqlite import SqliteRunner
+        seed_demo_database(SQLITE_PATH)
+        return SqliteRunner(SQLITE_PATH, policy=policy, read_only=True)
 
-    seed_demo_database(SQLITE_PATH)
-    return SqliteRunner(SQLITE_PATH, policy=policy, read_only=True)
+    try:
+        return build_runner(database_url, policy=policy, read_only=read_only)
+    except UnsupportedDataSource:
+        # Deliberately not a fall back to SQLite. That is what this did before,
+        # and it meant a workspace pointed at `mysql://...` quietly answered
+        # from the demo database -- plausible numbers from the wrong data.
+        raise
 
 
 def _build_memory():

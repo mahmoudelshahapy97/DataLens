@@ -63,12 +63,26 @@ class TenantPayload(BaseModel):
 
     # Structured connection fields, composed into a URL server-side -- so the
     # browser never assembles one and percent-encoding happens once, correctly.
+    # Which database engine the fields below describe. Defaults to postgres so
+    # an older client that does not send it keeps working.
+    engine: Optional[str] = "postgres"
     host: Optional[str] = None
     port: Optional[str] = None
     database: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     sslmode: Optional[str] = None
+    # Engine-specific: file databases, Snowflake, BigQuery, Presto, SQL Server.
+    path: Optional[str] = None
+    account: Optional[str] = None
+    warehouse: Optional[str] = None
+    role: Optional[str] = None
+    schema_name: Optional[str] = Field(default=None, alias="schema")
+    project: Optional[str] = None
+    dataset: Optional[str] = None
+    credentials_path: Optional[str] = None
+    catalog: Optional[str] = None
+    driver: Optional[str] = None
 
 
 class TenantUpdate(BaseModel):
@@ -87,12 +101,35 @@ class TenantUpdate(BaseModel):
     # Structured connection fields, composed into a URL server-side. The
     # browser never assembles one, so a password only ever travels as a single
     # form field and is never concatenated into a string the page holds.
+    # Which database engine the fields below describe. Defaults to postgres so
+    # an older client that does not send it keeps working.
+    engine: Optional[str] = "postgres"
     host: Optional[str] = None
     port: Optional[str] = None
     database: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     sslmode: Optional[str] = None
+    # Engine-specific: file databases, Snowflake, BigQuery, Presto, SQL Server.
+    path: Optional[str] = None
+    account: Optional[str] = None
+    warehouse: Optional[str] = None
+    role: Optional[str] = None
+    schema_name: Optional[str] = Field(default=None, alias="schema")
+    project: Optional[str] = None
+    dataset: Optional[str] = None
+    credentials_path: Optional[str] = None
+    catalog: Optional[str] = None
+    driver: Optional[str] = None
+
+
+#: Payload fields that describe a connection rather than the workspace itself.
+#: Collected here so create and update agree on what to hand the engine registry.
+CONNECTION_FIELDS = {
+    "engine", "host", "port", "database", "username", "password", "sslmode",
+    "path", "account", "warehouse", "role", "schema", "schema_name",
+    "project", "dataset", "credentials_path", "catalog", "driver",
+}
 
 
 class UserPayload(BaseModel):
@@ -1127,6 +1164,119 @@ def register_portal_routes(
         )
         return {"results": [r.model_dump(mode="json") for r in results]}
 
+    @app.get("/api/vanna/v2/dashboards/{dashboard_id}/export")
+    async def export_dashboard(dashboard_id: str, request: Request):
+        """Download this dashboard as one self-contained HTML file.
+
+        The tiles are executed here, as the caller, through exactly the path
+        ``/data`` uses -- so the figures in the file are the ones this person is
+        allowed to see, and an export can never become a way around row- or
+        column-level rules.
+
+        Nothing is hosted. The response is a file download; there is no URL that
+        serves it afterwards, so there is no link to leak.
+        """
+        from fastapi.responses import Response
+
+        user = await _caller(request)
+        directory_ = _require_directory()
+
+        row = await directory_.get_dashboard(user.tenant_id, dashboard_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        from vanna.dashboards import (
+            Dashboard,
+            export_filename,
+            export_html,
+            has_errors,
+            render_dashboard,
+            verify_dashboard,
+        )
+
+        try:
+            dashboard = Dashboard.model_validate(row["document"])
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Stored dashboard is invalid: {exc}")
+
+        issues = verify_dashboard(dashboard)
+        if has_errors(issues):
+            raise HTTPException(
+                status_code=400,
+                detail=[str(i) for i in issues if i.severity == "error"],
+            )
+
+        saved_sql = {
+            item["id"]: item["sql"] for item in await directory_.list_saved(user.tenant_id)
+        }
+        runtime = await runtime_for(user.tenant_id)
+        results = await render_dashboard(
+            dashboard,
+            registry=runtime.agent.tool_registry,
+            user=user,
+            agent_memory=agent_memory,
+            saved_query_sql=saved_sql,
+        )
+
+        tenant = await directory_.get_tenant(user.tenant_id)
+        html = export_html(
+            dashboard,
+            results,
+            exported_by=user.email or user.id,
+            workspace=(tenant or {}).get("name") or user.tenant_id,
+            data_source=describe_data_source((tenant or {}).get("database_url")),
+        )
+
+        # Taking a copy of data out of the system is exactly the event someone
+        # asks about later, so it is recorded like any other generation.
+        await _record_export(user, dashboard, results)
+
+        filename = export_filename(dashboard)
+        logger.info(
+            "Dashboard %s exported by %s (%s tiles)",
+            dashboard_id, user.email, len(results),
+        )
+        return Response(
+            content=html,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    async def _record_export(user: Any, dashboard: Any, results: Any) -> None:
+        """Log an export to the generation store. Never fails the download."""
+        if generation_store is None:
+            return
+        try:
+            from vanna.core.generation import GenerationStatus, SqlGeneration
+
+            rows = sum(r.row_count for r in results)
+            failed = [r for r in results if r.error]
+            await generation_store.record(
+                await _tool_context(user),
+                SqlGeneration(
+                    tenant_id=user.tenant_id,
+                    user_id=user.email or user.id,
+                    question=f"[export] {dashboard.title or 'dashboard'}",
+                    # The tile SQL, so the record answers "what data left the
+                    # system", not merely "an export happened".
+                    sql=chr(10).join(
+                        f"-- tile {r.tile_id}: {r.row_count} row(s)"
+                        + (f" -- FAILED: {r.error}" if r.error else "")
+                        for r in results
+                    )[:20000],
+                    status=GenerationStatus.VALID if not failed else GenerationStatus.INVALID,
+                    row_count=rows,
+                    metadata={
+                        "kind": "dashboard_export",
+                        "dashboard_id": dashboard.id,
+                        "tiles": len(results),
+                        "failed_tiles": len(failed),
+                    },
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not record dashboard export: %s", type(exc).__name__)
+
     # ------------------------------------------------------------------
     # Ad-hoc SQL
     # ------------------------------------------------------------------
@@ -1250,9 +1400,7 @@ def register_portal_routes(
             raise HTTPException(status_code=409, detail="That tenant id already exists")
 
         database_url = payload.database_url or _compose_url(
-            payload.model_dump(
-                include={"host", "port", "database", "username", "password", "sslmode"}
-            )
+            payload.model_dump(by_alias=True, include=CONNECTION_FIELDS)
         )
 
         try:
@@ -1284,10 +1432,14 @@ def register_portal_routes(
         # Structured fields win over an empty database_url: the form sends both,
         # and composing here keeps percent-encoding in one place. A password
         # containing '@' otherwise produces a URL pointing at the wrong host.
-        connection_fields = {"host", "port", "database", "username", "password", "sslmode"}
-        supplied = {k: changes.pop(k) for k in list(changes) if k in connection_fields}
-        if supplied.get("host") and supplied.get("database") and not changes.get("database_url"):
-            changes["database_url"] = _compose_url(supplied)
+        supplied = {k: changes.pop(k) for k in list(changes) if k in CONNECTION_FIELDS}
+        # The engine decides which fields are required, so "did they fill the
+        # form in" is its question to answer, not a hard-coded host/database
+        # check -- SQLite has neither.
+        if supplied and not changes.get("database_url"):
+            composed = _compose_url({**supplied, "schema": supplied.get("schema_name")})
+            if composed:
+                changes["database_url"] = composed
 
         # Repointing a tenant at another database changes what every member can
         # read. That is a platform decision, not a tenant-admin one.
@@ -1616,19 +1768,20 @@ def register_portal_routes(
         if not url:
             url = _compose_url(payload)
         if not url:
-            raise HTTPException(status_code=400, detail="A host and database are required")
+            raise HTTPException(
+                status_code=400,
+                detail="Fill in the required connection fields first.",
+            )
 
         from vanna.capabilities.sql_runner import ExecutionPolicy, RunSqlToolArgs
         from vanna.core.errors import ErrorPhase, VannaError
 
         try:
-            from vanna.integrations.postgres import PostgresRunner
+            # The same builder the per-tenant runtime uses, so a connection that
+            # tests green here is one the workspace can actually be created on.
+            from vanna.core.datasource.runners import probe
 
-            runner = PostgresRunner(
-                connection_string=url,
-                policy=ExecutionPolicy(max_rows=1, timeout_seconds=8),
-                read_only=True,
-            )
+            runner = probe(url)
             ctx = await _tool_context(user)
             await runner.run_sql(RunSqlToolArgs(sql="SELECT 1"), ctx)
         except Exception as exc:
@@ -1649,25 +1802,32 @@ def register_portal_routes(
         long enough to concatenate one, and so percent-encoding is done once,
         correctly -- a password with an `@` in it silently produces a URL
         pointing at the wrong host otherwise.
+
+        Delegates to the engine registry rather than formatting a string here.
+        This function used to hard-code ``postgresql://`` and a default port of
+        5432, which meant the form could only ever create a Postgres workspace
+        no matter what the operator typed.
         """
-        from urllib.parse import quote
+        from vanna.core.datasource import get_engine
 
-        host = str(payload.get("host") or "").strip()
-        database = str(payload.get("database") or "").strip()
-        if not host or not database:
+        engine = get_engine(str(payload.get("engine") or "postgres"))
+        if engine is None:
             return ""
+        return engine.url({k: str(v or "") for k, v in payload.items()})
 
-        user_name = quote(str(payload.get("username") or ""), safe="")
-        password = quote(str(payload.get("password") or ""), safe="")
-        port = str(payload.get("port") or "5432").strip()
+    @app.get("/api/vanna/v2/admin/engines")
+    async def admin_engines(request: Request) -> Dict[str, Any]:
+        """Every supported engine and the fields it needs.
 
-        credentials = f"{user_name}:{password}@" if user_name else ""
-        url = f"postgresql://{credentials}{host}:{port}/{database}"
+        Drives the connection form, so the form and the URL builder cannot
+        disagree about what an engine requires -- they read the same registry.
+        """
+        user = await _caller(request)
+        _require_platform_admin(user)
 
-        sslmode = str(payload.get("sslmode") or "").strip()
-        if sslmode:
-            url += f"?sslmode={quote(sslmode, safe='')}"
-        return url
+        from vanna.core.datasource import all_engines
+
+        return {"engines": all_engines()}
 
     @app.get("/api/vanna/v2/admin/datasources")
     async def admin_datasources(request: Request) -> Dict[str, Any]:

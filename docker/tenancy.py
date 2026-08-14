@@ -444,6 +444,13 @@ def describe_data_source(url: Optional[str]) -> str:
         return "server default"
     try:
         parts = urlsplit(url)
+
+        # File-backed engines have no host, so the host/path split above renders
+        # them as `duckdb://?/:memory:`. The path is the whole address here.
+        if parts.scheme in ("sqlite", "duckdb"):
+            path = (parts.netloc + parts.path) or ":memory:"
+            return f"{parts.scheme}://{path}"
+
         host = parts.hostname or "?"
         name = parts.path.lstrip("/") or "?"
         return f"{parts.scheme}://{host}/{name}"

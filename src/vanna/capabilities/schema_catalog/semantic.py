@@ -62,6 +62,18 @@ class SemanticSchemaCatalog(SchemaCatalog):
         self.physical = physical
         self.expose_unmodelled = expose_unmodelled
 
+    @property
+    def index(self):
+        """The search index of the catalog underneath, if there is one.
+
+        Wrapping a catalog hid its ``index`` attribute, which is how
+        ``/schema`` came to report ``index_backend: none`` for every workspace
+        with a semantic layer -- while the log said ``hybrid(lexical+qdrant)``.
+        Reporting the effective backend exists precisely so a silent downgrade
+        is visible, so a wrapper that breaks it defeats the purpose.
+        """
+        return getattr(self.physical, "index", None)
+
     # ------------------------------------------------------------------
     # Projection
     # ------------------------------------------------------------------

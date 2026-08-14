@@ -110,5 +110,6 @@
   "conn.orPaste": "...or paste a full connection string",
   "console.signInLink": "Sign in from the main app",
   "console.thenComeBack": ", then come back.",
-  "console.notAdmin": "Your account is not an administrator of this workspace."
+  "console.notAdmin": "Your account is not an administrator of this workspace.",
+  "ws.engine": "Database engine"
 }

@@ -1977,7 +1977,45 @@ async function openDashboard(summary) {
   }).join('');
 
   openSheet(`<h3>${esc(summary.title)}</h3>${body || `<div class="empty">${t('dash.noTiles')}</div>`}
-    <div class="actions"><button class="btn" data-close>${t('common.close')}</button></div>`);
+    <div class="actions">
+      <button class="btn" id="dash-export">${t('dash.export')}</button>
+      <button class="btn" data-close>${t('common.close')}</button>
+    </div>
+    <p class="muted small">${t('dash.exportHint')}</p>`);
+
+  // The server re-runs the tiles as this user and streams back a file; the
+  // browser never assembles the document, so what is downloaded is exactly what
+  // the access rules allowed.
+  const exportBtn = $('dash-export');
+  if (exportBtn) exportBtn.onclick = async () => {
+    exportBtn.disabled = true;
+    const original = exportBtn.textContent;
+    exportBtn.textContent = t('dash.exporting');
+    try {
+      const response = await fetch(
+        `/api/vanna/v2/dashboards/${encodeURIComponent(summary.id)}/export`,
+        { credentials: 'include', headers: authHeaders() }
+      );
+      if (!response.ok) throw new Error(errorText((await response.json()).detail, 'Export failed'));
+
+      // Filename comes from Content-Disposition so the server names the file.
+      const disposition = response.headers.get('content-disposition') || '';
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = match ? match[1] : 'dashboard.html';
+      link.click();
+      URL.revokeObjectURL(url);
+      toast(t('dash.exported'));
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = original;
+    }
+  };
 
   // Charts are mounted after the sheet exists, because <plotly-chart> receives
   // its series as element properties rather than attributes.

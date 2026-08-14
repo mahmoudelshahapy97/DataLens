@@ -108,6 +108,9 @@ def _register() -> None:
     from . import ask as ask_cmds
     from . import catalog as catalog_cmds
     from . import cube as cube_cmds
+    from . import dashboard as dashboard_cmds
+    from . import docs as docs_cmds
+    from . import knowledge as knowledge_cmds
     from . import mcp as mcp_cmds
     from . import profile as profile_cmds
     from . import project as project_cmds
@@ -122,6 +125,9 @@ def _register() -> None:
     cli.add_command(query_cmds.query)
     cli.add_command(cube_cmds.cube)
     cli.add_command(skills_cmds.skills)
+    cli.add_command(docs_cmds.docs)
+    cli.add_command(dashboard_cmds.dashboard)
+    cli.add_command(knowledge_cmds.knowledge)
     cli.add_command(ask_cmds.ask)
     # Top-level rather than under `serve`: `serve` must stay a plain command so
     # it keeps accepting the flags the old single-command `vanna` took, and a

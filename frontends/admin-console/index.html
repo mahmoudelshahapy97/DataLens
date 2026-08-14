@@ -171,7 +171,7 @@ let identity = null;
 let me = null;
 let tab = 'review';
 let scope = null;                      // tenant currently being administered
-let cache = { examples: [], instructions: [], tenants: [], users: [], starters: [], datasources: [] };
+let cache = { examples: [], instructions: [], tenants: [], users: [], starters: [], datasources: [], engines: [] };
 
 const el = (id) => document.getElementById(id);
 
@@ -360,12 +360,14 @@ async function refresh() {
   cache.instructions = instructions.instructions || [];
 
   if (me.is_platform_admin) {
-    const [tenants, datasources] = await Promise.all([
+    const [tenants, datasources, engines] = await Promise.all([
       api('/api/vanna/v2/admin/tenants').catch(() => ({ tenants: [] })),
       api('/api/vanna/v2/admin/datasources').catch(() => ({ datasources: [] })),
+      api('/api/vanna/v2/admin/engines').catch(() => ({ engines: [] })),
     ]);
     cache.tenants = tenants.tenants || [];
     cache.datasources = datasources.datasources || [];
+    cache.engines = engines.engines || [];
   }
 
   await loadScope();
@@ -497,25 +499,17 @@ function renderTenants(target) {
       </div>
 
       <div id="t-fields" style="display:none">
-        <div class="grid2">
-          <div><label>${t('ws.host')}</label><input id="t-host" placeholder="db.example.com" /></div>
-          <div><label>${t('ws.port')}</label><input id="t-port" value="5432" /></div>
-        </div>
-        <div class="grid2">
-          <div><label>${t('ws.database')}</label><input id="t-db" placeholder="analytics" /></div>
-          <div><label>${t('ws.sslmode')}</label>
-            <select id="t-ssl">
-              <option value="">(driver default)</option>
-              <option value="require">require</option>
-              <option value="verify-full">verify-full</option>
-              <option value="disable">disable</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid2">
-          <div><label>${t('ws.user')}</label><input id="t-user" placeholder="readonly" /></div>
-          <div><label>${t('ws.password')}</label><input id="t-pass" type="password" /></div>
-        </div>
+        <label>${t('ws.engine')}</label>
+        <select id="t-engine">
+          ${(cache.engines || []).map((e) => (
+            `<option value="${esc(e.name)}"${e.name === 'postgres' ? ' selected' : ''}>${esc(e.label)}</option>`
+          )).join('')}
+        </select>
+        <!-- Fields are rendered from the engine registry, so the form always
+             asks for exactly what the chosen driver needs. It used to be a
+             fixed Postgres host/port/database set, which is why every workspace
+             created here was a Postgres one whatever the operator intended. -->
+        <div id="t-engine-fields"></div>
       </div>
 
       <div class="actions">
@@ -592,6 +586,14 @@ function renderTenants(target) {
     el('t-status').textContent = '';
   };
 
+  if (el('t-engine')) {
+    paintEngineFields(el('t-engine').value);
+    el('t-engine').onchange = () => {
+      paintEngineFields(el('t-engine').value);
+      el('t-status').textContent = '';   // a tested connection is not this one
+    };
+  }
+
   el('t-test').onclick = async () => {
     const status = el('t-status');
     status.textContent = 'Testing...';
@@ -639,19 +641,54 @@ function datasourceValue(id) {
   return picker.value === '__custom' ? el(id).value.trim() : picker.value;
 }
 
+/**
+ * Render the field set for one engine.
+ *
+ * Driven entirely by /admin/engines, which is the same registry the server uses
+ * to build the URL -- so the form cannot ask for fields the driver ignores, or
+ * omit ones it needs.
+ */
+function paintEngineFields(engineName) {
+  const engine = (cache.engines || []).find((e) => e.name === engineName);
+  const mount = el('t-engine-fields');
+  if (!mount) return;
+  if (!engine) { mount.innerHTML = ''; return; }
+
+  // Two per row where they are short; the help text below each is where the
+  // engine-specific gotchas live (a Snowflake account is not a URL, a SQLite
+  // path is on the server, not on your machine).
+  mount.innerHTML = `
+    <div class="grid2">
+      ${engine.fields.map((f) => `
+        <div>
+          <label>${esc(f.label)}${f.required ? ' <span style="color:var(--bad)">*</span>' : ''}</label>
+          <input id="t-f-${esc(f.name)}"
+                 type="${f.kind === 'password' ? 'password' : 'text'}"
+                 value="${esc(f.default || '')}"
+                 dir="ltr"
+                 placeholder="${esc(f.help || '')}" />
+          ${f.help ? `<div class="muted small">${esc(f.help)}</div>` : ''}
+        </div>`).join('')}
+    </div>
+    ${engine.notes ? `<div class="banner" style="margin-top:12px">${esc(engine.notes)}</div>` : ''}`;
+}
+
 /** The connection half of the create form, in whichever mode is selected. */
 function newTenantConnection() {
   const mode = el('t-mode').value;
   if (mode === 'default') return {};
   if (mode === 'existing') return { database_url: datasourceValue('t-url') || '' };
-  return {
-    host: el('t-host').value.trim(),
-    port: el('t-port').value.trim(),
-    database: el('t-db').value.trim(),
-    username: el('t-user').value.trim(),
-    password: el('t-pass').value,
-    sslmode: el('t-ssl').value,
-  };
+
+  const engineName = el('t-engine') ? el('t-engine').value : 'postgres';
+  const engine = (cache.engines || []).find((e) => e.name === engineName);
+  const values = { engine: engineName };
+  (engine ? engine.fields : []).forEach((f) => {
+    const input = el(`t-f-${f.name}`);
+    // Passwords keep their whitespace; everything else is trimmed, because a
+    // trailing space in a hostname is a typo and in a password is a character.
+    if (input) values[f.name] = f.kind === 'password' ? input.value : input.value.trim();
+  });
+  return values;
 }
 
 async function createTenant() {

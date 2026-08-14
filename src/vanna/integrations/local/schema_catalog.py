@@ -286,12 +286,23 @@ class LocalSchemaCatalog(SchemaCatalog):
         which is worse than the microseconds this costs.
         """
         try:
-            from vanna.capabilities.index import documents_for_tables
+            from vanna.capabilities.index import documents_for_tables, sync_documents
             from vanna.capabilities.agent_memory import tenant_scope
 
             tenant = tenant_scope(context)
-            self.index.clear(tenant_id=tenant)
-            self.index.add(documents_for_tables(tables, tenant_id=tenant))
+            # The index decides whether that means a rebuild (cheap, in-process
+            # BM25) or a hash diff that re-embeds only what changed (a
+            # persistent vector store). A hard-coded clear-and-add here would
+            # re-embed every table on every search.
+            sync_documents(
+                self.index,
+                documents_for_tables(tables, tenant_id=tenant),
+                tenant_id=tenant,
+                # Exactly what documents_for_tables emits. Not None: that would
+                # claim the whole tenant and sweep away the knowledge store's
+                # examples on the next schema search.
+                kinds=("table", "column_values"),
+            )
 
             by_name = {t.qualified_name: t for t in tables}
             ordered: List[TableMetadata] = []

@@ -28,13 +28,40 @@ COPY src/ ./src/
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Database drivers.
+#
+# The connection form offers every engine in vanna.core.datasource, so the image
+# has to be able to build a runner for the ones an operator can pick -- offering
+# MySQL and then failing on "PyMySQL is required" is a worse experience than not
+# offering it. These four are pure-Python or ship wheels, so they cost image size
+# and nothing else:
+#
+#   pymysql            MySQL / MariaDB
+#   oracledb           Oracle, thin mode -- no Instant Client needed
+#   duckdb             DuckDB
+#   clickhouse-connect ClickHouse
+#
+# Not installed here: pyodbc (SQL Server) needs unixODBC plus Microsoft's driver
+# from a third-party apt repository, and BigQuery/Snowflake pull large SDKs. All
+# three remain available via `pip install 'vanna[mssql]'` etc. in a derived image;
+# the registry reports them and the runner raises a clear install hint.
 RUN pip install --upgrade pip setuptools wheel \
  && pip install "." \
       "uvicorn[standard]>=0.27" \
       "fastapi>=0.110" \
       "psycopg2-binary" \
+      "pymysql" \
+      "oracledb" \
+      "duckdb" \
+      "clickhouse-connect" \
       "anthropic" \
-      "openai"
+      "openai" \
+ `# Vector retrieval. fastembed runs a small ONNX model in-process, so` \
+ `# embeddings need no API key and no network at query time -- which is what` \
+ `# lets VANNA_INDEX_BACKEND=qdrant work in an air-gapped deployment. The` \
+ `# model weights are fetched on first use into the embed-cache volume.` \
+      "qdrant-client" \
+      "fastembed"
 
 # ---------------------------------------------------------------- runtime ---
 FROM python:3.12-slim AS runtime
@@ -68,7 +95,13 @@ COPY docker/app.py docker/tenancy.py docker/accounts.py docker/billing.py \
 # Writable state: the demo SQLite database, the schema catalog, the generation
 # log, and the markdown knowledge directory. Mounted as a volume in compose so
 # it survives a rebuild.
-RUN mkdir -p /data && chown -R vanna:vanna /data /app
+# /data/embed-cache is created here, not just mounted, and that matters: Docker
+# initialises an *empty* named volume from the image path it covers, ownership
+# included. Without this the volume arrives owned by root, the container runs as
+# uid 10001, and fastembed cannot write the model it just downloaded -- which
+# surfaces as "Could not load model ... from any source" and a silent fall back
+# to keyword-only retrieval.
+RUN mkdir -p /data/embed-cache && chown -R vanna:vanna /data /app
 
 USER vanna
 

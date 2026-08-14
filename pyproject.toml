@@ -48,6 +48,17 @@ fastapi = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
 mcp = ["mcp>=1.0.0"]
 servers = ["vanna[flask,fastapi]"]
 
+# Hand the tool registry to another agent framework. Optional because the
+# adapters import cleanly without the framework -- only the wrapper needs it,
+# and MCP already covers agents that speak that protocol.
+langchain = ["langchain-core>=0.3"]
+pydantic-ai = ["pydantic-ai>=0.0.14"]
+toolkits = ["vanna[langchain,pydantic-ai]"]
+
+# Reading an OSI semantic model. YAML only; a JSON OSI file needs nothing extra.
+osi = ["PyYAML>=6.0"]
+
+
 postgres = ["psycopg2-binary", "db-dtypes"]
 mysql = ["PyMySQL"]
 clickhouse = ["clickhouse_connect"]

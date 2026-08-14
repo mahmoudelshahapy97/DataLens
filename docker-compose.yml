@@ -96,6 +96,9 @@ services:
       # integration to fuse one in. The effective backend is reported on
       # /api/vanna/v2/schema so a downgrade is visible rather than silent.
       VANNA_INDEX_BACKEND: ${VANNA_INDEX_BACKEND:-lexical}
+      VANNA_QDRANT_URL: ${VANNA_QDRANT_URL:-http://qdrant:6333}
+      VANNA_EMBED_MODEL: ${VANNA_EMBED_MODEL:-BAAI/bge-small-en-v1.5}
+      VANNA_EMBED_CACHE: /data/embed-cache
 
       # -- Authentication. Password + session cookie. The first admin is seeded
       #    on an empty install; leave the password unset and one is generated
@@ -119,6 +122,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - vanna-data:/data
+      - embed-cache:/data/embed-cache
       # Read-only: the manifest is built on the host and reviewed in
       # git; the container consumes it and never rewrites it.
       - ./projects/chinook:/project:ro
@@ -140,6 +144,42 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 25s
+      retries: 3
+
+  # Vector store for semantic retrieval. Optional: with
+  # VANNA_INDEX_BACKEND=lexical (the default) nothing talks to it, and the API
+  # starts fine whether or not it is running -- resolve_index logs a downgrade
+  # and serves keyword-only BM25.
+  #
+  # A server rather than Qdrant's embedded mode because several API workers
+  # write to the index; embedded mode is one directory with one lock, and the
+  # second worker to open it fails.
+  qdrant:
+    # Pinned, and matched to the qdrant-client version in the API image. The
+    # client warns when the two differ by more than a minor version, and a
+    # protocol difference is not a thing to discover in production.
+    #
+    # Changing this tag can make existing storage unreadable -- 1.19 refuses
+    # segments written by 1.12 ("unknown variant `on_disk`") and crash-loops.
+    # That is recoverable and cheap here because the collection is *derived*:
+    #   docker compose stop qdrant && docker volume rm vanna_qdrant-data
+    #   docker compose up -d qdrant && vanna knowledge reindex
+    # The markdown under knowledge/ is the source of truth; this holds nothing
+    # that cannot be rebuilt from it.
+    image: qdrant/qdrant:v1.19.0
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      # Exposed for the dashboard at :6333/dashboard while setting things up.
+      # Remove in production; the API reaches it over the compose network.
+      - "6333:6333"
+    restart: unless-stopped
+    healthcheck:
+      # Qdrant's image has no curl or wget, so probe from Python, which it has.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
       retries: 3
 
   web:
@@ -173,3 +213,7 @@ networks:
 
 volumes:
   vanna-data:
+  qdrant-data:
+  # Embedding model weights (~130 MB). Held in a volume so a restart does not
+  # re-download them -- and so a restart without internet still has them.
+  embed-cache:

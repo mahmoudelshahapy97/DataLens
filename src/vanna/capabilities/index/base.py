@@ -81,5 +81,22 @@ class SearchIndex(ABC):
         """Drop everything, or one tenant's documents."""
         raise NotImplementedError
 
+    def fingerprints(
+        self, *, tenant_id: str = "default", kind: Optional[str] = None
+    ) -> Optional[Dict[str, str]]:
+        """``{document_id: content hash}`` for what is stored, or None.
+
+        Optional, and the distinction it draws is the important one:
+
+        * **None** means "I cannot tell you cheaply". The caller then rebuilds
+          from scratch, which is right for an in-process index where building is
+          sub-millisecond and a stale entry is the worse failure.
+        * **A mapping** lets :func:`vanna.capabilities.index.sync_documents`
+          re-embed only what changed. For a persistent or remote index that is
+          not an optimisation but a requirement -- rebuilding per search means
+          re-embedding the whole corpus for every question asked.
+        """
+        return None
+
     def __len__(self) -> int:  # pragma: no cover - diagnostics
         return 0

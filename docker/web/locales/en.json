@@ -172,5 +172,9 @@
   "dash.sub": "Tiles are executed with your permissions when you open one — two people can open the same dashboard and see different numbers.",
   "ws.querying": "querying",
   "saved.sub": "Shared with everyone in this workspace. Run them as they are, or use one as the starting point for a new question.",
-  "cubes.sub": "Pick what to measure and how to break it down. The aggregation is defined once, in the project, so these totals cannot be computed at the wrong grain."
+  "cubes.sub": "Pick what to measure and how to break it down. The aggregation is defined once, in the project, so these totals cannot be computed at the wrong grain.",
+  "dash.export": "Download a copy",
+  "dash.exporting": "Preparing…",
+  "dash.exported": "Downloaded. The file contains the data, so it will not update.",
+  "dash.exportHint": "Downloads one self-contained HTML file with these figures baked in — openable with no login and no network. It shows what you can see, so treat it as your view of the data."
 }
