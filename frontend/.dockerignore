@@ -1,0 +1,17 @@
+# The build context is this directory, so keep it to what the build reads.
+#
+# node_modules is the big one: shipping the host's copy into the build would both
+# bloat the context and risk platform-specific binaries that do not match the build
+# image -- `npm ci` in the builder stage produces the right ones.
+node_modules
+dist
+.vite
+storybook-static
+.storybook
+
+# Stories are development-only and pull in the whole Storybook tree.
+src/**/*.stories.ts
+
+*.md
+.DS_Store
+Thumbs.db

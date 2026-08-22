@@ -1,0 +1,600 @@
+# Workspace definitions for the eight seeded sandbox databases.
+#
+# Provisioned with:
+#
+#     python -m vanna_app.domains provision
+#
+# Each entry becomes a workspace bound to its own database, with business rules
+# (instructions) and starter questions loaded. Nothing here is invented: every rule
+# names columns that exist in that schema, because a rule that references a column
+# the database does not have is worse than no rule -- the model believes it and
+# writes SQL that cannot run.
+#
+# What belongs in a rule:
+#
+#   * units and encodings the column name does not reveal  (cents, minutes, ISO-2)
+#   * the join nobody guesses right                        (which key, which table)
+#   * the filter that is almost always meant               ("exclude cancelled")
+#   * the vocabulary the business uses                     ("revenue" means this)
+#
+# What does not: anything the schema scan already says. The catalog carries table and
+# column names, types, nullability, foreign keys and sample values for low-cardinality
+# columns. Repeating those spends the retrieval budget without adding anything.
+
+domains:
+  - id: chinook
+    name: Chinook Music
+    description: Digital music store — artists, albums, tracks, invoices.
+    database: chinook
+    instructions:
+      - priority: 90
+        text: >-
+          This is a digital music store. A sale is a row in chinook.invoice with its
+          line items in chinook.invoice_line. "Revenue" means
+          sum(invoice_line.unit_price * invoice_line.quantity) unless someone asks
+          specifically about invoice totals, which is sum(invoice.total).
+      - priority: 80
+        text: >-
+          chinook.track.milliseconds holds track length in milliseconds. Divide by
+          60000.0 for minutes and label the result; nobody asks how long a song is in
+          milliseconds.
+      - priority: 80
+        text: >-
+          chinook.track.bytes is file size in bytes. Divide by 1048576.0 for MB.
+      - priority: 70
+        text: >-
+          To get from a sale to an artist the chain is invoice_line -> track ->
+          album -> artist. There is no direct link, and joining track to artist
+          without going through album returns nothing.
+      - priority: 60
+        text: >-
+          chinook.customer.support_rep_id points at chinook.employee.employee_id.
+          "Which rep sells the most" means grouping by that column.
+      - priority: 50
+        text: >-
+          Country lives on the customer and again on the invoice as billing_country.
+          For "sales by country" use invoice.billing_country -- that is where the
+          money was actually billed.
+      - priority: 75
+        text: >-
+          chinook.invoice_line.unit_price is what was charged on that line;
+          chinook.track.unit_price is the catalogue price now. Every line currently
+          agrees with its track, so a query that reads the price from the wrong table
+          is right by luck rather than by construction -- and stops being right the
+          first time anything is repriced. Take the money from invoice_line.
+      - priority: 65
+        text: >-
+          Only three of the eight rows in chinook.employee are ever named by
+          customer.support_rep_id. A sales-rep leaderboard therefore has three rows,
+          not eight, and the general manager and the IT staff correctly earn nothing
+          -- that is not missing data.
+      - priority: 55
+        text: >-
+          chinook.employee.reports_to points at another chinook.employee.employee_id.
+          "Whose team" needs that self-join; "everyone underneath somebody" needs a
+          recursive one, because the chain is more than one level deep.
+      - priority: 48
+        text: >-
+          chinook.invoice.invoice_date runs from 2021-01-01 to 2025-12-22 and stops
+          there. Anchor "recent", "last year" and "year to date" on
+          max(invoice.invoice_date) rather than on now(), or the answer is an empty
+          table that reads like an outage.
+      - priority: 42
+        text: >-
+          chinook.track.composer is free text and is null for 977 of the 3503 tracks.
+          Exclude the nulls explicitly when ranking composers rather than letting them
+          become a silent "unknown" bucket at the top.
+    starters:
+      - Which artists earn the most revenue?
+      - What are the ten longest tracks, in minutes?
+      - How do monthly sales trend over the last two years?
+      - Which sales support agents bring in the most revenue?
+      - Which genres sell best, and how has that changed since 2021?
+      - How many tracks in the catalogue have never been bought?
+
+  - id: northwind
+    name: Northwind Trading
+    description: Classic wholesale trading — orders, products, suppliers.
+    database: northwind
+    instructions:
+      - priority: 90
+        text: >-
+          Orders live in northwind.salesorder, not a table called "orders", and their
+          line items in northwind.orderdetail. This is the single most common reason
+          a query here fails.
+      # RETIRED -- names columns this database does not have. `orderdetail` has
+      # `unitprice` and `qty`, not `unit_price` and `quantity`. Replaced by the rule
+      # at priority 95. Left in place, commented, because the provisioner dedupes on
+      # text and deleting this would only mean re-adding it on the next run.
+      # - priority: 85
+      #   text: >-
+      #     Line revenue is unit_price * quantity * (1 - discount). The discount column
+      #     is a fraction between 0 and 1, not a percentage, and ignoring it overstates
+      #     revenue on roughly a fifth of the lines.
+      - priority: 70
+        text: >-
+          northwind.product.discontinued is a flag. Exclude discontinued products from
+          "what should we stock" and "current catalogue" questions; include them in
+          historical sales, because they were sold at the time.
+      # RETIRED -- the columns are `orderdate` and `shippeddate`, one word each.
+      # Replaced by the rule at priority 88.
+      # - priority: 60
+      #   text: >-
+      #     Shipping delay is shipped_date - order_date on salesorder. A null
+      #     shipped_date means not yet shipped, which is different from a delay of zero
+      #     and must not be averaged in as one.
+      # RETIRED -- the manager column is `employee.mgrid`. Replaced by priority 82.
+      # - priority: 50
+      #   text: >-
+      #     Employees report to other employees through northwind.employee.reports_to.
+      #     "Whose team" questions need that self-join.
+      - priority: 95
+        text: >-
+          The line-item columns are northwind.orderdetail.unitprice and
+          northwind.orderdetail.qty -- one word, and `qty` rather than `quantity`.
+          Line revenue is unitprice * qty * (1 - discount), where discount is a
+          fraction between 0.00 and 0.25 rather than a percentage. Ignoring it
+          overstates revenue.
+      - priority: 88
+        text: >-
+          The date columns on northwind.salesorder are orderdate, requireddate and
+          shippeddate, and the foreign keys are custid and empid -- no underscores in
+          any of them. Shipping time is shippeddate - orderdate, and the 21 orders
+          with a null shippeddate have not shipped at all, which is not a delay of
+          zero and must not be averaged in as one.
+      - priority: 82
+        text: >-
+          A manager is northwind.employee.mgrid, pointing at another employee's empid.
+          There is no reports_to column here. "Whose team" needs that self-join.
+      - priority: 72
+        text: >-
+          northwind.product.discontinued is a single character holding '0' or '1', not
+          a boolean. Compare it to the string; `discontinued = true` is a type error
+          and `discontinued` on its own is not a condition.
+      - priority: 58
+        text: >-
+          northwind.customer.companyname and northwind.product.productname are
+          anonymised placeholders -- "Customer AHPOP", "Product ACRVI" -- so a
+          leaderboard of them reads as noise. category.categoryname is real, as is
+          every country and city, so group by those when the answer has to be legible
+          to a person.
+      - priority: 52
+        text: >-
+          northwind.salesorder.freight is a shipping charge on the order that belongs
+          to no line, so an order's revenue and the sum of its lines legitimately
+          differ by it. Orders run from July 2006 to May 2008 and stop there.
+    starters:
+      - What is our revenue by product category?
+      - Which suppliers do we depend on most?
+      - How long does shipping take, by country?
+      - Which orders shipped later than their required date?
+      - What does freight cost us per country?
+      - Which product categories have the deepest discounts?
+
+  - id: world
+    name: World Statistics
+    description: Countries, cities and languages.
+    database: world
+    instructions:
+      # RETIRED -- the join columns are `countrycode`, one word. Replaced by the rule
+      # at priority 95, which keeps the code/code2 distinction this one got right.
+      # - priority: 90
+      #   text: >-
+      #     world.country.code is a three-letter ISO code and is what city.country_code
+      #     and countrylanguage.country_code point at. world.country.code2 is the
+      #     two-letter code and joins to nothing here.
+      - priority: 95
+        text: >-
+          The join column is spelled countrycode, one word: world.city.countrycode and
+          world.countrylanguage.countrycode both point at world.country.code, which is
+          the three-letter ISO code. world.country.code2 is the two-letter code and
+          joins to nothing here.
+      - priority: 80
+        text: >-
+          world.country.gnp is in millions of US dollars. GNP per capita is
+          gnp * 1000000 / population, and population can be zero -- guard the divide
+          or the query fails on a handful of territories.
+      - priority: 70
+        text: >-
+          world.countrylanguage.percentage is a percentage (0-100), not a fraction,
+          and the rows for one country do not necessarily sum to 100.
+      # RETIRED -- the column is `isofficial`, one word, and it is a character rather
+      # than a boolean. Replaced by the rule at priority 88, which keeps the point this
+      # one made about what "what language do they speak" usually means.
+      # - priority: 60
+      #   text: >-
+      #     world.countrylanguage.is_official is the flag that distinguishes an official
+      #     language from one that is merely spoken. "What language do they speak"
+      #     usually means the largest by percentage, not the official one.
+      - priority: 88
+        text: >-
+          world.countrylanguage.isofficial is one word and holds a single character,
+          'T' or 'F'. Compare it to 'T'; treating it as a boolean fails. It separates
+          an official language from one merely spoken, and "what language do they
+          speak" usually means the largest by percentage rather than the official one.
+      - priority: 65
+        text: >-
+          world.country.capital holds a world.city.id, not a name, and it is null for
+          seven countries. Join a country to its capital through that column and make
+          it a LEFT JOIN, or those seven vanish from the answer without a word.
+      - priority: 55
+        text: >-
+          indepyear is null for 47 countries and lifeexpectancy for 17. A ranking has
+          to decide whether a missing value sorts last or is excluded, and say which it
+          did -- silently dropping 47 rows from "which countries became independent
+          most recently" is a different answer to the one that was asked for.
+      - priority: 45
+        text: >-
+          world.country.continent is one of exactly seven values and includes
+          Antarctica and Oceania, so "which continent" answers can legitimately have
+          seven rows. world.city.district is a sub-national area whose meaning is set
+          by each country and is not comparable across them.
+    starters:
+      - Which countries have the highest GNP per capita?
+      - What are the largest cities on each continent?
+      - Where is French an official language?
+      - Which official languages are spoken by the most people?
+      - Which countries have no capital city recorded?
+      - How does life expectancy compare across continents?
+
+  - id: healthcare
+    name: Healthcare Clinic
+    description: Patients, appointments, prescriptions and billing.
+    database: healthcare
+    instructions:
+      - priority: 100
+        text: >-
+          This schema holds patient data. Never return a patient name, address, phone
+          number or any other direct identifier alongside a diagnosis, prescription or
+          allergy in the same result. Aggregate, or return the identifier alone. If a
+          question cannot be answered without doing that, say so rather than answering
+          it.
+      - priority: 90
+        text: >-
+          An appointment that did not happen still has a row. Filter
+          healthcare.appointments.status before counting: a "no-show" is not a visit,
+          and counting it as one overstates activity by a double-digit percentage.
+      - priority: 70
+        text: >-
+          Staff are split across two tables — healthcare.medicalstaff and
+          healthcare.nonmedicalstaff. "How many staff" means both; "which doctor"
+          means medicalstaff only.
+      - priority: 60
+        text: >-
+          healthcare.billing amounts are in dollars. An unpaid bill is distinguished
+          by its status column, not by a null amount.
+      - priority: 88
+        text: >-
+          An appointment carries no department of its own. Department is reached through
+          healthcare.appointments.medstaffid -> healthcare.medicalstaff.departmentid ->
+          healthcare.departments. There is no shorter path, and nonmedicalstaff never
+          appears on an appointment at all.
+      - priority: 78
+        text: >-
+          healthcare.billing.status is Paid or Pending and nothing else, and there is
+          exactly one bill for every appointment. "Billed" therefore means every row and
+          "collected" means the Paid ones -- the gap between those two figures is the
+          receivable, and reporting either as "revenue" without saying which invites the
+          reader to assume the other.
+      - priority: 68
+        text: >-
+          healthcare.prescriptions and healthcare.labreferrals hang off the appointment,
+          not the patient, so counting either per patient needs healthcare.appointments
+          in the middle. A referral's status is Ordered until it becomes Completed, and
+          its result is null for as long as it is Ordered.
+      - priority: 58
+        text: >-
+          healthcare.medicalstaff.role is a clinical speciality -- Cardiologist, Nurse,
+          Psychiatrist and nine others -- not a seniority grade and not a department. It
+          correlates with the department closely enough to be mistaken for it, so say
+          which of the two a breakdown is by.
+      - priority: 50
+        text: >-
+          healthcare.appointments.visittype is one of Checkup, Consultation, Follow-up
+          or Urgency, and status is one of Completed, Scheduled, No-Show or Cancelled.
+          A question about anything outside those lists -- surgery, admission, triage --
+          has no answer in this data rather than an answer of zero.
+    starters:
+      - How many appointments do we have by department this month?
+      - What is the no-show rate by department?
+      - Which prescriptions are issued most often?
+      - How much have we billed, and how much is still unpaid?
+      - Which lab referrals are still waiting on a result?
+      - Which specialities see the most patients?
+
+  - id: ecommerce
+    name: E-commerce Store
+    description: Online retail — orders, inventory, payments, carts.
+    database: ecommerce
+    instructions:
+      - priority: 90
+        text: >-
+          A cart is not an order. ecommerce.carts and ecommerce.cart_items are
+          pre-purchase; revenue comes from ecommerce.orders and
+          ecommerce.order_items. Counting carts as sales is the mistake this rule
+          exists to prevent.
+      # RETIRED -- there is no "refunded" state anywhere in this database, so the rule
+      # asks for a filter that cannot be written. Replaced by priority 92, which keeps
+      # the order_status_history warning this one got right.
+      # - priority: 85
+      #   text: >-
+      #     Exclude cancelled and refunded orders from revenue. The current state is on
+      #     ecommerce.orders.status; ecommerce.order_status_history holds how it got
+      #     there and will double-count if joined carelessly.
+      - priority: 92
+        text: >-
+          ecommerce.orders.status holds exactly delivered, processing, pending or
+          cancelled -- there is no refunded state, and ecommerce.payments.status is only
+          captured or pending. Exclude cancelled from revenue, and if asked about
+          refunds say they are not recorded here rather than returning zero.
+          ecommerce.order_status_history holds how an order reached its state and will
+          double-count if joined carelessly.
+      - priority: 80
+        text: >-
+          A product is sold as one of its rows in ecommerce.product_variants — size,
+          colour and so on. Stock is per variant in ecommerce.inventory, not per
+          product, so "how many do we have" must group by variant unless asked
+          otherwise.
+      - priority: 70
+        text: >-
+          ecommerce.payments can hold several rows for one order (a retry, a partial
+          refund). Sum them per order rather than joining and summing across orders,
+          which multiplies the order total by the number of payment rows.
+      - priority: 60
+        text: >-
+          "Conversion rate" here means orders divided by carts created in the same
+          period.
+      - priority: 82
+        text: >-
+          ecommerce.order_items.line_total is a stored generated column, already
+          unit_price * qty * (1 - discount) rounded to two places. Sum that column
+          rather than recomputing the arithmetic, which invites a rounding
+          disagreement with the figure the database itself reports.
+      - priority: 75
+        text: >-
+          ecommerce.orders has no tax column: grand_total = subtotal - discount_total +
+          shipping_total. The line totals sum to subtotal, so an order's grand total and
+          the sum of its lines legitimately differ, and neither is wrong.
+      - priority: 62
+        text: >-
+          There is exactly one variant per product in this data -- 77 of each -- and
+          inventory.quantity_reserved is zero on every row. So quantity_on_hand is the
+          stock figure, and grouping by variant adds a column that carries no
+          information here even though the schema is built for it.
+      - priority: 55
+        text: >-
+          ecommerce.inventory_movements is a ledger rather than a snapshot, so it is
+          summed and not counted. Every row currently carries reason 'restock', which
+          means it cannot yet explain a decrease in stock -- do not present it as a
+          full audit of movement.
+      - priority: 48
+        text: >-
+          ecommerce.users.deleted_at and ecommerce.products.deleted_at are soft deletes
+          and are separate from any active flag. "Our customers" and "our catalogue"
+          both mean the rows where deleted_at is null.
+      - priority: 40
+        text: >-
+          All ten carts in this data have status 'active', so nothing has been abandoned
+          and nothing converted. A conversion or abandonment rate here is zero over ten
+          rather than a meaningful figure, and saying so is the honest answer.
+    starters:
+      - What is our revenue by month, excluding cancelled orders?
+      - Which products are close to running out of stock?
+      - How many carts are abandoned versus converted?
+      - How long do orders take to reach delivered?
+      - Which categories earn the most, by line total?
+      - What do discounts cost us per category?
+
+  - id: booking
+    name: Hotel Booking
+    description: Hotels, rooms, reservations and guests.
+    database: booking
+    instructions:
+      # RETIRED -- the columns are `checkindate` and `checkoutdate`, and there is no
+      # rate column anywhere. Replaced by priority 92, which keeps the zero-nights
+      # point this one got right.
+      # - priority: 90
+      #   text: >-
+      #     A reservation covers a date range. Nights are check_out - check_in, and a
+      #     same-day booking is zero nights, not one. Revenue for a stay is nights
+      #     multiplied by the rate.
+      - priority: 96
+        text: >-
+          This schema holds two unrelated datasets and they must never be joined. The
+          normalised model -- booking.reservation, room, guest, roomreservation,
+          guestreservation, amenity, roomamenity, staff -- is one small hotel: 18 rooms,
+          24 reservations, 11 guests, all in 2023. booking.hotel_bookings is a separate
+          flat extract of 119,390 bookings across two hotels from 2015 to 2017. They
+          share no key, and a join between them produces a cross product that looks like
+          a result.
+      - priority: 92
+        text: >-
+          The date columns are booking.reservation.checkindate and
+          booking.reservation.checkoutdate. Nights are checkoutdate - checkindate, and a
+          same-day booking is zero nights rather than one. booking.reservation.total is
+          the booked total for the whole stay; there is no rate column, and
+          booking.room.baseprice is per night with booking.room.extraperson a surcharge
+          for each guest above booking.room.standardoccupancy.
+
+      - priority: 80
+        text: >-
+          One reservation can hold several rooms through booking.roomreservation.
+          "How many bookings" means reservations; "how many rooms sold" means rows in
+          roomreservation. They are different numbers and people ask for both.
+      - priority: 70
+        text: >-
+          Occupancy is rooms occupied divided by rooms available on a given night, so
+          it needs the room inventory as a denominator -- not just a count of
+          reservations.
+      # RETIRED -- booking.reservation has no status column at all, so this filter
+      # cannot be written. Replaced by priority 86, which says where cancellation
+      # actually lives.
+      # - priority: 60
+      #   text: >-
+      #     Cancelled reservations keep their row. Filter on status before reporting
+      #     occupancy or revenue.
+      - priority: 86
+        text: >-
+          booking.reservation has no status column, so a cancellation cannot be filtered
+          there and every one of its 24 rows is a stay that happened. Cancellation exists
+          only in booking.hotel_bookings, as is_canceled (0 or 1) and reservation_status,
+          whose values are 'Check-Out', 'Canceled' -- spelled with one l -- and 'No-Show'.
+      - priority: 72
+        text: >-
+          Any question about volume, seasonality, cancellation rate, lead time, market
+          segment or distribution channel means booking.hotel_bookings. Twenty-four
+          reservations cannot carry a trend, so answering those from the normalised
+          tables produces a shape rather than a finding.
+      - priority: 65
+        text: >-
+          In booking.hotel_bookings a stay is stays_in_weekend_nights +
+          stays_in_week_nights nights, adr is the average daily rate, and stay revenue is
+          adr multiplied by those nights. lead_time is days between booking and arrival,
+          and a cancelled row still carries its adr -- so revenue must exclude
+          is_canceled = 1 while a cancellation rate must not.
+      - priority: 55
+        text: >-
+          booking.hotel_bookings has no arrival date column. It is split across
+          arrival_date_year, arrival_date_month -- an English month name such as 'April',
+          not a number -- and arrival_date_day_of_month. Ordering by the month column
+          sorts alphabetically, which puts April first and October before September.
+    starters:
+      - What is our occupancy rate by month?
+      - Which room types earn the most revenue?
+      - How far in advance do guests book?
+      - How does the cancellation rate vary by market segment?
+      - What is the average daily rate by month, for each hotel?
+      - Which distribution channels bring the most repeat guests?
+
+  - id: pagila
+    name: Pagila DVD Rental
+    description: DVD rental — films, rentals, payments, stores.
+    database: pagila
+    instructions:
+      - priority: 90
+        text: >-
+          A rental is pagila.rental; the money is pagila.payment, which points back at
+          it. Revenue means summing payment.amount, not counting rentals -- a rental
+          with no payment row exists and is not revenue.
+      - priority: 85
+        text: >-
+          pagila.payment is partitioned by month (payment_p2022_01 and so on). Query
+          the parent table `payment`; selecting from a partition directly answers for
+          one month only and looks like a catastrophic drop in revenue.
+      - priority: 80
+        text: >-
+          A film reaches a customer through film -> inventory -> rental. inventory is
+          the physical copy, so a popular film has many inventory rows and joining
+          film straight to rental is not possible.
+      - priority: 70
+        text: >-
+          A rental is outstanding when return_date is null. That is how "what is
+          currently out" is answered -- there is no status column.
+      - priority: 60
+        text: >-
+          Film categories are many-to-many through pagila.film_category.
+      - priority: 82
+        text: >-
+          The primary key of pagila.payment is (payment_date, payment_id), so payment_id
+          on its own is not unique across the table. It cannot be used as a join key or
+          counted with DISTINCT to mean "number of payments".
+      - priority: 75
+        text: >-
+          Payments in this data run from January 2022 to July 2026 and stop there.
+          Anchor "this month", "last quarter" and "recent" on max(payment.payment_date)
+          rather than on now(), which returns nothing and reads like an outage.
+      - priority: 68
+        text: >-
+          pagila.customer carries both activebool, a boolean, and active, an integer,
+          and they disagree on 43 rows. activebool is the one to use; choosing the other
+          silently changes the customer count without changing the query's shape.
+      - priority: 60
+        text: >-
+          Customer geography is four hops -- customer -> address -> city -> country --
+          and the name column is pagila.country.country. A store's geography goes
+          through store -> address instead, so "revenue by country" means the customer's
+          country unless the question says otherwise.
+      - priority: 52
+        text: >-
+          pagila.film.special_features is a text array, so test it with = ANY(...) or
+          the @> operator rather than LIKE. pagila.film.rating is the mpaa_rating enum,
+          which compares to a quoted literal and not to an arbitrary string.
+      - priority: 44
+        text: >-
+          pagila.film.rental_duration is the number of days a rental is allowed, not the
+          number it lasted. The actual duration is return_date - rental_date, and a
+          rental is overdue when that exceeds rental_duration -- while return_date being
+          null means it is still out and has no duration yet.
+    starters:
+      - Which film categories generate the most revenue?
+      - What rentals are currently outstanding?
+      - Who are our most valuable customers?
+      - Which stores earn the most, month by month?
+      - Which rentals ran past their allowed duration?
+      - How does revenue split across film ratings?
+
+  - id: employees
+    name: HR Employees
+    description: Large HR dataset — salaries, titles, departments.
+    database: employees
+    instructions:
+      - priority: 100
+        text: >-
+          Salary is personal data. Report it aggregated -- averages, medians, bands --
+          and do not return an individual's salary next to their name unless the
+          question is explicitly about one named person.
+      - priority: 95
+        text: >-
+          employees.salaries, .titles, .dept_emp and .dept_manager are all
+          history tables with from_date and to_date. The current row is the one where
+          to_date = '9999-01-01'. Without that filter every employee appears several
+          times and every average is wrong.
+      - priority: 80
+        text: >-
+          This dataset is large — roughly 3.9 million rows in salaries. Aggregate in
+          SQL rather than returning rows, and always bound the result.
+      - priority: 60
+        text: >-
+          An employee can have belonged to several departments over time. "Which
+          department is she in" means the current dept_emp row.
+      - priority: 92
+        text: >-
+          This schema ships two views that already apply the current-row filter:
+          employees.current_dept_emp and employees.dept_emp_latest_date. Prefer them to
+          hand-writing the to_date predicate, because the hand-written version is
+          exactly where the mistake gets made.
+      - priority: 88
+        text: >-
+          The data stops in 2002 -- the newest from_date in employees.salaries is
+          2002-08-01 and the newest hire_date is 2000-01-28. '9999-01-01' means "still
+          open as of then", not "true today", so every figure described as current is a
+          2002 figure and any window anchored on now() returns nothing at all. Say which
+          it is when reporting one.
+      - priority: 72
+        text: >-
+          'Manager' is one of the seven values in employees.titles, where it is a job
+          title held by a great many people. A department's actual manager is a row in
+          employees.dept_manager. "How many managers" is therefore two different
+          questions with very different answers, and it is worth asking which was meant.
+      - priority: 62
+        text: >-
+          employees.dept_emp is keyed on (emp_no, dept_no), so somebody who left a
+          department and later returned has one row rather than two spells. Tenure
+          computed from it is elapsed time between two dates, not time actually served.
+      - priority: 54
+        text: >-
+          A salary at a point in time is the employees.salaries row whose from_date and
+          to_date bracket that date -- not the row with the largest from_date, which is
+          only the right answer when the date in question is the present.
+      - priority: 46
+        text: >-
+          employees.employees.gender holds a single character, M or F. Do not break a
+          result down by it unless the question explicitly asks for that, and never
+          alongside pay.
+    starters:
+      - What is the average current salary by department?
+      - How has headcount changed over time?
+      - Which titles have the widest salary range?
+      - How long do people stay in a department before moving?
+      - How many people does each department manager look after?
+      - How does salary progression compare across titles?

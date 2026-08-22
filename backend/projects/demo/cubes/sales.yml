@@ -1,0 +1,28 @@
+# Invoice-level revenue.
+#
+# `total` is the amount on the invoice itself, so this cube answers "how much
+# did we bill" and groups it by where and when. Anything below invoice level --
+# per track, album, artist or genre -- must use the track_sales cube instead,
+# because an invoice's total fans out across its lines.
+name: sales
+base_object: invoices
+description: Revenue as invoiced to customers.
+measures:
+  - name: revenue
+    expression: SUM(total)
+    type: DOUBLE
+    description: Total invoiced, in dollars.
+  - name: invoice_count
+    expression: COUNT(*)
+    type: BIGINT
+  - name: average_invoice
+    expression: AVG(total)
+    type: DOUBLE
+dimensions:
+  - name: country
+    expression: billing_country
+  - name: city
+    expression: billing_city
+time_dimensions:
+  - name: invoiced_on
+    expression: invoice_date

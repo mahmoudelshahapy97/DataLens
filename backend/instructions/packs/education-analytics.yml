@@ -1,0 +1,39 @@
+# Conventions for student records. The cohort rule is the one that most often
+# turns a retention problem into a retention success, and it does it silently.
+
+id: education-analytics
+name: Education analytics
+description: >-
+  Census-date enrolment, cohorts that must not be redefined, and grades that
+  are categories rather than numbers.
+
+instructions:
+  - text: >-
+      Enrolment is counted as of a census date, not continuously. A count taken
+      on any other day picks up late withdrawals and misses late registrations,
+      and will not reconcile with anything the institution has published.
+    priority: 62
+
+  - text: >-
+      A cohort is fixed when it is formed. Retention and completion follow the
+      original members wherever they go; recomputing the cohort from whoever is
+      still present is how a retention rate reaches one hundred per cent.
+    priority: 58
+
+  - text: >-
+      A grade is often an ordered category rather than a number. Averaging
+      letter grades needs a stated mapping, and a mapping that differs from the
+      institution's own produces a figure nobody recognises.
+    priority: 54
+
+  - text: >-
+      A student can be enrolled on several programmes and can attempt a course
+      more than once. Say whether a figure counts students, enrolments or
+      attempts, because all three answers look equally plausible.
+    priority: 49
+
+  - text: >-
+      Small groups identify individuals even with no name in the result.
+      Suppress any cell below an agreed threshold rather than publishing a
+      group of two, and say that suppression was applied.
+    priority: 45

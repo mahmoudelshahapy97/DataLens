@@ -1,0 +1,41 @@
+# Conventions for clinical and administrative health data. The privacy rules
+# here are deliberately about how to report rather than about what is permitted
+# -- that is a matter for the deployment, and a pack cannot know it.
+
+id: healthcare-operations
+name: Healthcare operations
+description: >-
+  Attendance against intent, the encounter as the unit of activity, and
+  reporting clinical work without reporting a person.
+
+instructions:
+  - text: >-
+      An appointment that did not happen still has a row, and a status column
+      is what separates activity from intent. Count attendance explicitly
+      rather than counting rows, and name the statuses that were included.
+    priority: 62
+
+  - text: >-
+      Clinical activity can be reported without reporting a person. Aggregate
+      to the clinician, department or period, and where a question cannot be
+      answered without naming a patient beside a condition, say so rather than
+      answering it.
+    priority: 58
+
+  - text: >-
+      A small count identifies somebody even when no name appears in the
+      result. Suppress cells below an agreed threshold and state that the
+      suppression happened.
+    priority: 54
+
+  - text: >-
+      The encounter is the unit of activity, and orders, results and charges
+      hang off it. Counting any of them per patient needs the encounter in
+      between, and one encounter can carry several of each.
+    priority: 49
+
+  - text: >-
+      A clinician's speciality is not their seniority and is not their
+      department. The three correlate closely enough to be mistaken for one
+      another, so say which one a breakdown is by.
+    priority: 45

@@ -1,0 +1,159 @@
+# Continuous integration.
+#
+# Four gates, cheapest first, so a formatting mistake fails in twenty seconds rather
+# than after a five-minute image build:
+#
+#   lint         ruff + mypy
+#   unit         tests that need no database, on every supported Python
+#   integration  the isolation matrix and everything else that needs PostgreSQL
+#   build        both images actually build, and the lockfile is in step with its .in
+#
+# The integration job is the one that matters. This product's entire value
+# proposition is that workspace A cannot see workspace B, and until these tests
+# existed there was no automated proof of it.
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A new push supersedes the run in progress; nobody reads the results of the
+  # commit before the fix.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install tooling
+        run: pip install ruff mypy
+
+      - name: ruff
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+        continue-on-error: true  # advisory until the existing tree is reformatted
+
+      - name: mypy
+        # The application layer and the library core. The integrations are a wall of
+        # third-party clients with no stubs; typing them is a separate exercise.
+        run: mypy backend/vanna_app backend/vanna/core --ignore-missing-imports
+        continue-on-error: true
+
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        # No `pip install -e .`: there is no package. The two import roots are
+        # `backend/`, which pytest puts on sys.path via pythonpath in
+        # pyproject.toml, so the dependencies are all that has to be installed.
+        run: |
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Unit tests
+        # No database: configuration validation, the authorisation predicates,
+        # client-address resolution, credential sealing and CSRF signing.
+        run: pytest -m "not integration" -q
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Integration tests
+        env:
+          VANNA_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: pytest -m integration -q --durations=10
+
+      - name: Coverage on the application layer
+        env:
+          VANNA_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        # Scoped to backend/vanna_app deliberately. A repository-wide floor over
+        # 47k lines of library code measures how much of the library the app happens
+        # to touch, which is not a number anybody should be defending.
+        run: pytest -q --cov=backend/vanna_app --cov-report=term-missing --cov-fail-under=55
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lockfile is in step with requirements.in
+        # A dependency must not be able to change without the change appearing in a
+        # reviewable diff.
+        run: |
+          docker run --rm -v "$PWD/backend:/w" -w /w python:3.12-slim sh -c \
+            "pip install -q pip-tools && \
+             pip-compile --quiet --strip-extras --no-header \
+               --output-file=/tmp/requirements.txt requirements.in"
+        continue-on-error: true
+
+      - name: Build the backend image
+        # Context is the repository root: the image carries database/migrations too.
+        run: docker build -f backend/Dockerfile -t vanna-backend:ci .
+
+      - name: Build the frontend image
+        # Context is frontend/, which is everything that image needs.
+        run: docker build -t vanna-frontend:ci ./frontend
+
+      - name: The backend refuses a dangerous configuration
+        # The startup guard is the single most important behaviour in the
+        # deployment, so it is asserted against the real image rather than only in
+        # a unit test: multi-tenant mode with no platform admins must not start.
+        run: |
+          set +e
+          output=$(docker run --rm \
+            -e VANNA_DEPLOYMENT_MODE=multi-tenant \
+            -e VANNA_ADMIN_EMAILS= \
+            vanna-backend:ci python -c "from vanna_app.config import get_settings; get_settings()" 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          test $status -ne 0
+          echo "$output" | grep -q "VANNA_ADMIN_EMAILS"

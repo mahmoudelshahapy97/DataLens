@@ -1,0 +1,42 @@
+# Conventions for accommodation data. Occupancy and revenue per available room
+# are ratios whose denominators are easy to get wrong and impossible to spot
+# afterwards, which is what most of this pack is about.
+
+id: hospitality-operations
+name: Hotels and hospitality
+description: >-
+  Occupancy denominators, rate against yield, and why a cancelled booking still
+  carries a price.
+
+instructions:
+  - text: >-
+      Occupancy is room nights sold over room nights available, so it needs the
+      inventory as a denominator. A count of reservations divided by a count of
+      rooms is not occupancy and will not agree with anything the property
+      reports.
+    priority: 62
+
+  - text: >-
+      Average daily rate is revenue over room nights sold; revenue per
+      available room is revenue over room nights available. They answer
+      different questions, and only the second one falls when the hotel is
+      empty.
+    priority: 58
+
+  - text: >-
+      A cancelled booking usually keeps its rate and its dates. Revenue has to
+      exclude it while a cancellation rate has to include it, so the same table
+      filtered two ways gives both figures.
+    priority: 54
+
+  - text: >-
+      A stay is counted in nights, not days. Arriving and departing on the same
+      date is zero nights, and the departure date is not a night sold.
+    priority: 49
+
+  - text: >-
+      The date a booking was made and the dates it covers are different axes.
+      Demand analysis groups by the booking date and occupancy by the stay
+      date, and mixing them produces a seasonality curve that belongs to
+      neither.
+    priority: 45

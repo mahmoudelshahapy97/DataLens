@@ -206,3 +206,26 @@ appendonly.aof
 *.temp
 *.orig
 .DS_Store
+# Query results the CLI writes into the working directory, one folder per
+# connection hash. Data extracted from a customer's warehouse has no business in
+# version control.
+query_results_*.csv
+[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*/
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# Screenshots written by tests/e2e/test_screenshots.py. Regenerated on every run
+# against a live stack, and a 2MB PNG per screen is not something to carry in
+# history -- the test that produces them is the reviewable artifact.
+artifacts/
+
+# The Q&A export. Its answers quote query results verbatim -- customer names,
+# revenue figures -- so it falls under the same rule as query_results_*.csv above:
+# data pulled from a warehouse does not belong in version control. Regenerate it
+# with `make qa-json`. The glob covers the variants people export alongside it
+# (qa_updated_100.json and friends) -- one rule, rather than a list that grows
+# by one line every time somebody names a file differently.
+qa*.json

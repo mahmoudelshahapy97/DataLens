@@ -1,0 +1,40 @@
+# Conventions for shipment and delivery data. The first one is the rule most
+# often broken by accident, and it flatters the operation every single time.
+
+id: logistics-operations
+name: Logistics and delivery
+description: >-
+  What on-time is measured against, transit versus dwell, and choosing between
+  consignments, parcels and scans.
+
+instructions:
+  - text: >-
+      On time means delivered against the promise made at booking, not against
+      the latest estimate. Comparing with an estimate that was revised while
+      the shipment ran late makes almost everything on time.
+    priority: 62
+
+  - text: >-
+      Transit is movement and dwell is waiting. Total lead time is both, and a
+      delay attributed to transit when it was really dwell sends people to fix
+      the wrong part of the network.
+    priority: 58
+
+  - text: >-
+      A shipment holds many parcels and a parcel is scanned many times. Decide
+      whether the question is about consignments, packages or scan events
+      before aggregating, because the three counts differ by an order of
+      magnitude.
+    priority: 54
+
+  - text: >-
+      A shipment still in flight has no delivery date. Dropping those rows
+      measures only what has already arrived -- the population most likely to
+      have arrived on time -- so count them as unresolved instead.
+    priority: 50
+
+  - text: >-
+      Weight and volume are both billable and the larger of the two governs. A
+      cost per kilogram that ignores volumetric weight understates the freight
+      on anything light and bulky.
+    priority: 45

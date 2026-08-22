@@ -1,0 +1,39 @@
+# Conventions that hold in most finance and billing schemas.
+#
+# A starter pack is a starting point, not a subscription. Enabling it copies these
+# rules into the workspace, which then owns and may edit them; removing the pack
+# later takes back only the copies nobody has touched.
+#
+# The first rule here used to be hardcoded into every new workspace by
+# `Platform._seed_knowledge`. It is a business assumption -- true of a great many
+# schemas and false in some -- so it belongs behind an explicit choice rather than
+# being seeded into workspaces whose data it does not describe.
+
+id: finance-conventions
+name: Finance conventions
+description: >-
+  Currency units, fiscal calendar, and the difference between an invoiced amount
+  and a recognised one.
+
+instructions:
+  - text: >-
+      Monetary columns whose name ends in _cents store integer cents. Divide by
+      100.0 and label the result in dollars.
+    priority: 60
+
+  - text: >-
+      "Revenue" means the sum of line-level amounts unless someone asks
+      specifically about invoice or order totals. The two differ whenever an
+      invoice carries discounts, tax or shipping that are not attributed to a line.
+    priority: 55
+
+  - text: >-
+      Exclude cancelled, refunded and test transactions from revenue figures
+      unless the question is explicitly about them, and say in the answer that you
+      did.
+    priority: 55
+
+  - text: >-
+      A trailing twelve months window ends at the most recent complete month, not
+      at today. A partial current month makes every trend look like a collapse.
+    priority: 50

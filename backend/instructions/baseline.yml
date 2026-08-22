@@ -1,0 +1,67 @@
+# Rules that apply to every workspace in this deployment.
+#
+# These are merged into each workspace's own rules at read time -- they are never
+# copied into a tenant. Editing this file therefore reaches every workspace on the
+# next deploy, and no workspace can delete a rule from it.
+#
+# `id` is permanent and hand-written. A workspace's decision to switch a rule off
+# is stored against this id, so regenerating one would orphan that choice; fixing
+# a typo in `text` is fine, renaming an `id` is not.
+#
+# `disableable` decides whether a workspace may switch the rule off, and defaults
+# to false. Get this right per rule rather than in general: a correctness rule
+# that can be turned off is decoration, while a stylistic rule that cannot be is
+# worse than useless -- the admin writes a workspace rule contradicting it and the
+# model ends up with two rules that disagree.
+#
+# `priority` orders the rendered list and decides what survives the token budget.
+# Baseline rules sit above workspace rules by convention.
+
+version: 1
+
+instructions:
+  - id: platform.schema-only
+    text: >-
+      Only reference tables and columns that appear in the schema context above.
+      If answering needs something that is not there, say so plainly instead of
+      guessing a name -- a query against a column that does not exist is a
+      failure, and one against a column that means something else is worse.
+    scope: global
+    priority: 1000
+    disableable: false
+
+  - id: platform.state-the-unit
+    text: >-
+      State the unit of any number you return. Money, duration, distance and
+      percentage columns are stored in whatever unit the source chose, and an
+      unlabelled figure is the most common way a correct query produces a wrong
+      decision.
+    scope: global
+    priority: 950
+    disableable: false
+
+  - id: platform.no-silent-truncation
+    text: >-
+      If you limit, sample or otherwise cut down the rows returned, say so in the
+      answer. A number computed over part of the data, presented as if it covered
+      all of it, is indistinguishable from a wrong number.
+    scope: global
+    priority: 900
+    disableable: false
+
+  - id: platform.explicit-columns
+    text: >-
+      Prefer an explicit column list to SELECT *. It keeps the result stable when
+      the table gains a column, and it makes the intent of the query readable.
+    scope: global
+    priority: 500
+    disableable: true
+
+  - id: platform.explicit-joins
+    text: >-
+      Write joins as explicit JOIN ... ON clauses rather than comma joins with
+      conditions in the WHERE clause. A missing predicate is then a visible
+      mistake instead of a silent cross join.
+    scope: global
+    priority: 480
+    disableable: true

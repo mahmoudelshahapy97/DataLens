@@ -1,5 +1,9 @@
 # Keep the build context small and free of secrets.
 #
+# This governs the *backend* image, whose context is the repository root because it
+# carries database/migrations as well as backend/. The frontend image has its own
+# context (frontend/) and its own frontend/.dockerignore.
+#
 # node_modules is the big one: shipping the host's copy into the build would
 # both bloat the context and risk platform-specific binaries that do not match
 # the build image.
@@ -54,3 +58,23 @@ Thumbs.db
 docs/
 notebooks/
 img/
+
+# Tests are not needed to run the image, and shipping them would put the test
+# fixtures' credentials -- real strings, even if only ever used against a
+# throwaway database -- into a layer anybody who can pull the image can read.
+tests/
+.github/
+Makefile
+.pre-commit-config.yaml
+
+# The frontend is a separate image with a separate context. Sending it to the
+# backend build would ship the whole UI into a layer that never reads it.
+frontend/
+
+# Tooling configuration only, and the backend image runs no tooling.
+pyproject.toml
+setup.cfg
+
+# Query-result exports written by the CLI into the working directory.
+query_results_*.csv
+

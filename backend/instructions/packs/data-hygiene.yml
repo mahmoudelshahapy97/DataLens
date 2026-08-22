@@ -1,0 +1,42 @@
+# Habits that keep an answer honest regardless of what the schema is about.
+#
+# These are conventions rather than correctness rules, which is why they are a pack
+# a workspace opts into rather than part of the platform baseline. A team with a
+# schema where NULL genuinely means zero should be able to say so.
+
+id: data-hygiene
+name: Data hygiene
+description: >-
+  How to treat nulls, duplicates, time zones and counts so the number means what
+  the reader assumes it means.
+
+instructions:
+  - text: >-
+      NULL is not zero. When a measure can be NULL, decide deliberately whether to
+      exclude those rows or coalesce them, and say which you did -- AVG over a
+      column with nulls answers a different question than the reader expects.
+    priority: 60
+
+  - text: >-
+      COUNT(*) counts rows, COUNT(column) skips nulls, and COUNT(DISTINCT column)
+      counts values. Pick the one that matches the question rather than the one
+      that is shortest.
+    priority: 55
+
+  - text: >-
+      A join that fans out multiplies the rows on the other side, so summing a
+      parent's column after joining to its children double-counts it. Aggregate the
+      child side first, or sum a column that belongs to the grain you are at.
+    priority: 60
+
+  - text: >-
+      Timestamps are stored in UTC unless the schema says otherwise. Convert before
+      grouping by day, because a day boundary in the wrong zone moves rows between
+      buckets.
+    priority: 50
+
+  - text: >-
+      When ordering by a measure to find the top or bottom, break ties explicitly.
+      An ORDER BY with ties returns whichever row the engine happened to reach
+      first, and the answer changes between runs.
+    priority: 45

@@ -1,63 +1,107 @@
 # Vanna — full stack, querying the shared multi-database sandbox.
 #
-# PREREQUISITE: the sandbox must be running first. It owns the Docker network
-# this stack joins, so starting out of order fails immediately with
+# PREREQUISITE: the sandbox must be running first. It owns the Docker network this
+# stack joins, so starting out of order fails immediately with
 # "network multidb_network declared as external, but could not be found".
 #
-#   cd ../../text-to-sql-multi-tenant/databases && docker compose up -d
+#   cd ../../databases && docker compose up -d
 #   docker compose up --build
+#
+# The vector store is a third stack, ../../vector_db, and is only needed when
+# VANNA_INDEX_BACKEND names a vector backend. It joins the same sandbox network:
+#
+#   cd ../../vector_db && docker compose up -d
 #
 #   App     http://localhost:3000        chat, schema, history, saved queries
 #   Console http://localhost:3000/admin/ workspaces, members, knowledge review
-#   API     http://localhost:8000/docs
 #
-# Sign in at the app as `demo@example.com` in the `demo` workspace. That account
-# is the platform admin: it can create more workspaces from the console, bind
-# each to a different one of the eight seeded datasets, and invite members with
+# Sign in at the app as `demo@example.com`. On a first start with no
+# VANNA_ADMIN_PASSWORD set, a password is generated and printed once in the API log:
+#
+#   docker compose logs backend | grep -A4 "First-run administrator"
+#
+# That account is the platform admin: it can create more workspaces, bind each to a
+# different one of the eight seeded datasets, and invite members with
 # admin / analyst / viewer roles. Each workspace queries only its own database.
 #
-# VANNA_DATABASE_URL below is the fallback for workspaces with no binding of
-# their own -- chinook by default. Changing it also needs the catalog cleared
-# (see .env.example).
-#
-# Set ANTHROPIC_API_KEY or OPENAI_API_KEY in a .env file for real answers.
-# Without one the stack still runs, using the mock LLM.
+# This file runs the stack in `single-tenant` mode, which is the honest description
+# of a local sandbox: real accounts and real limits, but plain HTTP and a published
+# API port. See .env.example for what `multi-tenant` additionally requires -- the API
+# refuses to start in that mode until every one of those is right.
 
 services:
-  api:
+  # Named after the directory it is built from. The three top-level directories --
+  # backend/, frontend/, database/ -- and the services here use the same words, so
+  # `docker compose logs backend` needs no translation step.
+  backend:
     build:
+      # Repository root, not backend/: the image also carries database/migrations,
+      # which VANNA_AUTO_MIGRATE applies at boot.
       context: .
-      dockerfile: docker/api.Dockerfile
+      dockerfile: backend/Dockerfile
     environment:
+      # -- Mode. The single most important setting here.
+      #
+      #    demo           anonymous access, per-process limits, no checks
+      #    single-tenant  real accounts, real limits, one workspace expected
+      #    multi-tenant   the product; every permissive default is refused at boot
+      #
+      #    Anything unrecognised is treated as multi-tenant, so a typo fails closed.
+      VANNA_DEPLOYMENT_MODE: ${VANNA_DEPLOYMENT_MODE:-single-tenant}
+
+      # -- Secrets. Encrypts stored datasource credentials and signs CSRF and OIDC
+      #    state. Generate with:
+      #      python -c "import secrets;print(secrets.token_urlsafe(48))"
+      #    The default below is a *known* value and is only acceptable on a laptop.
+      VANNA_SECRET_KEY: ${VANNA_SECRET_KEY:-dev-only-insecure-key-replace-me-before-any-real-deployment}
+
       # -- LLM. 'auto' picks whichever key is present, else the mock service.
       VANNA_LLM_PROVIDER: ${VANNA_LLM_PROVIDER:-auto}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-5}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 
-      # -- Database. Reaches `db_postgres` by container name over the shared
-      #    sandbox network. Must not be left empty: app.py reads an empty value
-      #    as "use the built-in SQLite demo" and would silently query toy data
-      #    instead of failing.
+      # -- Database. Reaches `db_postgres` by container name over the shared sandbox
+      #    network. Must not be left empty: an empty value means "use the built-in
+      #    SQLite demo" and would silently query toy data instead of failing.
       VANNA_DATABASE_URL: ${VANNA_DATABASE_URL:-postgresql://postgres:postgres123@db_postgres:5432/chinook}
-      # Only used if VANNA_DATABASE_URL is explicitly cleared.
       VANNA_SQLITE_PATH: /data/demo.db
 
-      # -- Control plane. Tenants, their members and roles, saved queries,
-      #    starter questions and the generation log all live here. A separate
-      #    database from the one being queried, on purpose: the analytics
-      #    connection is read-only and belongs to the customer, and our
+      # -- Control plane. Tenants, members, roles, sessions, saved queries, starter
+      #    questions, the generation log, the audit trail and the shared counters all
+      #    live here. A separate database from the one being queried, on purpose: the
+      #    analytics connection is read-only and belongs to the customer, and our
       #    bookkeeping has no business in it. Created on first start if absent.
       VANNA_APP_DATABASE_URL: ${VANNA_APP_DATABASE_URL:-postgresql://postgres:postgres123@db_postgres:5432/vanna_app}
       VANNA_DEFAULT_TENANT: ${VANNA_DEFAULT_TENANT:-demo}
+      # Schema migrations run at boot here -- the numbered files in
+      # database/migrations. Set false and run
+      # `python -m vanna_app.migrate upgrade` as a deploy job once more than one
+      # replica starts at a time.
+      VANNA_AUTO_MIGRATE: ${VANNA_AUTO_MIGRATE:-true}
+      VANNA_APP_POOL_MAX: ${VANNA_APP_POOL_MAX:-16}
 
-      # Lets the sign-in screen list a workspace's members so they can be
-      # picked rather than typed. Convenient for a demo, an email-address
-      # disclosure anywhere else -- leave it false in production.
+      # -- Access. Platform admins create and delete workspaces and administer any of
+      #    them. Workspace-level admins are rows in the directory instead.
+      #
+      #    An empty list now means *nobody* is a platform admin, not everybody --
+      #    which is the opposite of what it used to mean, and the reason this stack
+      #    could previously be turned into a single shared workspace by unsetting one
+      #    variable.
+      VANNA_ADMIN_EMAILS: ${VANNA_ADMIN_EMAILS:-demo@example.com}
+
+      # Which hops in X-Forwarded-For may be believed. nginx sits on the compose
+      # bridge network, so its address is in 172.16/12. Without this the header is
+      # ignored entirely and every request appears to come from the proxy -- which
+      # would make per-IP login throttling lock out all users at once.
+      VANNA_TRUSTED_PROXIES: ${VANNA_TRUSTED_PROXIES:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}
+
+      # Lets the sign-in screen list a workspace's members so they can be picked
+      # rather than typed. Convenient for a demo, an email-address disclosure
+      # anywhere else -- and refused outright in multi-tenant mode.
       VANNA_PUBLIC_USER_DIRECTORY: ${VANNA_PUBLIC_USER_DIRECTORY:-true}
 
-      # -- Storage. On a named volume, so a rebuild keeps the catalog,
-      #    generation log, and curated knowledge.
+      # -- Storage. On a named volume, so a rebuild keeps the catalog and knowledge.
       VANNA_DATA_DIR: /data
       VANNA_KNOWLEDGE_DIR: /data/knowledge
 
@@ -66,78 +110,112 @@ services:
       VANNA_QUERY_TIMEOUT: ${VANNA_QUERY_TIMEOUT:-60}
       VANNA_DAILY_QUOTA: ${VANNA_DAILY_QUOTA:-200}
       VANNA_RATE_LIMIT_PER_MIN: ${VANNA_RATE_LIMIT_PER_MIN:-20}
+      VANNA_GENERATION_RETENTION_DAYS: ${VANNA_GENERATION_RETENTION_DAYS:-365}
+      VANNA_MAX_TENANT_RUNTIMES: ${VANNA_MAX_TENANT_RUNTIMES:-32}
 
-      # -- Access. Platform admins: create and delete workspaces, administer
-      #    any of them. Workspace-level admins are rows in the directory
-      #    instead, granted from the console.
+      # -- Semantic layer. A manifest describes ONE database, so it is bound to the
+      #    workspace whose database it describes:
       #
-      #    Defaulted to the seeded demo account rather than left empty on
-      #    purpose. Empty means *everyone* is a platform admin, which would make
-      #    the multi-tenancy in this stack indistinguishable from having none --
-      #    every user could read every workspace.
-      VANNA_ADMIN_EMAILS: ${VANNA_ADMIN_EMAILS:-demo@example.com}
-
-      # -- Semantic layer. A manifest describes ONE database, so it is bound
-      #    to the workspace whose database it describes:
-      #
-      #      VANNA_PROJECT_DIR   applies to the default workspace only. This is
-      #                          the single-workspace case.
+      #      VANNA_PROJECT_DIR   applies to the default workspace only.
       #      VANNA_PROJECTS_DIR  a directory of projects, one per workspace, at
-      #                          <root>/<tenant_id>/. Use this once there is
-      #                          more than one workspace.
-      #
-      #    Applying one manifest to every workspace -- which an earlier version
-      #    of this file did -- shows a workspace another workspace's models and
-      #    makes every query fail against a schema that lacks them.
+      #                          <root>/<tenant_id>/. Use this once there is more
+      #                          than one workspace.
       VANNA_PROJECT_DIR: ${VANNA_PROJECT_DIR:-/project}
       VANNA_PROJECTS_DIR: ${VANNA_PROJECTS_DIR:-/projects}
 
-      # Retrieval ranking. Dependency-free BM25 by default; name a vector
-      # integration to fuse one in. The effective backend is reported on
-      # /api/vanna/v2/schema so a downgrade is visible rather than silent.
-      VANNA_INDEX_BACKEND: ${VANNA_INDEX_BACKEND:-lexical}
+      # Retrieval ranking. `qdrant` fuses semantic search into BM25 by reciprocal
+      # rank fusion; `lexical` is keyword-only and needs neither a vector store nor
+      # an API key. Two things have to be true for the default here to hold: the
+      # ../../vector_db stack is up, and OPENAI_API_KEY above is set. With either
+      # missing the API still starts and logs a downgrade to lexical -- retrieval
+      # gets worse rather than the stack failing, so check the effective backend on
+      # /api/vanna/v2/schema when answers degrade for no obvious reason.
+      VANNA_INDEX_BACKEND: ${VANNA_INDEX_BACKEND:-qdrant}
+      # Served by the ../../vector_db stack over the shared sandbox network, not by
+      # a service in this file -- `qdrant` is that stack's service name, which
+      # Compose registers as an alias on every network it joins. See the note where
+      # the qdrant service used to be.
       VANNA_QDRANT_URL: ${VANNA_QDRANT_URL:-http://qdrant:6333}
-      VANNA_EMBED_MODEL: ${VANNA_EMBED_MODEL:-BAAI/bge-small-en-v1.5}
-      VANNA_EMBED_CACHE: /data/embed-cache
+      # Empty for the sandbox: that stack binds Qdrant to loopback and runs it with
+      # authentication off. Required for any Qdrant reachable from further away --
+      # a managed cluster, or one published beyond 127.0.0.1 -- because Qdrant's
+      # read/write API is entirely unauthenticated without it.
+      VANNA_QDRANT_API_KEY: ${VANNA_QDRANT_API_KEY:-}
 
-      # -- Authentication. Password + session cookie. The first admin is seeded
-      #    on an empty install; leave the password unset and one is generated
-      #    and logged once. Header auth is off unless deliberately re-enabled.
+      # Embeddings come from the OpenAI API: nothing resident in the workers,
+      # nothing downloaded at boot, and a round trip plus a per-token charge on
+      # every index pass and every query. OPENAI_API_KEY above is therefore
+      # required whenever VANNA_INDEX_BACKEND names a vector backend -- without it
+      # the API still starts and serves keyword-only BM25.
+      VANNA_EMBED_PROVIDER: ${VANNA_EMBED_PROVIDER:-openai}
+      VANNA_EMBED_MODEL: ${VANNA_EMBED_MODEL:-text-embedding-3-small}
+      VANNA_EMBED_DIMENSIONS: ${VANNA_EMBED_DIMENSIONS:-}
+      # Changing embedding model makes the existing collection unusable; it is
+      # derived from knowledge/, so rebuilding it loses nothing.
+      VANNA_QDRANT_RECREATE_ON_MISMATCH: ${VANNA_QDRANT_RECREATE_ON_MISMATCH:-false}
+
+      # -- Authentication. Password + session cookie. The first admin is seeded on an
+      #    empty install; leave the password unset and one is generated and logged
+      #    once. Header auth is off unless deliberately re-enabled, and is refused
+      #    outright in multi-tenant mode.
+      VANNA_AUTH_METHODS: ${VANNA_AUTH_METHODS:-password}
       VANNA_ADMIN_PASSWORD: ${VANNA_ADMIN_PASSWORD:-}
       VANNA_TRUST_HEADERS: ${VANNA_TRUST_HEADERS:-false}
       VANNA_SECURE_COOKIES: ${VANNA_SECURE_COOKIES:-false}
       VANNA_SESSION_TTL_HOURS: ${VANNA_SESSION_TTL_HOURS:-72}
-      # Failed sign-ins per address and per IP, per process.
       VANNA_LOGIN_MAX_ATTEMPTS: ${VANNA_LOGIN_MAX_ATTEMPTS:-8}
       VANNA_LOGIN_WINDOW_SECONDS: ${VANNA_LOGIN_WINDOW_SECONDS:-300}
+      VANNA_PUBLIC_BASE_URL: ${VANNA_PUBLIC_BASE_URL:-http://localhost:3000}
 
-      # -- Billing. Plans are code constants; only the provider is configurable,
-      #    and `manual` is the only implementation -- anything else warns and
-      #    falls back rather than failing at boot.
+      # -- Single sign-on. Off unless VANNA_AUTH_METHODS names oidc.
+      VANNA_OIDC_ISSUER: ${VANNA_OIDC_ISSUER:-}
+      VANNA_OIDC_CLIENT_ID: ${VANNA_OIDC_CLIENT_ID:-}
+      VANNA_OIDC_CLIENT_SECRET: ${VANNA_OIDC_CLIENT_SECRET:-}
+      VANNA_OIDC_ROLE_CLAIM: ${VANNA_OIDC_ROLE_CLAIM:-}
+      VANNA_OIDC_AUTO_PROVISION_TENANT: ${VANNA_OIDC_AUTO_PROVISION_TENANT:-}
+
+      # -- Mail. With no host, messages are written to the log instead of sent, so
+      #    the reset and invitation flows are exercisable without a mail server.
+      VANNA_SMTP_HOST: ${VANNA_SMTP_HOST:-}
+      VANNA_SMTP_PORT: ${VANNA_SMTP_PORT:-587}
+      VANNA_SMTP_USERNAME: ${VANNA_SMTP_USERNAME:-}
+      VANNA_SMTP_PASSWORD: ${VANNA_SMTP_PASSWORD:-}
+      VANNA_SMTP_FROM: ${VANNA_SMTP_FROM:-vanna@localhost}
+
+      # -- Billing. Plans are code constants; only the provider is configurable, and
+      #    `manual` is the only implementation.
       VANNA_PAYMENT_PROVIDER: ${VANNA_PAYMENT_PROVIDER:-manual}
 
       VANNA_ALLOW_WRITES: ${VANNA_ALLOW_WRITES:-false}
       VANNA_SCAN_ON_START: ${VANNA_SCAN_ON_START:-true}
       VANNA_CORS_ORIGINS: ${VANNA_CORS_ORIGINS:-http://localhost:3000}
+
+      # -- Observability
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # `json` for a log shipper, `text` for a human reading `docker compose logs`.
+      VANNA_LOG_FORMAT: ${VANNA_LOG_FORMAT:-text}
+      VANNA_METRICS_ENABLED: ${VANNA_METRICS_ENABLED:-true}
+      VANNA_SENTRY_DSN: ${VANNA_SENTRY_DSN:-}
     volumes:
       - vanna-data:/data
-      - embed-cache:/data/embed-cache
-      # Read-only: the manifest is built on the host and reviewed in
-      # git; the container consumes it and never rewrites it.
-      - ./projects/chinook:/project:ro
-      # One project per workspace, mounted read-only for the same reason: the
-      # manifest is built on the host and reviewed in git.
-      - ./projects:/projects:ro
+      # Read-only: the manifest is built on the host and reviewed in git; the
+      # container consumes it and never rewrites it. Bind-mounted rather than baked
+      # into the image so editing a cube does not need a rebuild.
+      - ./backend/projects/chinook:/project:ro
+      - ./backend/projects:/projects:ro
     networks:
-      # `default` for nginx -> api; `sandbox` to reach db_postgres. Only the
-      # api needs the database network.
+      # `default` for nginx -> backend; `sandbox` to reach db_postgres.
       - default
       - sandbox
-    ports:
-      # Exposed for direct API access and /docs. Remove in production and let
-      # traffic reach the API only through nginx.
-      - "8000:8000"
+    # No published port. The API is reached through nginx, which is what makes
+    # VANNA_TRUSTED_PROXIES meaningful -- with 8000 exposed to the host, anyone could
+    # set X-Forwarded-For directly and bypass per-IP throttling. Uncomment for
+    # /docs while developing, and understand what it costs.
+    #
+    # ports:
+    #   - "8000:8000"
+    expose:
+      - "8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
@@ -145,75 +223,60 @@ services:
       timeout: 5s
       start_period: 25s
       retries: 3
+    # Modest hardening: the process runs as uid 10001 and needs no new privileges,
+    # so say so rather than relying on the image alone.
+    security_opt:
+      - no-new-privileges:true
 
-  # Vector store for semantic retrieval. Optional: with
-  # VANNA_INDEX_BACKEND=lexical (the default) nothing talks to it, and the API
-  # starts fine whether or not it is running -- resolve_index logs a downgrade
-  # and serves keyword-only BM25.
+  # No qdrant service here. The vector store is its own stack, at
+  # ../../vector_db, so the collection outlives a `docker compose down -v` of this
+  # one and can be shared rather than duplicated. It joins the same sandbox
+  # network, so `qdrant` resolves from the API exactly as it did in-stack and
+  # VANNA_QDRANT_URL above is unchanged.
   #
-  # A server rather than Qdrant's embedded mode because several API workers
-  # write to the index; embedded mode is one directory with one lock, and the
-  # second worker to open it fails.
-  qdrant:
-    # Pinned, and matched to the qdrant-client version in the API image. The
-    # client warns when the two differ by more than a minor version, and a
-    # protocol difference is not a thing to discover in production.
-    #
-    # Changing this tag can make existing storage unreadable -- 1.19 refuses
-    # segments written by 1.12 ("unknown variant `on_disk`") and crash-loops.
-    # That is recoverable and cheap here because the collection is *derived*:
-    #   docker compose stop qdrant && docker volume rm vanna_qdrant-data
-    #   docker compose up -d qdrant && vanna knowledge reindex
-    # The markdown under knowledge/ is the source of truth; this holds nothing
-    # that cannot be rebuilt from it.
-    image: qdrant/qdrant:v1.19.0
-    volumes:
-      - qdrant-data:/qdrant/storage
-    ports:
-      # Exposed for the dashboard at :6333/dashboard while setting things up.
-      # Remove in production; the API reaches it over the compose network.
-      - "6333:6333"
-    restart: unless-stopped
-    healthcheck:
-      # Qdrant's image has no curl or wget, so probe from Python, which it has.
-      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
+  # Whether it has to be up depends on VANNA_INDEX_BACKEND, which defaults to
+  # `qdrant` above -- so in the normal case it does. The API still starts without
+  # it: resolve_index logs a downgrade and serves keyword-only BM25, so retrieval
+  # quietly gets worse rather than the stack failing. The same happens with the
+  # store up but OPENAI_API_KEY unset, because there is no local embedder to fall
+  # back to. /api/vanna/v2/schema reports the backend actually in use, which is the
+  # thing to check when answers degrade for no obvious reason.
+  #
+  # Compose cannot express a depends_on across projects, so start order is on you:
+  # bring ../../vector_db up before this stack, or restart `backend` afterwards.
 
-  web:
+  frontend:
     build:
-      context: .
-      dockerfile: docker/web.Dockerfile
+      # frontend/ alone, because the image needs nothing outside it. It used to be
+      # the repository root, only so the build could read the Python package
+      # version out of pyproject.toml.
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "3000:80"
     depends_on:
-      api:
-        # Wait for healthy, not just started. nginx resolves the `api` upstream
-        # at startup and fails hard if the name is not yet resolvable, which
-        # turns a slow API boot into a dead web container.
+      backend:
+        # Wait for healthy, not just started. nginx resolves the `backend` upstream
+        # at startup and fails hard if the name is not yet resolvable, which turns a
+        # slow API boot into a dead web container.
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
-# No database service here. PostgreSQL comes from the sandbox project, which
-# already serves eight seeded datasets and owns port 5432 -- a bundled instance
-# would both duplicate that and fail to bind.
+# No database service here. PostgreSQL comes from the sandbox project, which already
+# serves eight seeded datasets and owns port 5432.
 
 networks:
-  # Created implicitly for api <-> web.
+  # Created implicitly for frontend -> backend.
   default:
 
-  # Owned by ../../text-to-sql-multi-tenant/databases. `external` means join it,
-  # never create it, so this stack can never silently start a second, empty
-  # network that resolves no database names.
+  # Owned by the sibling `databases` project. `external` means join it,
+  # never create it, so this stack can never silently start a second, empty network
+  # that resolves no database names.
   sandbox:
     external: true
     name: multidb_network
 
 volumes:
   vanna-data:
-  qdrant-data:
-  # Embedding model weights (~130 MB). Held in a volume so a restart does not
-  # re-download them -- and so a restart without internet still has them.
-  embed-cache:

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Vanna">
+  <!--
+    A database cylinder with a question mark: ask a question, get data.
+
+    SVG rather than ICO so one file covers every size, and drawn with currentColor
+    where possible so it stays legible against a dark browser chrome. There was no
+    favicon at all before, which meant every page load ended in a request that nginx
+    answered with the whole HTML page -- a 200 carrying the wrong content type, and a
+    tab with a blank icon.
+  -->
+  <rect width="32" height="32" rx="7" fill="#4f46e5"/>
+  <ellipse cx="16" cy="9.5" rx="8" ry="3.2" fill="#ffffff" opacity=".95"/>
+  <path d="M8 9.5v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-6"
+        fill="none" stroke="#ffffff" stroke-width="2" opacity=".95"/>
+  <path d="M8 15.5v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-6"
+        fill="none" stroke="#ffffff" stroke-width="2" opacity=".6"/>
+</svg>

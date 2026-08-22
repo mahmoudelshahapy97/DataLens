@@ -1,0 +1,30 @@
+# Development and test dependencies, on top of requirements.txt.
+#
+#   pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+#
+# Separate from requirements.txt because the image must not carry these: a test
+# runner and a type checker in a production container are attack surface that does
+# no work. They used to live in pyproject's optional-dependencies, which is gone
+# along with the package -- there is nothing to declare extras against any more.
+
+# -- tests -------------------------------------------------------------------
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+pytest-cov>=4.0.0
+
+# -- the e2e suite drives a real browser (tests/e2e, marked `e2e`) ------------
+# Needs `playwright install chromium` once after installing.
+playwright>=1.45
+
+# -- lint and types ----------------------------------------------------------
+ruff>=0.6
+mypy>=1.11
+pandas-stubs
+plotly-stubs
+types-PyYAML
+types-requests
+types-tabulate
+
+# -- regenerating requirements.txt from requirements.in ----------------------
+pip-tools>=7.4

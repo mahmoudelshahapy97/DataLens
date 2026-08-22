@@ -1,0 +1,261 @@
+  :root {
+    --bg: #f8fafc; --surface: #ffffff; --surface-2: #f1f5f9; --border: #e2e8f0;
+    --text: #0f172a; --muted: #64748b;
+    --primary: #4f46e5; --primary-fg: #ffffff;
+    --good: #059669; --bad: #dc2626; --warn: #d97706;
+    --radius: 10px;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1120; --surface: #111827; --surface-2: #0f172a; --border: #1f2937;
+    --text: #e5e7eb; --muted: #94a3b8; --primary: #6366f1;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--primary); }
+
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 15px 24px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  h1 { font-size: 1.05rem; margin: 0; font-weight: 650; }
+  .grow { flex: 1; }
+  main { max-width: 1120px; margin: 0 auto; padding: 22px 24px 40px; }
+
+  nav { display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }
+  nav button {
+    padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border);
+    background: transparent; cursor: pointer; font-size: .875rem;
+  }
+  nav button[aria-selected="true"] {
+    background: var(--primary); border-color: var(--primary); color: var(--primary-fg);
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+  }
+  .row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .q { font-weight: 600; margin: 0 0 8px; }
+  pre {
+    margin: 0; padding: 12px; overflow-x: auto; border-radius: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: .8125rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .meta { color: var(--muted); font-size: .8125rem; margin-top: 8px; }
+  .mono { font-family: ui-monospace, Menlo, monospace; }
+  .small { font-size: .8125rem; }
+  .muted { color: var(--muted); }
+
+  .tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: .6875rem; font-weight: 650; text-transform: uppercase; letter-spacing: .03em;
+    background: rgba(148,163,184,.18); color: var(--muted);
+  }
+  .tag.candidate { background: rgba(217,119,6,.15); color: var(--warn); }
+  .tag.verified, .tag.active   { background: rgba(5,150,105,.15); color: var(--good); }
+  .tag.rejected, .tag.inactive { background: rgba(220,38,38,.15); color: var(--bad); }
+  .tag.admin { background: rgba(79,70,229,.15); color: var(--primary); }
+
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  button.act {
+    padding: 6px 13px; border-radius: 7px; border: 1px solid var(--border);
+    background: transparent; cursor: pointer; font-size: .8125rem;
+  }
+  button.act:hover { border-color: var(--primary); }
+  button.act.primary { background: var(--good); border-color: var(--good); color: #fff; }
+  button.act.danger  { border-color: var(--bad); color: var(--bad); }
+  button.act:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* The three-state access control on the permissions matrix. Coloured from the
+     same four semantic variables the status pills use, so both themes and the
+     RTL mirror come free. Width is fixed so the column does not jump as the
+     label changes length while cycling. */
+  button.act.perm {
+    min-width: 132px; justify-content: space-between; font-weight: 600;
+  }
+  button.act.perm--none  { color: var(--muted); }
+  button.act.perm--read  { border-color: var(--good); color: var(--good);
+                           background: rgba(5,150,105,.10); }
+  button.act.perm--write { border-color: var(--warn); color: var(--warn);
+                           background: rgba(217,119,6,.12); }
+
+  /* The table name, which expands its column list. A button because it does
+     something; styled as text because it names a thing. */
+  button.linkish {
+    border: 0; background: none; padding: 0; cursor: pointer;
+    color: var(--text); font: inherit; text-align: start;
+  }
+  button.linkish:hover { color: var(--primary); }
+  button.linkish[aria-expanded="true"] { color: var(--primary); }
+
+  /* One column's write toggle, inside an expanded table row. */
+  .perm-col {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface); cursor: pointer; font-size: .8125rem;
+  }
+  .perm-col:hover { border-color: var(--primary); }
+  .perm-col input { width: auto; padding: 0; margin: 0; }
+  /* A generated column can never be assigned, so it is shown and disabled
+     rather than hidden -- "why is that column missing" is a worse question
+     than "why is that column greyed out", which the tag answers. */
+  .perm-col--blocked { opacity: .55; cursor: not-allowed; }
+  .perm-col--blocked:hover { border-color: var(--border); }
+
+  /* A switch on the workspace-default card. Looks like .perm-col but is not
+     one: the column toggles are counted by selector in the tests, and sharing
+     a class made a policy checkbox read as a column grant. */
+  .policy-check {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface); cursor: pointer; font-size: .8125rem;
+  }
+  .policy-check:hover { border-color: var(--primary); }
+  .policy-check input { width: auto; padding: 0; margin: 0; }
+
+  /* Group headings on the instructions screen. */
+  .section { margin: 22px 0 2px; font-size: 1rem; }
+  .section-help { margin: 0 0 10px; }
+  .preview { margin: 8px 0 0; padding-inline-start: 18px; color: var(--muted); }
+  .preview li { font-size: .8125rem; margin-bottom: 3px; }
+
+  input, textarea, select {
+    width: 100%; padding: 9px 11px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-2);
+  }
+  textarea { min-height: 84px; font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; }
+  label { display: block; font-size: .8125rem; color: var(--muted); margin: 10px 0 4px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+
+  table.data { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+  table.data th, table.data td {
+    text-align: start; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
+  }
+  table.data th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data select { width: auto; padding: 4px 8px; }
+  .scroll-x { overflow-x: auto; }
+
+  .empty { text-align: center; padding: 46px 22px; color: var(--muted); }
+  .banner {
+    border-inline-start: 3px solid var(--warn); background: rgba(217,119,6,.08);
+    padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: .875rem;
+  }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px;
+    font-size: .875rem; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60;
+  }
+  .toast.show { opacity: 1; }
+  .stat { display: inline-block; margin-inline-end: 18px; }
+  .stat b { display: block; font-size: 1.15rem; }
+
+  /* Right-to-left. The interface mirrors; SQL, identifiers and connection
+     strings do not -- they read left-to-right in every language. */
+  [dir="rtl"] pre,
+  [dir="rtl"] .mono,
+  [dir="rtl"] textarea,
+  [dir="rtl"] input[type="password"] { direction: ltr; text-align: start; }
+  [dir="rtl"] table.data td { unicode-bidi: plaintext; }
+
+  .arrow { display: inline-block; }
+  [dir="rtl"] .arrow { transform: scaleX(-1); }
+
+
+  /* ------------------------------------------------------------ a11y --- */
+
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .skip-link {
+    position: absolute;
+    inset-inline-start: -9999px;
+    top: 0;
+    z-index: 100;
+    background: var(--primary);
+    color: var(--primary-fg);
+    padding: 10px 16px;
+    text-decoration: none;
+  }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .sheet:focus { outline: none; }
+
+  [hidden] { display: none !important; }
+
+  /* Header controls size to their content.
+     `input, textarea, select { width: 100% }` below is right for the forms, and
+     wrong for the language picker in the header: a 100%-wide select takes the whole
+     row, so it wrapped onto its own line and pushed the reload button onto a third.
+     Scoped to the header rather than weakening the form rule. */
+  header a.act { text-decoration: none; }
+  header select,
+  header .act {
+    width: auto;
+    flex: 0 0 auto;
+    padding: 6px 13px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: transparent;
+    font-size: .8125rem;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+  header select { background: var(--surface-2); }
+  header h1 { flex: 0 0 auto; }
+
+  /* Modal sheet, matching the app page so a keyboard user meets one behaviour. */
+  .overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(15, 23, 42, .45);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .overlay.on { display: flex; }
+  .sheet {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+    width: 100%; max-width: 520px; max-height: 85vh; overflow: auto;
+  }
+  .sheet h3 { margin: 0 0 14px; font-size: 1.05rem; }
+  .sheet .actions { display: flex; gap: 9px; margin-top: 18px; justify-content: flex-end; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  @media (max-width: 640px) {
+    header { flex-wrap: wrap; gap: 6px; }
+    nav#tabs { overflow-x: auto; }
+    table { display: block; overflow-x: auto; white-space: nowrap; }
+    .sheet { max-width: none; }
+  }

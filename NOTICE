@@ -1,0 +1,29 @@
+Vanna — multi-tenant natural-language querying
+==============================================
+
+This distribution contains:
+
+1. The `vanna` library (`src/vanna/`), derived from the upstream project at
+   https://github.com/vanna-ai/vanna, Copyright (c) Vanna.AI, MIT licensed.
+
+   Modified here. The substantive additions are the semantic layer
+   (`src/vanna/semantic/`), the datasource registry (`src/vanna/core/datasource/`),
+   the ranked retrieval index (`src/vanna/capabilities/index/`), the dashboards
+   package (`src/vanna/dashboards/`), the billing plans (`src/vanna/core/billing/`),
+   and the authentication primitives (`src/vanna/core/auth/`).
+
+   The upstream `vanna.legacy` package -- the 0.x compatibility surface, roughly
+   eleven thousand lines covering twenty-five vendor integrations -- has been
+   removed. Nothing in this distribution imported it.
+
+2. The Vanna application (`docker/vanna_app/`), which is a multi-tenant deployment
+   of that library: control plane, accounts, billing, and the HTTP surface over
+   them. Original to this repository, MIT licensed on the same terms.
+
+3. Front-end assets (`frontends/`): the `<vanna-chat>` web component, the workspace
+   page and the operator console.
+
+See LICENSE for the terms, which apply to all of the above.
+
+Third-party dependencies are declared in `pyproject.toml` and pinned in
+`docker/requirements.txt`; each carries its own licence.

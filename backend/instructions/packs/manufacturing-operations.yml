@@ -1,0 +1,40 @@
+# Conventions for production and shop-floor data. Each of these is a place where
+# a reasonable-looking aggregate describes a healthier line than the one that is
+# actually running.
+
+id: manufacturing-operations
+name: Manufacturing operations
+description: >-
+  Yield against output, downtime against planned running time, and where a
+  rework unit gets counted twice.
+
+instructions:
+  - text: >-
+      Units started and units accepted are different measures. Yield is
+      accepted divided by started, so reporting output without scrap makes a
+      failing line look productive.
+    priority: 62
+
+  - text: >-
+      Downtime only means something against planned running time. A line idle
+      because nothing was scheduled is not a failure, and averaging the two
+      together hides the failures that matter.
+    priority: 58
+
+  - text: >-
+      Rework is neither a good unit nor a scrapped one. Count it in its own
+      right, or the same physical item is counted twice: once when it failed
+      and once when it passed.
+    priority: 54
+
+  - text: >-
+      A bill of materials is a hierarchy and component usage multiplies down
+      its levels. Consumption per finished unit needs the whole explosion, not
+      the top level's immediate children.
+    priority: 49
+
+  - text: >-
+      A work order spans a date range and can cross a shift, a day and a
+      reporting period. Attribute output to the period it completed in and say
+      so, because attributing by start date moves output between months.
+    priority: 45

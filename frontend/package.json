@@ -1,0 +1,32 @@
+{
+  "name": "vanna-frontend",
+  "version": "2.0.2",
+  "private": true,
+  "description": "Vanna UI — the workspace and admin console pages, plus the Lit web components they load",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "lit": "^3.3.1",
+    "plotly.js-dist-min": "^3.1.0"
+  },
+  "devDependencies": {
+    "@storybook/addon-actions": "^8.6.14",
+    "@storybook/addon-controls": "^8.6.14",
+    "@storybook/addon-docs": "^8.6.14",
+    "@storybook/addon-essentials": "^8.6.14",
+    "@storybook/web-components": "^8.6.14",
+    "@storybook/web-components-vite": "^8.6.14",
+    "@types/plotly.js-dist-min": "^2.3.4",
+    "storybook": "^8.6.14",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  }
+}

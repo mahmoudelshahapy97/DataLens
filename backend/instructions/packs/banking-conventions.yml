@@ -1,0 +1,46 @@
+# Conventions that hold in most retail banking and lending schemas. They are
+# assumptions rather than correctness rules -- a treasury system that genuinely
+# posts interest daily should be able to say so -- which is why this is a pack a
+# workspace opts into rather than part of the platform baseline.
+#
+# Deliberately silent on currency units and on the difference between an
+# invoiced and a recognised amount: finance-conventions owns those, and a pack
+# that repeats another pack's rule gets copied into the workspace twice.
+
+id: banking-conventions
+name: Banking and lending
+description: >-
+  Balances against flows, when interest belongs to a period, and the grain a
+  customer-level number has to be at.
+
+instructions:
+  - text: >-
+      A balance is a level and a payment is a flow. Never sum a balance across
+      time, and never average a flow without saying over what period -- the two
+      mistakes each produce a single plausible number and are both silently
+      wrong.
+    priority: 62
+
+  - text: >-
+      Interest accrues daily and posts periodically. Interest earned in a month
+      means the accrual for those days, not the transactions stamped inside the
+      month, and the two diverge every time a posting date crosses a boundary.
+    priority: 58
+
+  - text: >-
+      One customer usually holds several accounts, and an account is often held
+      jointly. Deduplicate to the customer before counting customers, and say
+      which of the two grains a figure is at: both are defensible and they
+      differ by a lot.
+    priority: 55
+
+  - text: >-
+      A rate quoted without a day-count convention cannot be compared with
+      another rate. State whether a year was taken as 360 days, 365, or actual.
+    priority: 50
+
+  - text: >-
+      A closed account keeps its history. Balance questions mean the accounts
+      open on the date asked about; volume questions mean every account that
+      transacted, closed or not.
+    priority: 46

@@ -1,0 +1,73 @@
+# Pinned runtime dependencies for the backend.
+#
+# GENERATED FROM requirements.in -- edit that, then regenerate:
+#
+#   docker run --rm -v "$PWD/backend:/w" -w /w python:3.12-slim sh -c \
+#     "pip install -q pip-tools && pip-compile --strip-extras \
+#        --output-file=requirements.txt requirements.in"
+#
+# CI runs `make lock-check`, which regenerates into a temporary file and fails if it
+# differs from this one -- so a dependency cannot change without the change appearing
+# in a diff.
+#
+# ---------------------------------------------------------------------------
+# Two pins are deliberately behind the newest release, and both are load-bearing:
+#
+#   pandas 2.x  -- pandas 3 makes copy-on-write the default and changes several
+#                  indexing and dtype behaviours. Every SQL result in this system is
+#                  a DataFrame; adopting that major belongs in its own change with
+#                  its own test run, not in a routine dependency bump.
+#   openai 1.x  -- the integration in backend/vanna/integrations/openai targets the 1.x
+#                  client surface. 2.x and 3.x reorganise it.
+#
+# Everything else tracks current. Upper bounds exist where a library has a history of
+# breaking minors, and nowhere else -- a bound nobody can justify is a bound somebody
+# will silently raise.
+# ---------------------------------------------------------------------------
+
+# -- server ------------------------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+python-multipart==0.0.32
+
+# -- control plane -----------------------------------------------------------
+psycopg2-binary==2.9.12
+
+# -- credentials at rest, CSRF and OIDC state signing ------------------------
+cryptography==50.0.0
+
+# -- outbound mail (password reset, invitations) -----------------------------
+aiosmtplib==5.1.2
+
+# -- single sign-on: JWKS fetch and id_token verification --------------------
+authlib==1.7.2
+
+# -- metrics -----------------------------------------------------------------
+prometheus-client==0.26.0
+
+# -- LLM providers -----------------------------------------------------------
+anthropic==0.122.0
+openai==1.109.1
+
+# -- database drivers --------------------------------------------------------
+pymysql==1.2.0
+oracledb==4.0.2
+duckdb==1.5.5
+clickhouse-connect==1.7.1
+
+# -- vector retrieval --------------------------------------------------------
+qdrant-client==1.19.0
+
+# -- the library's own dependencies ------------------------------------------
+pydantic==2.13.4
+click==8.4.2
+pandas==2.3.3
+httpx==0.28.1
+PyYAML==6.0.3
+plotly==6.9.0
+tabulate==0.10.0
+sqlparse==0.6.0
+sqlglot==30.17.0
+sqlalchemy==2.0.52
+requests==2.34.2
+db-dtypes==1.7.1

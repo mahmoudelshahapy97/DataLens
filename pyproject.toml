@@ -1,133 +1,50 @@
-[build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
-
-[project]
-name = "vanna"
-version = "2.0.2"
-authors = [
-  { name="Zain Hoda", email="zain@vanna.ai" },
-]
-
-description = "Generate SQL queries from natural language"
-readme = "README.md"
-requires-python = ">=3.9"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-]
-dependencies = [
-    "pydantic>=2.0.0",
-    "click>=8.0.0",
-    "pandas",
-    "httpx>=0.28.0",
-    "PyYAML",
-    "plotly",
-    "tabulate",
-    "sqlparse",
-    "sqlglot>=25.0.0",
-    "sqlalchemy",
-    "requests",
-]
-
-[project.scripts]
-# The command group. It still accepts the options the old single command took
-# (see CompatGroup in vanna/cli/main.py), so existing invocations keep working.
-vanna = "vanna.cli.main:cli"
-
-[project.urls]
-"Homepage" = "https://github.com/vanna-ai/vanna"
-"Bug Tracker" = "https://github.com/vanna-ai/vanna/issues"
-
-[project.optional-dependencies]
-flask = ["flask>=2.0.0", "flask-cors>=4.0.0"]
-fastapi = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
-# Serves the tool registry to an MCP client. Optional because the server module
-# imports cleanly without it -- only the transport needs the package.
-mcp = ["mcp>=1.0.0"]
-servers = ["vanna[flask,fastapi]"]
-
-# Hand the tool registry to another agent framework. Optional because the
-# adapters import cleanly without the framework -- only the wrapper needs it,
-# and MCP already covers agents that speak that protocol.
-langchain = ["langchain-core>=0.3"]
-pydantic-ai = ["pydantic-ai>=0.0.14"]
-toolkits = ["vanna[langchain,pydantic-ai]"]
-
-# Reading an OSI semantic model. YAML only; a JSON OSI file needs nothing extra.
-osi = ["PyYAML>=6.0"]
-
-
-postgres = ["psycopg2-binary", "db-dtypes"]
-mysql = ["PyMySQL"]
-clickhouse = ["clickhouse_connect"]
-bigquery = ["google-cloud-bigquery"]
-snowflake = ["snowflake-connector-python"]
-duckdb = ["duckdb"]
-google = ["google-generativeai", "google-cloud-aiplatform"]
-all = ["psycopg2-binary", "db-dtypes", "PyMySQL", "google-cloud-bigquery", "snowflake-connector-python", "duckdb", "openai", "qianfan", "mistralai>=1.0.0", "chromadb>=1.1.0", "anthropic", "zhipuai", "marqo", "google-generativeai", "google-cloud-aiplatform", "qdrant-client>=1.0.0", "fastembed", "ollama", "httpx", "opensearch-py", "opensearch-dsl", "transformers", "pinecone", "pymilvus[model]","weaviate-client", "azure-search-documents", "azure-identity", "azure-common", "faiss-cpu", "boto", "boto3", "botocore", "langchain_core", "langchain_postgres", "langchain-community", "langchain-huggingface", "xinference-client"]
-test = ["pytest>=7.0.0", "pytest-asyncio>=0.21.0", "pytest-mock>=3.10.0", "pytest-cov>=4.0.0", "tox>=4.0.0"]
-dev = ["pytest>=7.0.0", "pytest-asyncio>=0.21.0", "pytest-mock>=3.10.0", "pytest-cov>=4.0.0", "tox>=4.0.0", "mypy", "ruff", "pandas-stubs", "plotly-stubs", "types-PyYAML", "types-requests", "types-tabulate"]
-chromadb = ["chromadb>=1.1.0"]
-openai = ["openai"]
-azureopenai = ["openai", "azure-identity"]
-qianfan = ["qianfan"]
-mistralai = ["mistralai>=1.0.0"]
-anthropic = ["anthropic"]
-gemini = ["google-genai"]
-marqo = ["marqo"]
-zhipuai = ["zhipuai"]
-ollama = ["ollama", "httpx"]
-qdrant = ["qdrant-client>=1.0.0", "fastembed"]
-vllm = ["vllm"]
-pinecone = ["pinecone", "fastembed"]
-opensearch = ["opensearch-py", "opensearch-dsl", "langchain-community", "langchain-huggingface"]
-hf = ["transformers"]
-milvus = ["pymilvus[model]"]
-bedrock = ["boto3", "botocore"]
-weaviate = ["weaviate-client"]
-azuresearch = ["azure-search-documents", "azure-identity", "azure-common", "fastembed"]
-pgvector = ["langchain-postgres>=0.0.12"]
-faiss-cpu = ["faiss-cpu"]
-faiss-gpu = ["faiss-gpu"]
-xinference-client = ["xinference-client"]
-oracle = ["oracledb", "chromadb<1.0.0"]
-hive = ["pyhive", "thrift"]
-presto = ["pyhive", "thrift"]
-mssql = ["pyodbc"]
-
-[tool.flit.module]
-name = "vanna"
-path = "src/vanna"
-
-[tool.flit.sdist]
-exclude = [
-    "frontends/",
-    "tests/",
-    "notebooks/",
-    ".github/",
-    "tox.ini",
-]
+# Tooling configuration. Not a package.
+#
+# There is no [build-system] and no [project] here, and that is the point: nothing
+# in this repository is built, published or pip-installed. `backend/vanna/` and
+# `backend/vanna_app/` are imported from source -- by uvicorn, by pytest, and by
+# `python -m vanna` -- so the only thing a packaging table could add is a second
+# description of the dependencies that `backend/requirements.txt` already pins, free
+# to disagree with it.
+#
+# What used to be here, and where it went:
+#
+#   [project.dependencies]             -> backend/requirements.in
+#   [project.optional-dependencies]    -> backend/requirements-dev.txt, or the
+#                                         driver named in the error you get without
+#                                         it (see vanna/cli/_runtime.py)
+#   [project.scripts] vanna = ...      -> python -m vanna
+#   [tool.flit.*]                      -> nothing; there is no build backend
+#
+# This file stays at the repository root rather than moving into backend/, because
+# pytest and ruff run across the whole tree: the suite in tests/ reads the frontend's
+# pages as well as the backend's modules.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Pinned rather than left to the default, which pytest-asyncio warns is changing.
+# A fixture loop that silently changes scope between versions is a source of test
+# flakiness that looks like an application bug.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-# src layout: make the package importable without an editable install, so a
-# fresh checkout can run the suite with nothing but `pytest`.
-pythonpath = ["src"]
+# One entry now: `backend/` holds both the library and the application package side
+# by side, so a fresh checkout can run the suite with nothing but `pytest` -- no
+# editable install, no PYTHONPATH in a shell profile somebody forgot to mention. It
+# was ["src", "docker"] when those were two separate trees.
+pythonpath = ["backend"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
-    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "integration: needs a real PostgreSQL (VANNA_TEST_DATABASE_URL). Deselect with -m 'not integration'",
+    "e2e: drives a real browser against a running stack (VANNA_E2E_URL). Needs playwright.",
     "anthropic: marks tests requiring Anthropic API key",
     "openai: marks tests requiring OpenAI API key",
     "azureopenai: marks tests requiring Azure OpenAI API key",
     "gemini: marks tests requiring Gemini API key",
     "ollama: marks tests requiring local Ollama instance",
     "legacy: marks tests for legacy adapter",
-    "slow: marks tests as slow running",
+    "slow: costs an LLM call and tens of seconds; deselect with -m 'not slow'",
     "postgres: marks tests requiring PostgreSQL",
     "mysql: marks tests requiring MySQL",
 ]
@@ -137,7 +54,7 @@ filterwarnings = [
 
 [tool.ruff]
 # Set the target Python version
-target-version = "py311"
+target-version = "py310"
 
 # Set line length to 88 (Black's default)
 line-length = 88
@@ -155,6 +72,10 @@ exclude = [
     "build",
     "dist",
     "*.egg-info",
+    # The frontend is not Python, but node_modules is large enough that walking it
+    # is the difference between a fast lint and a slow one.
+    "frontend/node_modules",
+    "frontend/dist",
 ]
 
 [tool.ruff.lint]

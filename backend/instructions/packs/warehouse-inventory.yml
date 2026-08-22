@@ -1,0 +1,40 @@
+# Conventions for stock and location data. Inventory is the classic case of a
+# measure that is a level rather than a sum, and almost every wrong inventory
+# number comes from treating it as the latter.
+
+id: warehouse-inventory
+name: Warehousing and inventory
+description: >-
+  On hand against available, reconciling a ledger with a snapshot, and why
+  stock cannot be added up over a month.
+
+instructions:
+  - text: >-
+      On hand is not available. Stock committed to an order is physically
+      present and cannot be sold, so an availability figure that reports on
+      hand promises inventory that is already gone.
+    priority: 62
+
+  - text: >-
+      Inventory is a level at a moment. Stock for last month means the balance
+      on a stated date, and adding up daily balances produces a number with no
+      meaning at all.
+    priority: 58
+
+  - text: >-
+      A movement ledger and a stock snapshot answer different questions and
+      drift apart. Reconcile them before reporting either, and say which of the
+      two a figure came from.
+    priority: 54
+
+  - text: >-
+      The same item in two locations is two rows. Aggregate to the grain the
+      question asks about, because a total that mixes site with bin counts the
+      same pallet more than once.
+    priority: 49
+
+  - text: >-
+      Days of cover compares stock against a consumption rate, so it needs a
+      stated window for that rate. Computed against an unusual week it is a
+      forecast of that week repeating.
+    priority: 45

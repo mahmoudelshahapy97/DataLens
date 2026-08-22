@@ -1,0 +1,40 @@
+# Conventions for HR and people data, written to be schema-agnostic so that they
+# suit a workspace whose employee tables look nothing like the sample one.
+
+id: workforce-analytics
+name: Workforce analytics
+description: >-
+  Headcount as of a date, the denominator attrition needs, and dated attributes
+  that each change on their own schedule.
+
+instructions:
+  - text: >-
+      Headcount is a figure as of a date. A count over a period is either an
+      average of daily headcount or the balance on a stated day -- never a
+      count of everyone who appeared at any point, which counts a replacement
+      twice.
+    priority: 62
+
+  - text: >-
+      Attrition is leavers over average headcount for the same period, not over
+      the closing figure. Dividing by the closing headcount makes a shrinking
+      team's attrition look better the more people leave.
+    priority: 58
+
+  - text: >-
+      Pay is personal. Report it as an aggregate over a group large enough to
+      conceal an individual, and never beside a name unless the question is
+      explicitly about one named person.
+    priority: 54
+
+  - text: >-
+      A role, a grade and a reporting line each change on their own date. Their
+      department means the one held on the date the question is about, which is
+      rarely the one held now.
+    priority: 49
+
+  - text: >-
+      Contractors, part-timers and people on leave are all employed, and none
+      of them is one full-time equivalent. Say whether a headcount counts heads
+      or FTE.
+    priority: 45

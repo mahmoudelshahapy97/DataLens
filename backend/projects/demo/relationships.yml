@@ -1,0 +1,70 @@
+# How the models join.
+#
+# Cardinality is not decoration: ONE_TO_MANY declared on [a, b] tells the
+# compiler that an aggregate reached from a across this edge multiplies a's
+# rows. Getting a direction backwards is how a semantic layer returns a
+# confidently wrong number, so each is stated from the "one" side.
+#
+# The chain that matters here is invoice_lines -> tracks -> albums -> artists.
+# There is no track.artist_id; joining a sale to an artist without going
+# through albums returns nothing at all.
+
+relationships:
+  - name: artist_albums
+    models: [artists, albums]
+    join_type: ONE_TO_MANY
+    condition: artists.artist_id = albums.artist_id
+    description: An artist has many albums.
+
+  - name: album_tracks
+    models: [albums, tracks]
+    join_type: ONE_TO_MANY
+    condition: albums.album_id = tracks.album_id
+    description: The only path from a track to its artist.
+
+  - name: genre_tracks
+    models: [genres, tracks]
+    join_type: ONE_TO_MANY
+    condition: genres.genre_id = tracks.genre_id
+
+  - name: media_type_tracks
+    models: [media_types, tracks]
+    join_type: ONE_TO_MANY
+    condition: media_types.media_type_id = tracks.media_type_id
+
+  - name: track_sales
+    models: [tracks, invoice_lines]
+    join_type: ONE_TO_MANY
+    condition: tracks.track_id = invoice_lines.track_id
+    description: Every sale of a track. Summing track.unit_price here would be wrong.
+
+  - name: invoice_items
+    models: [invoices, invoice_lines]
+    join_type: ONE_TO_MANY
+    condition: invoices.invoice_id = invoice_lines.invoice_id
+    description: >-
+      An invoice has many lines, so invoices.total fans out across them. Use
+      invoice_lines.line_revenue below invoice level and invoices.total at it.
+
+  - name: customer_invoices
+    models: [customers, invoices]
+    join_type: ONE_TO_MANY
+    condition: customers.customer_id = invoices.customer_id
+
+  - name: support_rep_customers
+    models: [employees, customers]
+    join_type: ONE_TO_MANY
+    condition: employees.employee_id = customers.support_rep_id
+    description: >-
+      The sales rep relationship. "Which rep sells the most" reaches revenue
+      through this edge and then customers -> invoices.
+
+  - name: playlist_entries
+    models: [playlists, playlist_tracks]
+    join_type: ONE_TO_MANY
+    condition: playlists.playlist_id = playlist_tracks.playlist_id
+
+  - name: track_placements
+    models: [tracks, playlist_tracks]
+    join_type: ONE_TO_MANY
+    condition: tracks.track_id = playlist_tracks.track_id

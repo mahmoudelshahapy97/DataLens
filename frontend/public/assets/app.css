@@ -1,0 +1,519 @@
+  :root {
+    --bg:        #f1f5f9;
+    --surface:   #ffffff;
+    --surface-2: #f8fafc;
+    --border:    #e2e8f0;
+    --text:      #0f172a;
+    --muted:     #64748b;
+    --primary:   #4f46e5;
+    --primary-fg:#ffffff;
+    --good:      #059669;
+    --bad:       #dc2626;
+    --warn:      #d97706;
+    --radius:    10px;
+    --sidebar:   262px;
+    /* The rail is a *panel*, not part of the page: tinted a step away from the
+       content it sits beside, the way every chat product does it, so the eye
+       reads two surfaces rather than one white sheet with a line down it. */
+    --rail:      #f7f8fa;
+    --rail-hover:#eceef2;
+    --rail-active:#e4e7ec;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg:        #0b1120;
+    --surface:   #111827;
+    --surface-2: #0f172a;
+    --border:    #1f2937;
+    --text:      #e5e7eb;
+    --muted:     #94a3b8;
+    --primary:   #6366f1;
+    /* Dark mode inverts the relationship -- the rail sits *under* the content,
+       not over it -- so it darkens instead of lightening. */
+    --rail:      #0d1424;
+    --rail-hover:#182236;
+    --rail-active:#1e293b;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--primary); }
+
+  /* ---------------------------------------------------------- shell --- */
+  #app { display: none; height: 100vh; grid-template-rows: auto 1fr; }
+  #app.ready { display: grid; }
+
+  header.top {
+    display: flex; align-items: center; gap: 12px; padding: 10px 18px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .brand { font-weight: 680; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .brand .dot {
+    width: 9px; height: 9px; border-radius: 50%; background: var(--primary);
+  }
+  .grow { flex: 1; }
+
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px;
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--rail-hover); color: var(--text); }
+
+  /* Collapsed is a *narrower rail*, not an absent one: the icons stay, so
+     switching section never costs a round trip through the toggle. Each button
+     keeps an `aria-label`, which is what carries the name once the text is gone
+     -- an icon with no accessible name is a button that announces itself as
+     "button".
+
+     The conversation list is the one thing that does go: a 60px column cannot
+     show a title, and a column of unreadable stubs is worse than the toggle. */
+  #app[data-rail="mini"] { --sidebar: 60px; }
+  #app[data-rail="mini"] nav.side { padding: 14px 8px; align-items: center; }
+  #app[data-rail="mini"] nav.side button { width: 44px; justify-content: center; padding: 10px 0; }
+  #app[data-rail="mini"] nav.side .nav-text,
+  #app[data-rail="mini"] .threads,
+  #app[data-rail="mini"] nav.side .note { display: none; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+    font-size: .8125rem; cursor: pointer;
+  }
+  .pill:hover { border-color: var(--primary); }
+  .pill .sub { color: var(--muted); }
+
+  .chip {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: .6875rem; font-weight: 650; text-transform: uppercase; letter-spacing: .03em;
+    background: rgba(148,163,184,.18); color: var(--muted);
+  }
+  .chip.admin  { background: rgba(79,70,229,.15);  color: var(--primary); }
+  .chip.ok     { background: rgba(5,150,105,.15);  color: var(--good); }
+  .chip.err    { background: rgba(220,38,38,.15);  color: var(--bad); }
+  .chip.warn   { background: rgba(217,119,6,.15);  color: var(--warn); }
+
+  .warn { color: var(--warn); }
+
+  /* Right-to-left.
+     The interface mirrors; the *content* does not. SQL, result grids, charts and
+     identifiers read left-to-right in every language -- a mirrored SELECT is not
+     Arabic, it is unreadable. So these opt back out, and `unicode-bidi: plaintext`
+     lets a mixed cell (Arabic label, Latin id) lay out per its own direction
+     rather than inheriting the page's. */
+  [dir="rtl"] pre,
+  [dir="rtl"] code,
+  [dir="rtl"] .sql,
+  [dir="rtl"] .mono,
+  [dir="rtl"] table.data,
+  [dir="rtl"] .chart,
+  [dir="rtl"] input[type="password"],
+  [dir="rtl"] input[type="email"] {
+    direction: ltr;
+    text-align: start;
+  }
+  [dir="rtl"] table.data td,
+  [dir="rtl"] table.data th { unicode-bidi: plaintext; }
+
+  /* A directional arrow means "onward", which is leftward in Arabic. Flipped
+     rather than swapped for a different glyph, so there is one arrow to maintain. */
+  .arrow { display: inline-block; }
+  [dir="rtl"] .arrow { transform: scaleX(-1); }
+
+  .locale-pick {
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 8px; font: inherit; font-size: .8125rem; cursor: pointer;
+  }
+
+  /* A labelled row with its action pushed to the far end. Used by the account
+     screen for tokens and sessions. */
+  .row-line {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .row-line:last-child { border-bottom: 0; }
+  .row-line > div:first-child { flex: 1; min-width: 0; }
+
+  /* Stacked label+input pairs. Two columns where there is room, one where
+     there is not -- three password fields side by side are unreadable. */
+  .form-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+  .form-grid label {
+    display: flex; flex-direction: column; gap: 5px;
+    font-size: .8125rem; color: var(--muted);
+  }
+
+  .body { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 0; }
+
+  nav.side {
+    background: var(--rail); border-inline-end: 1px solid var(--border);
+    padding: 14px 10px; display: flex; flex-direction: column; gap: 3px; min-height: 0;
+  }
+  nav.side button:hover { background: var(--rail-hover); }
+  nav.side button {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: start;
+    padding: 9px 12px; border: 0; border-radius: 8px; background: transparent;
+    cursor: pointer; font-size: .9rem;
+  }
+  nav.side .ico {
+    flex: 0 0 auto; width: 18px; height: 18px;
+    fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  nav.side .nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  nav.side button[aria-current="true"] {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    color: var(--primary); font-weight: 600;
+  }
+  nav.side .views { display: flex; flex-direction: column; gap: 3px; }
+  nav.side .spacer { flex: 1; }
+  nav.side button[aria-selected="true"] {
+    background: var(--rail-active);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .threads {
+    display: flex; flex-direction: column; min-height: 0;
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  #thread-list { flex: 1 1 auto; }
+  .threads .rail-label {
+    margin: 10px 0 2px; padding: 0 10px; font-size: .6875rem; font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
+  }
+  /* Moved out of `.threads` with the markup: New chat is an action, and it
+     belongs with the sections rather than on top of the history it creates. */
+  nav.side .new-chat { font-weight: 600; margin-bottom: 4px; }
+  .threads .thread-search {
+    width: 100%; padding: 5px 9px; margin-bottom: 6px; font-size: .75rem;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface); color: inherit;
+  }
+  #thread-list { max-height: 42vh; overflow: auto; }
+  .thread {
+    display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 10px;
+    border-radius: 7px; font-size: .8125rem; color: var(--text);
+  }
+  .thread:hover { background: var(--rail-hover); }
+  /* The open conversation reads as *selected*, not as a link: a neutral fill and
+     the same ink as its neighbours. Tinting it with the accent made it compete
+     with the section tabs below, which is the one place the accent means
+     something here. */
+  .thread[aria-current="true"] { background: var(--rail-active); font-weight: 600; }
+  .thread .label {
+    /* `width: auto` matters: `nav.side button` sets `width: 100%`, and with three
+       buttons in one flex row all three demanded the full width. The two icons
+       won -- they shrink from 100%, while this one's basis is 0 -- so every
+       conversation name was laid out at zero width and the rail looked empty.
+       The names were never the wrong colour; they had nowhere to be drawn. */
+    flex: 1 1 0; width: auto; min-width: 0; display: flex; align-items: center;
+    gap: 6px; border: 0; background: transparent; padding: 6px 0; cursor: pointer;
+    font: inherit; color: inherit; text-align: start;
+  }
+  .thread .label > span {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .thread .label .chip { flex: none; font-size: .625rem; }
+  .thread .menu {
+    flex: 0 0 auto; width: 26px; height: 26px; justify-content: center;
+    border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+    color: var(--muted); opacity: 0; padding: 0;
+  }
+  .thread .menu:hover { background: var(--rail-active); color: var(--text); }
+  /* Keyboard users reach the row tools by arrowing into them; an invisible
+     focused button is the same bug as no button at all. */
+  .thread:hover .menu,
+  .thread:focus-within .menu,
+  .thread .menu:focus-visible { opacity: 1; }
+  .threads .linkish {
+    width: 100%; border: 0; background: transparent; cursor: pointer;
+    color: var(--primary); font-size: .75rem; padding: 4px 0;
+  }
+  nav.side .note { padding: 10px 12px; font-size: .75rem; color: var(--muted); }
+
+  main { min-width: 0; min-height: 0; overflow: auto; padding: 20px 24px 28px; }
+  main.flush { padding: 0; overflow: hidden; }
+
+  h2.view-title { margin: 0 0 4px; font-size: 1.15rem; }
+  p.view-sub { margin: 0 0 18px; color: var(--muted); font-size: .875rem; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+  }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .toolbar input[type="search"], .toolbar input[type="text"] {
+    flex: 1; min-width: 200px; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: .8125rem; color: var(--muted); }
+
+  button.btn {
+    padding: 7px 13px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); cursor: pointer; font-size: .8125rem;
+  }
+  button.btn:hover { border-color: var(--primary); }
+  button.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+  button.btn.danger  { border-color: var(--bad); color: var(--bad); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .sql-editor {
+    width: 100%; min-height: 110px; padding: 11px 13px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8125rem;
+    resize: vertical;
+  }
+  /* An outline was removed here with nothing put in its place, so a keyboard user
+     could not see which control they were in. A ring is drawn instead, and only
+     for keyboard focus -- :focus-visible keeps it off a mouse click. */
+  .sql-editor:focus { outline: none; border-color: var(--primary); }
+  .sql-editor:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+  }
+
+  pre.sql {
+    margin: 0; padding: 11px 13px; border-radius: 8px; overflow-x: auto;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8125rem;
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  table.data { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+  table.data th, table.data td {
+    text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.data th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  table.data tr:last-child td { border-bottom: 0; }
+  .scroll-x { overflow-x: auto; }
+
+  .empty { text-align: center; padding: 46px 20px; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, Menlo, monospace; }
+  .small { font-size: .8125rem; }
+
+  /* ------------------------------------------------------------ ask --- */
+  #view-ask { display: none; height: 100%; grid-template-rows: auto 1fr; min-height: 0; }
+  #view-ask.on { display: grid; }
+  .starters { padding: 14px 24px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .starters .lead { font-size: .8125rem; color: var(--muted); margin-inline-end: 2px; }
+  .starter {
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); cursor: pointer; font-size: .8125rem;
+  }
+  .starter:hover { border-color: var(--primary); color: var(--primary); }
+  .chat-wrap { padding: 14px 24px 24px; min-height: 0; }
+  vanna-chat { height: 100%; display: block; }
+
+  /* --------------------------------------------------------- schema --- */
+  .schema-grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+  .table-list { max-height: calc(100vh - 230px); overflow: auto; }
+  .table-list button {
+    display: block; width: 100%; text-align: start; padding: 8px 11px; border: 0;
+    border-radius: 7px; background: transparent; cursor: pointer; font-size: .875rem;
+  }
+  .table-list button:hover { background: var(--surface-2); }
+  .table-list button[aria-current="true"] {
+    background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary);
+  }
+  .table-list .count { float: right; color: var(--muted); font-size: .75rem; }
+
+  /* -------------------------------------------------------- overlay --- */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,.55);
+    display: none; align-items: center; justify-content: center; padding: 20px; z-index: 40;
+  }
+  .overlay.on { display: flex; }
+  .sheet {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    width: min(760px, 100%); max-height: 86vh; overflow: auto; padding: 22px;
+    box-shadow: 0 24px 60px rgba(2,6,23,.28);
+  }
+  .sheet h3 { margin: 0 0 14px; font-size: 1.05rem; }
+  .sheet label { display: block; font-size: .8125rem; color: var(--muted); margin: 12px 0 5px; }
+  .sheet input, .sheet select, .sheet textarea {
+    width: 100%; padding: 9px 11px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-2);
+  }
+  .sheet textarea { min-height: 110px; font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; }
+  .sheet .actions { display: flex; gap: 9px; margin-top: 18px; justify-content: flex-end; }
+
+  /* --------------------------------------------------------- signin --- */
+  #signin {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: var(--bg); padding: 20px; z-index: 50;
+  }
+  #signin.on { display: flex; }
+  #signin .panel {
+    width: min(430px, 100%); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 26px;
+  }
+  #signin h1 { margin: 0 0 6px; font-size: 1.25rem; }
+  #signin p.lede { margin: 0 0 20px; color: var(--muted); font-size: .875rem; }
+  #signin label { display: block; font-size: .8125rem; color: var(--muted); margin: 14px 0 5px; }
+  #signin select, #signin input {
+    width: 100%; padding: 10px 12px; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--surface-2);
+  }
+  #signin button.go {
+    width: 100%; margin-top: 20px; padding: 11px; border-radius: 9px; border: 0;
+    background: var(--primary); color: var(--primary-fg); font-weight: 600; cursor: pointer;
+  }
+  .roster { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .roster button {
+    padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-2); cursor: pointer; font-size: .75rem;
+  }
+  .roster button:hover { border-color: var(--primary); color: var(--primary); }
+  .error {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: .8125rem;
+    background: rgba(220,38,38,.1); color: var(--bad); display: none;
+  }
+  .error.on { display: block; }
+
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px;
+    font-size: .875rem; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60;
+  }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 820px) {
+    .body { grid-template-columns: 1fr; }
+    /* The rail is a top strip here, laid out along the other axis, so the mini
+       column does not apply: an icon-only strip would just be the same strip
+       with the words taken out for no gain. */
+    #app[data-rail="mini"] { --sidebar: 100%; }
+    #app[data-rail="mini"] nav.side { align-items: stretch; }
+    #app[data-rail="mini"] nav.side button { width: auto; }
+    #app[data-rail="mini"] nav.side .nav-text, #app[data-rail="mini"] .threads { display: block; }
+    nav.side { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+    nav.side .spacer, nav.side .note { display: none; }
+    .schema-grid { grid-template-columns: 1fr; }
+  }
+
+
+  /* ------------------------------------------------------------ a11y --- */
+
+  /* Visible only to assistive technology. Used by the live regions and by labels
+     whose visual equivalent is an icon or a placeholder. */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* First thing in the tab order, invisible until focused. Without it a keyboard
+     user tabs through the whole navigation on every page load to reach content. */
+  .skip-link {
+    position: absolute;
+    inset-inline-start: -9999px;
+    top: 0;
+    z-index: 100;
+    background: var(--primary);
+    color: var(--primary-fg);
+    padding: 10px 16px;
+    border-radius: 0 0 var(--radius) 0;
+    text-decoration: none;
+  }
+  .skip-link:focus {
+    inset-inline-start: 0;
+  }
+
+  /* One visible focus ring for everything that can hold focus. :focus-visible so a
+     mouse click does not leave a ring behind, which is the reason people remove
+     outlines in the first place. */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* The dialog itself takes focus when it opens; it should not draw a ring for
+     that, only for controls the user moves to. */
+  .sheet:focus { outline: none; }
+
+  /* `hidden` must actually hide, even against a flex or grid parent whose
+     `display` would otherwise win. */
+  [hidden] { display: none !important; }
+
+  .error.notice {
+    color: var(--muted);
+    background: var(--surface-2);
+    border-color: var(--border);
+  }
+
+  .btn.sso { display: block; text-align: center; margin-top: 10px; text-decoration: none; }
+  .link {
+    background: none; border: 0; padding: 8px 0;
+    color: var(--primary); font: inherit; font-size: .8125rem;
+    cursor: pointer; text-decoration: underline;
+  }
+  form.password-off #si-password,
+  form.password-off label[for="si-password"],
+  form.password-off #si-go { display: none; }
+
+  /* Someone who has asked their system for less motion has asked for it here too. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Windows high-contrast mode drops background colours, which is most of how
+     state is expressed here. Restore the ones that carry meaning. */
+  @media (forced-colors: active) {
+    nav.side button[aria-selected="true"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+    .chip, .btn { border: 1px solid ButtonBorder; }
+  }
+
+  /* ------------------------------------------------- small screens --- */
+
+  /* One breakpoint at 820px was doing all the work, and below it the data tables,
+     the SQL editor and the dashboard grid were unusable. */
+  @media (max-width: 640px) {
+    .top { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+    .top .pill .sub { display: none; }
+    .brand { font-size: .9rem; }
+
+    /* Tables scroll inside their own box rather than pushing the page sideways,
+       and the header row stays visible while they do. */
+    .table-wrap, .result-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table.data th {
+      position: sticky; top: 0; z-index: 1;
+      background: var(--surface);
+    }
+    table.data th, table.data td { white-space: nowrap; }
+
+    .sheet { max-width: none; width: 100%; border-radius: var(--radius) var(--radius) 0 0; }
+    .overlay { align-items: flex-end; }
+    .sheet .actions { flex-direction: column-reverse; }
+    .sheet .actions .btn { width: 100%; }
+
+    .dash-grid { grid-template-columns: 1fr !important; }
+    .toolbar { flex-wrap: wrap; }
+    .sql-editor { font-size: 16px; }  /* iOS zooms anything smaller on focus */
+  }

@@ -1,0 +1,40 @@
+# Conventions for opportunity pipelines. Every one of these is a definition a
+# sales organisation could reasonably make differently, which is exactly why
+# they belong behind an explicit choice rather than in the baseline.
+
+id: crm-pipeline
+name: CRM and sales pipeline
+description: >-
+  Win-rate denominators, why a pipeline figure needs stage history, and the
+  difference between effort and progress.
+
+instructions:
+  - text: >-
+      An open opportunity is not a lost one. Win rate is won divided by closed
+      -- won plus lost -- because putting still-open deals in the denominator
+      makes every quarter look worse the more pipeline the team builds.
+    priority: 62
+
+  - text: >-
+      Pipeline is a snapshot and stages move. A question about the pipeline as
+      it stood at a past date needs the stage history; using the current stage
+      rewrites the past so that it agrees with the present.
+    priority: 58
+
+  - text: >-
+      Weighted pipeline multiplies value by a stage probability and is a
+      forecast. It must never be added to closed revenue, and an answer
+      carrying both has to label which is which.
+    priority: 54
+
+  - text: >-
+      Activity counts measure effort, not progress. Calls and meetings belong
+      to a person and a date, so attributing them to a deal needs an explicit
+      link rather than a match on account and week.
+    priority: 49
+
+  - text: >-
+      Duplicate accounts are the normal state of a CRM. Counting customers
+      means counting after whatever merge rule the business uses, and where
+      there is none, say the figure counts records rather than companies.
+    priority: 45

@@ -1,0 +1,61 @@
+# Pre-commit hooks.
+#
+#   pip install pre-commit && pre-commit install
+#
+# Deliberately short. A hook suite that takes ten seconds gets uninstalled, and the
+# checks that matter here are cheap: lint, whitespace, and one guard against
+# committing a credential.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # The compose file uses no custom tags, but the CI workflow does use
+        # GitHub's ${{ }} syntax, which is valid YAML and confuses nothing.
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      # `.env` is gitignored, and gitignore is one `git add -f` away from not
+      # mattering. This is the check that catches the accident.
+      - id: no-env-file
+        name: refuse to commit a .env file
+        entry: >-
+          bash -c 'for f in "$@"; do
+            case "$f" in
+              .env|*/.env|.env.local|*/.env.local)
+                echo "Refusing to commit $f -- it holds real credentials."; exit 1;;
+            esac
+          done' --
+        language: system
+        files: '(^|/)\.env(\.|$)'
+        exclude: '\.env\.example$'
+
+      # The lockfile is generated from requirements.in. Editing one without the
+      # other produces an image that does not match what the repository says.
+      - id: requirements-in-step
+        name: requirements.txt was regenerated with requirements.in
+        entry: >-
+          bash -c 'if git diff --cached --name-only | grep -q "backend/requirements.in" &&
+                   ! git diff --cached --name-only | grep -q "backend/requirements.txt"; then
+                     echo "requirements.in changed but requirements.txt did not. Run: make lock";
+                     exit 1;
+                   fi'
+        language: system
+        pass_filenames: false
+        files: '^backend/requirements\.(in|txt)$'

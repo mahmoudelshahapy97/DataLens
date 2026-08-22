@@ -1,311 +1,401 @@
-# Vanna 2.0: Turn Questions into Data Insights
+# Vanna — multi-tenant natural-language querying
 
-**Natural language → SQL → Answers.** Now with enterprise security and user-aware permissions.
+Ask a question in English or Arabic, get SQL, results, a chart and a summary — with
+each workspace bound to its own database, its own members, and its own curated
+knowledge.
 
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-
-https://github.com/user-attachments/assets/476cd421-d0b0-46af-8b29-0f40c73d6d83
-
-
-![Vanna2 Demo](img/architecture.png)
-
----
-
-## What's New in 2.0
-
-🔐 **User-Aware at Every Layer** — Queries automatically filtered per user permissions
-
-🎨 **Modern Web Interface** — Beautiful pre-built `<vanna-chat>` component
-
-⚡ **Streaming Responses** — Real-time tables, charts, and progress updates
-
-🔒 **Enterprise Security** — Row-level security, audit logs, rate limiting
-
-🔄 **Production-Ready** — FastAPI integration, observability, lifecycle hooks
-
-> **Upgrading from 0.x?** See the [Migration Guide](MIGRATION_GUIDE.md) | [What changed?](#migration-notes)
-
----
-
-## Get Started
-
-### Try it with Sample Data
-
-[Quickstart](https://vanna.ai/docs/quick-start)
-
-### Configure
-
-[Configure](https://vanna.ai/docs/configure)
-
-### Web Component
-
-```html
-<!-- Drop into any existing webpage -->
-<script src="https://img.vanna.ai/vanna-components.js"></script>
-<vanna-chat
-  sse-endpoint="https://your-api.com/chat"
-  theme="dark">
-</vanna-chat>
+```
+┌──────────── browser ────────────┐
+│  workspace page  ·  console     │   one origin; nginx proxies /api
+└────────────────┬────────────────┘
+                 │  session cookie (httpOnly) + X-Tenant-Id
+┌────────────────▼────────────────────────────────────────────────┐
+│  API  (FastAPI, 4 workers)                                      │
+│                                                                 │
+│   identity ─► authz ─► routes ─► per-workspace Agent            │
+│                                    │                            │
+│                                    ├─ tool registry             │
+│                                    │    SQL policy, semantic    │
+│                                    │    compile, row/column     │
+│                                    │    rules                   │
+│                                    └─ SQL runner (read-only)    │
+└───────┬─────────────────────────────────────────┬───────────────┘
+        │ control plane                           │ data plane
+┌───────▼───────────────────┐        ┌────────────▼────────────────┐
+│ PostgreSQL  (vanna_app)   │        │ Customer warehouses          │
+│  tenants, members, roles  │        │  one connection per          │
+│  sessions, API tokens     │        │  workspace, read-only        │
+│  plans, payments          │        │  unless explicitly granted   │
+│  generations, audit       │        └──────────────────────────────┘
+│  shared counters          │
+└───────────────────────────┘
 ```
 
-Uses your existing cookies/JWTs. Works with React, Vue, or plain HTML.
+**The two planes never mix.** The control plane holds our bookkeeping and needs
+write access; the data plane is the customer's warehouse and is opened read-only.
+Putting our tables in their database would require write credentials on their data.
 
 ---
 
-## What You Get
+## Quick start
 
-Ask a question in natural language and get back:
+Three ways to run it. Nothing is installed as a package in any of them.
 
-**1. Streaming Progress Updates**
+### 1. Docker — the whole stack
 
-**2. SQL Code Block (By default only shown to "admin" users)**
-
-**3. Interactive Data Table**
-
-**4. Charts** (Plotly visualizations)
-
-**5. Natural Language Summary**
-
-All streamed in real-time to your web component.
-
----
-
-## Why Vanna 2.0?
-
-### ✅ Get Started Instantly
-* Production chat interface
-* Custom agent with your database
-* Embed in any webpage
-
-### ✅ Enterprise-Ready Security
-**User-aware at every layer** — Identity flows through system prompts, tool execution, and SQL filtering
-**Row-level security** — Queries automatically filtered per user permissions
-**Audit logs** — Every query tracked per user for compliance
-**Rate limiting** — Per-user quotas via lifecycle hooks
-
-### ✅ Beautiful Web UI Included
-**Pre-built `<vanna-chat>` component** — No need to build your own chat interface
-**Streaming tables & charts** — Rich components, not just text
-**Responsive & customizable** — Works on mobile, desktop, light/dark themes
-**Framework-agnostic** — React, Vue, plain HTML
-
-### ✅ Works With Your Stack
-**Any LLM:** OpenAI, Anthropic, Ollama, Azure, Google Gemini, AWS Bedrock, Mistral, Others
-**Any Database:** PostgreSQL, MySQL, Snowflake, BigQuery, Redshift, SQLite, Oracle, SQL Server, DuckDB, ClickHouse, Others
-**Your Auth System:** Bring your own — cookies, JWTs, OAuth tokens
-**Your Framework:** FastAPI, Flask
-
-### ✅ Extensible But Opinionated
-**Custom tools** — Extend the `Tool` base class
-**Lifecycle hooks** — Quota checking, logging, content filtering
-**LLM middlewares** — Caching, prompt engineering
-**Observability** — Built-in tracing and metrics
-
----
-
-## Architecture
-
-![Vanna2 Diagram](img/vanna2.svg)
-
----
-
-## How It Works
-
-```mermaid
-sequenceDiagram
-    participant U as 👤 User
-    participant W as 🌐 <vanna-chat>
-    participant S as 🐍 Your Server
-    participant A as 🤖 Agent
-    participant T as 🧰 Tools
-
-    U->>W: "Show Q4 sales"
-    W->>S: POST /api/vanna/v2/chat_sse (with auth)
-    S->>A: User(id=alice, groups=[read_sales])
-    A->>T: Execute SQL tool (user-aware)
-    T->>T: Apply row-level security
-    T->>A: Filtered results
-    A->>W: Stream: Table → Chart → Summary
-    W->>U: Display beautiful UI
+```bash
+cp .env.example .env          # every value has a working default
+make secret                   # generate VANNA_SECRET_KEY, paste it into .env
+docker compose up --build     # or: make up
+make password                 # the generated first-run admin password
 ```
 
-**Key Concepts:**
+Open <http://localhost:3000> and sign in as `demo@example.com`. nginx serves the UI
+and proxies `/api` to the backend, so the browser sees one origin.
 
-1. **User Resolver** — You define how to extract user identity from requests (cookies, JWTs, etc.)
-2. **User-Aware Tools** — Tools automatically check permissions based on user's group memberships
-3. **Streaming Components** — Backend streams structured UI components (tables, charts) to frontend
-4. **Built-in Web UI** — Pre-built `<vanna-chat>` component renders everything beautifully
+### 2. Backend on its own — uvicorn against a virtual environment
 
----
+```powershell
+python -m venv .venv                       # once, at the repository root
 
-## Production Setup with Your Auth
+cd backend
+..\.venv\Scripts\activate                 # Windows
+# source ../.venv/bin/activate            # macOS / Linux
+pip install -r requirements.txt
 
-Here's a complete example integrating Vanna with your existing FastAPI app and authentication:
-
-```python
-from fastapi import FastAPI
-from vanna import Agent
-from vanna.servers.fastapi.routes import register_chat_routes
-from vanna.servers.base import ChatHandler
-from vanna.core.user import UserResolver, User, RequestContext
-from vanna.integrations.anthropic import AnthropicLlmService
-from vanna.tools import RunSqlTool
-from vanna.integrations.sqlite import SqliteRunner
-from vanna.core.registry import ToolRegistry
-
-# Your existing FastAPI app
-app = FastAPI()
-
-# 1. Define your user resolver (using YOUR auth system)
-class MyUserResolver(UserResolver):
-    async def resolve_user(self, request_context: RequestContext) -> User:
-        # Extract from cookies, JWTs, or session
-        token = request_context.get_header('Authorization')
-        user_data = self.decode_jwt(token)  # Your existing logic
-
-        return User(
-            id=user_data['id'],
-            email=user_data['email'],
-            group_memberships=user_data['groups']  # Used for permissions
-        )
-
-# 2. Set up agent with tools
-llm = AnthropicLlmService(model="claude-sonnet-4-5")
-tools = ToolRegistry()
-tools.register(RunSqlTool(sql_runner=SqliteRunner("./data.db")))
-
-agent = Agent(
-    llm_service=llm,
-    tool_registry=tools,
-    user_resolver=MyUserResolver()
-)
-
-# 3. Add Vanna routes to your app
-chat_handler = ChatHandler(agent)
-register_chat_routes(app, chat_handler)
-
-# Now you have:
-# - POST /api/vanna/v2/chat_sse (streaming endpoint)
-# - GET / (optional web UI)
+uvicorn main:app --reload --port 8000
 ```
 
-**Then in your frontend:**
-```html
-<vanna-chat sse-endpoint="/api/vanna/v2/chat_sse"></vanna-chat>
+`http://127.0.0.1:8000/docs` for the API, `/health` and `/ready` for the probes.
+No `pip install -e .` and no `PYTHONPATH`: `vanna` and `vanna_app` sit next to
+`main.py`, so running from `backend/` is enough. The image runs the same
+application as `uvicorn vanna_app.wiring:application --factory`; `main:app` is the
+short form for a laptop.
+
+### 3. Frontend on its own — the Vite dev server
+
+```bash
+cd frontend
+npm install                   # or: npm ci
+npm run dev                   # http://localhost:3000
 ```
 
-See [Full Documentation](https://vanna.ai/docs) for custom tools, lifecycle hooks, and advanced configuration
+It proxies `/api`, `/health` and `/ready` to `127.0.0.1:8000`, so start the backend
+first. Editing anything under `public/` or `src/` reloads the page — a full reload
+rather than a hot patch, which is the right trade here: these pages keep their state
+on the server and in an httpOnly cookie, so there is nothing worth preserving across
+an edit.
+
+The component needs no build step while developing. `/assets/vanna-components.js`
+is mapped onto `src/index.ts` and compiled on demand, so the URL in the HTML is the
+same one nginx serves in the container.
+
+`npm run build` produces `frontend/dist/` — the pages, their assets and the bundled
+component — which is exactly what the frontend image serves.
+
+The stack needs a PostgreSQL it can reach. The bundled compose file joins the
+sandbox project's network (`../../databases`), which must be running first — it
+owns the network and the eight seeded datasets.
+
+Without an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` the stack still runs, using a
+mock LLM: enough to exercise streaming, the console and the admin flows, not enough
+to write real SQL.
 
 ---
 
-## Custom Tools
+## Deployment modes
 
-Extend Vanna with custom tools for your specific use case:
+The single most important setting. It is explicit rather than inferred, because a
+mode inferred from which variables happen to be set is a mode nobody decided on.
 
-```python
-from vanna.core.tool import Tool, ToolContext, ToolResult
-from pydantic import BaseModel, Field
-from typing import Type
+| | `demo` | `single-tenant` | `multi-tenant` |
+|---|---|---|---|
+| Anonymous access | yes | opt-in | **refused** |
+| Control plane required | no | yes* | **yes** |
+| Platform admins required | no | no | **yes** |
+| `VANNA_SECURE_COOKIES` | any | any | **must be true** |
+| `VANNA_TRUST_HEADERS` | any | any | **refused** |
+| Public member roster | any | any | **refused** |
+| `VANNA_SECRET_KEY` | optional | required* | **required** |
+| Quota / rate limits | per process | shared | shared |
+| CSRF protection | off | on | on |
 
-class EmailArgs(BaseModel):
-    recipient: str = Field(description="Email recipient")
-    subject: str = Field(description="Email subject")
+\* unless anonymous access is explicitly chosen.
 
-class EmailTool(Tool[EmailArgs]):
-    @property
-    def name(self) -> str:
-        return "send_email"
+**In `multi-tenant`, a dangerous configuration does not start.** `ConfigError` lists
+every problem at once, so a deployment is fixed in one pass rather than discovering
+the next fault on each restart. This is deliberate and it is the difference between
+this and its predecessor: almost every serious weakness in the original was a
+permissive default that nobody chose, documented in a comment beside the code that
+did it. A comment does not stop a deployment.
 
-    @property
-    def access_groups(self) -> list[str]:
-        return ["send_email"]  # Permission check
+---
 
-    def get_args_schema(self) -> Type[EmailArgs]:
-        return EmailArgs
+## Roles
 
-    async def execute(self, context: ToolContext, args: EmailArgs) -> ToolResult:
-        user = context.user  # Automatically injected
+Two tiers, because "admin" means two different things in a multi-tenant system.
 
-        # Your business logic
-        await self.email_service.send(
-            from_email=user.email,
-            to=args.recipient,
-            subject=args.subject
-        )
+**Platform admin** — an address in `VANNA_ADMIN_EMAILS`. Creates and deletes
+workspaces, binds datasources, grants write access, sets plans, records payments,
+administers any workspace.
 
-        return ToolResult(success=True, result_for_llm=f"Email sent to {args.recipient}")
+**Workspace roles** — a row in `tenant_users`:
 
-# Register your tool
-tools.register(EmailTool())
+| | read | save queries, dashboards | manage members, starters, knowledge |
+|---|---|---|---|
+| `viewer` | ✓ | | |
+| `analyst` | ✓ | ✓ | |
+| `admin` | ✓ | ✓ | ✓ |
+
+A workspace admin cannot change their own plan, grant their own workspace write
+access, or repoint it at another database. Those are platform decisions.
+
+Refusals are `404`, never `403`: a `403` confirms the resource exists to somebody
+who has no business knowing that it does.
+
+---
+
+## Configuration
+
+Every variable, its default, and what it does. Anything not listed here is not read.
+
+### Mode and secrets
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_DEPLOYMENT_MODE` | `demo` | `demo` · `single-tenant` · `multi-tenant`. An unrecognised value is treated as `multi-tenant`, so a typo fails closed. |
+| `VANNA_SECRET_KEY` | — | Encrypts stored datasource credentials, signs CSRF and OIDC state. `make secret` generates one. Changing it makes existing stored credentials unreadable. |
+| `VANNA_ADMIN_EMAILS` | — | Comma-separated platform admins. **Empty means nobody**, not everybody. |
+
+### Databases
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_APP_DATABASE_URL` | — | The control plane. Created on first start if absent. |
+| `VANNA_DATABASE_URL` | — | Fallback data source for workspaces with no binding. Empty means the built-in SQLite demo. |
+| `VANNA_AUTO_MIGRATE` | `true` | Apply migrations at boot. Set `false` and run them as a deploy job once more than one replica starts at a time. |
+| `VANNA_APP_POOL_MIN` / `_MAX` | `2` / `16` | Control-plane pool. Callers wait for a connection rather than erroring. |
+| `VANNA_APP_POOL_WAIT_SECONDS` | `10` | How long, before reporting saturation. |
+
+### Authentication
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_AUTH_METHODS` | `password` | `password`, `oidc`, or both. |
+| `VANNA_SESSION_TTL_HOURS` | `72` | |
+| `VANNA_SECURE_COOKIES` | `false` | Must be `true` behind TLS, and is required in `multi-tenant`. |
+| `VANNA_TRUSTED_PROXIES` | — | CIDRs whose `X-Forwarded-For` may be believed. Empty means the header is ignored entirely. |
+| `VANNA_TRUST_HEADERS` | `false` | Accept `X-User-Email` as identity. Only behind a gateway that authenticates and strips it. |
+| `VANNA_ALLOW_ANONYMOUS` | `false` | No authentication at all. |
+| `VANNA_ADMIN_PASSWORD` | — | First-run admin password. Unset generates one and logs it once. |
+| `VANNA_LOGIN_MAX_ATTEMPTS` | `8` | Failed sign-ins per address and per IP… |
+| `VANNA_LOGIN_WINDOW_SECONDS` | `300` | …within this window. Shared across workers. |
+| `VANNA_PUBLIC_USER_DIRECTORY` | `false` | Publish a workspace's member list to the sign-in screen. A demo convenience and an email-address disclosure anywhere else. |
+
+### Single sign-on
+
+| Variable | |
+|---|---|
+| `VANNA_OIDC_ISSUER` | Discovery is read from `<issuer>/.well-known/openid-configuration`. |
+| `VANNA_OIDC_CLIENT_ID` / `_SECRET` | |
+| `VANNA_OIDC_SCOPES` | Default `openid email profile`. |
+| `VANNA_OIDC_ROLE_CLAIM` | Claim to map onto a workspace role. Optional. |
+| `VANNA_OIDC_AUTO_PROVISION_TENANT` | Workspace new SSO identities join. Off by default: joining a workspace is a decision. |
+
+### Mail
+
+| Variable | |
+|---|---|
+| `VANNA_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM` | With no host, messages are written to the log instead of sent — so the reset and invitation flows work in development. |
+| `VANNA_PUBLIC_BASE_URL` | Where links in emails point. |
+
+### Limits
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_DAILY_QUOTA` | `200` | Questions per workspace per rolling day. Overridden by the plan. |
+| `VANNA_RATE_LIMIT_PER_MIN` | `20` | Per user. |
+| `VANNA_MAX_ROWS` | `1000` | Row cap per query. |
+| `VANNA_QUERY_TIMEOUT` | `60` | Seconds. |
+| `VANNA_MAX_TENANT_RUNTIMES` | `32` | Cached agents, one per (workspace, database); each holds a connection pool. |
+| `VANNA_TENANT_RUNTIME_TTL_SECONDS` | `1800` | Idle eviction. |
+| `VANNA_GENERATION_RETENTION_DAYS` | `365` | Question text is customer data. `0` keeps it forever. |
+| `VANNA_ALLOW_WRITES` | `false` | Master switch. A workspace also needs `allow_writes`, *and* the caller must be an admin of it. |
+
+### Everything else
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_LLM_PROVIDER` | `auto` | `auto` · `anthropic` · `openai` · `mock`. |
+| `VANNA_INDEX_BACKEND` | `lexical` | Dependency-free BM25, or a vector integration fused in via RRF. |
+| `VANNA_PROJECT_DIR` / `VANNA_PROJECTS_DIR` | | Semantic manifests. One manifest describes one database, so it binds to one workspace. |
+| `VANNA_CORS_ORIGINS` | `http://localhost:3000` | Explicit list; `*` is refused. |
+| `LOG_LEVEL` / `VANNA_LOG_FORMAT` | `INFO` / `text` | `json` for a log shipper. |
+| `VANNA_METRICS_ENABLED` | `true` | Prometheus at `/metrics`, blocked at the edge. |
+| `VANNA_SENTRY_DSN` | — | Optional error reporting. |
+
+---
+
+## Operating it
+
+```bash
+make migrate-status    # schema version, anything pending
+make migrate           # apply
+make seal-secrets      # encrypt datasource credentials written before encryption
+make logs              # follow the API
 ```
 
----
+**Probes.** `/health` is liveness and deliberately does not touch the database — a
+liveness probe that queries the warehouse turns a slow database into a restart loop.
+`/ready` is readiness and *does* check the control plane, because a replica whose
+control plane is unreachable cannot sign anybody in and must not receive traffic.
 
-## Advanced Features
+**Scaling.** The API runs four workers. That is possible only because quota, rate
+limiting and login throttling live in the control plane; when they were per-process
+dictionaries, two workers enforcing "200 per day" independently permitted 400. A
+second *host* additionally needs shared storage for `VANNA_KNOWLEDGE_DIR`.
 
-Vanna 2.0 includes powerful enterprise features for production use:
+**Backups.** The control-plane database is the only stateful thing that cannot be
+rebuilt. The catalog rescans, the vector index reindexes from the markdown, and the
+demo SQLite regenerates.
 
-**Lifecycle Hooks** — Add quota checking, custom logging, content filtering at key points in the request lifecycle
-
-**LLM Middlewares** — Implement caching, prompt engineering, or cost tracking around LLM calls
-
-**Conversation Storage** — Persist and retrieve conversation history per user
-
-**Observability** — Built-in tracing and metrics integration
-
-**Context Enrichers** — Add RAG, memory, or documentation to enhance agent responses
-
-**Agent Configuration** — Control streaming, temperature, max iterations, and more
-
----
-
-## Use Cases
-
-**Vanna is ideal for:**
-- 📊 Data analytics applications with natural language interfaces
-- 🔐 Multi-tenant SaaS needing user-aware permissions
-- 🎨 Teams wanting a pre-built web component + backend
-- 🏢 Enterprise environments with security/audit requirements
-- 📈 Applications needing rich streaming responses (tables, charts, SQL)
-- 🔄 Integrating with existing authentication systems
+See [docs/operations.md](docs/operations.md) for the runbook and
+[docs/security.md](docs/security.md) for the threat model.
 
 ---
 
-## Community & Support
+## Development
 
-- 📖 **[Full Documentation](https://vanna.ai/docs)** — Complete guides and API reference
-- 💡 **[GitHub Discussions](https://github.com/vanna-ai/vanna/discussions)** — Feature requests and Q&A
-- 🐛 **[GitHub Issues](https://github.com/vanna-ai/vanna/issues)** — Bug reports
-- 📧 **Enterprise Support** — support@vanna.ai
+```bash
+make check                 # lint + unit tests, no database needed
+make test-integration      # needs PostgreSQL; see DB_URL in the Makefile
+make test-all
+```
+
+`tests/test_tenant_isolation.py` is the file to read first. It drives the real
+application and asserts, for every route that names a workspace, that a member of
+another workspace gets a 404 — the property the product is sold on, and the one
+there was previously no automated proof of.
+
+**In a real browser**
+
+Everything above drives the application through ASGI, which verifies behaviour but
+not *delivery*. A page can pass every server-side test and still be dead: a strict
+CSP blocking your own bundle, a module served under a MIME type the browser refuses
+to execute, a layout that has nowhere to go at 390px. Only a browser sees those.
+
+```bash
+docker compose up -d
+make password                                  # the admin password
+
+make seed          E2E_PASSWORD=...            # fill the lists with real content
+make seed-questions E2E_PASSWORD=...           # real Q&A history (slow, LLM calls)
+make screenshots   E2E_PASSWORD=...            # every screen into ./artifacts
+make test-e2e      E2E_PASSWORD=...            # the whole browser suite
+make qa-json       E2E_PASSWORD=...            # export the Q&A history to qa.json
+```
+
+`make seed` is worth running first and is not only cosmetic. A fresh install renders
+its empty state everywhere, so a screenshot run photographs a dozen variations on
+"no data yet" — and an empty list is indistinguishable from a fetch that quietly
+failed. It asks the application, over its own API, to do what an analyst would: run
+questions, keep the good ones, assemble them into dashboards. Nothing is written
+behind the app's back.
+
+`make seed-questions` exists separately because it is slow. History rows carry a
+question only when one was *asked*: the text is captured by a lifecycle hook on the
+agent's `before_message`, so anything that posts SQL directly — including the app's
+own Run SQL button — records the statement and leaves the question blank. Real Q&A
+means real chat turns, at an LLM call each.
+
+`make qa-json` writes one record per exchange — `question`, `answer`, `query`,
+`database` — joining the generation store (which has the SQL) to the conversation
+store (which has the prose the user read). No single endpoint holds all four. Rows
+with no question are skipped rather than exported blank: they came from `run-sql`,
+which never runs the hook that captures a question.
+
+It spans every workspace by default (`QA_TENANT=all`), so one file covers all eight
+seeded databases — the music store, the wholesaler, the DVD rental chain, the world
+atlas, the HR system, the clinic, the shop and the hotel. `tools/ask_demo_questions.py`
+keeps a separate bank of questions per workspace for the same reason: a question
+about invoices means nothing to the world atlas.
+
+**Write questions** are a separate bank, asked with `make seed-writes`, because they
+go through `propose_write`/`confirm_write` rather than `run_sql`. Most of them are
+*meant* to be refused — over the row cap, against an ungranted table, or not
+expressible as a plan at all — and refusals need no grants, so that half is safe to
+run anywhere. For the rest, `make grant-writes` grants DML on three small tables
+(`genre`, `playlist`, and `customer` for UPDATE only); `make revoke-writes` undoes it.
+The ledger — `invoice`, `invoice_line`, `track` — stays read-only on purpose.
+
+Two things to know before relying on write Q&A. Writes need `VANNA_ALLOW_WRITES=true`
+*and* the workspace's own `allow_writes`, and they record no generation, so the
+history screen never shows them. And the export cannot currently fill `query` for
+them: `GET /api/vanna/v2/writes` returns only the second-person review queue and
+deliberately omits `conversation_id`, so there is no way to join an executed write
+back to the question that caused it. Exporting writes properly needs that join
+exposed — the statement is stored, in `pending_writes.statement_preview`; it is just
+not reachable through the API.
+
+`make screenshots` writes `artifacts/`, which is git-ignored: the images are
+regenerated on every run and the test that produces them is the reviewable artifact.
+Pass `E2E_TENANT` to point the seeders at a different workspace — this account
+belongs to nine, each bound to its own warehouse, and the session default is not
+necessarily the one your browser has open.
+
+**Layout**
+
+Three directories, one per thing you can run.
+
+```
+backend/              Python. Nothing here is pip-installed; uvicorn imports it.
+  main.py               uvicorn main:app --reload
+  vanna_app/            the application: control plane, accounts, billing, routes
+    config.py             every environment variable, validated once, at startup
+    authz.py              who may do what — one implementation, used everywhere
+    identity.py           who is calling; the resolver every route shares
+    platform.py           the per-workspace agent cache
+    routes/               the HTTP surface, one module per area
+  vanna/                the library: agent, tools, semantic layer, integrations
+  instructions/         the platform instruction baseline and starter packs
+  domains/domains.yml   one workspace per seeded database
+  projects/             semantic manifests, one per database
+  requirements.txt      pinned; generated from requirements.in
+
+frontend/             Node. One Vite project.
+  public/               served verbatim, at the URLs it references
+    index.html            the workspace page
+    admin/index.html      the operator console
+    assets/app.js         and console.js, and shared/core.js — escaping, fetch,
+                          CSRF, accessibility, in one copy
+    locales/              interface translations, fetched at runtime
+  src/                  the <vanna-chat> element, TypeScript, bundled
+  nginx.conf            serves the above and proxies /api to the backend
+
+database/             SQL.
+  migrations/           numbered, applied under an advisory lock
+
+tests/                unit (no database) and integration (marked). Spans both
+                      backend and frontend, which is why it is not inside either.
+  e2e/                  the same product in a real browser. Needs VANNA_E2E_URL.
+    test_screenshots.py    photographs every screen into artifacts/
+
+tools/                standalone scripts. Not imported by anything.
+  seed_demo_data.py     fills a workspace with content, over the app's own API
+  ask_demo_questions.py asks real questions through the chat, for real history
+  export_qa.py          question/answer/query/database, as qa.json
+```
+
+**There is no package.** `backend/vanna/` and `backend/vanna_app/` are imported
+from source. That is the whole reason `backend/` is flat: both are top-level
+packages, so the working directory is the only thing on `sys.path` that matters,
+and `pip install -e .` is not a step anybody has to remember. The version lives in
+`backend/vanna/__init__.py`, and `python -m vanna` replaces what used to be a
+`vanna` console script.
 
 ---
 
-## Migration Notes
+## Licence
 
-**Upgrading from Vanna 0.x?**
-
-Vanna 2.0 is a complete rewrite focused on user-aware agents and production deployments. Key changes:
-
-- **New API**: Agent-based instead of `VannaBase` class methods
-- **User-aware**: Every component now knows the user identity
-- **Streaming**: Rich UI components instead of text/dataframes
-- **Web-first**: Built-in `<vanna-chat>` component and server
-
-**Migration path:**
-
-1. **Quick wrap** — Use `LegacyVannaAdapter` to wrap your existing Vanna 0.x instance and get the new web UI immediately
-2. **Gradual migration** — Incrementally move to the new Agent API and tools
-
-See the complete [Migration Guide](MIGRATION_GUIDE.md) for step-by-step instructions.
-
----
-
-## License
-
-MIT License — See [LICENSE](LICENSE) for details.
-
----
-
-**Built with ❤️ by the Vanna team** | [Website](https://vanna.ai) | [Docs](https://vanna.ai/docs) | [Discussions](https://github.com/vanna-ai/vanna/discussions)
+MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Derived from
+[vanna-ai/vanna](https://github.com/vanna-ai/vanna).

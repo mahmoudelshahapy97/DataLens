@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/favicon.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vanna — Admin console</title>
+<!--
+  Operator console: workspaces, their members, plans, the audit trail, and the
+  knowledge the agent is shown.
+
+  Deliberately dependency-free. It is an internal tool used by a handful of people;
+  a build pipeline, a framework and a node_modules tree would all be more machinery
+  than the job needs, and each is one more thing to keep working.
+
+  Nothing here is a security control. Every route it calls enforces workspace scoping
+  and role membership server-side (see vanna_app/routes/admin.py) -- hiding a button
+  does not protect an endpoint. Tabs are hidden when the caller cannot use them
+  purely so the screen matches reality.
+
+  Markup only: the stylesheet and the script are files under /assets/, and the two
+  inline `onclick` attributes that used to be here are gone. Both were necessary --
+  a Content Security Policy without 'unsafe-inline' blocks inline handlers, and the
+  script is a module now, so its functions are not global for an attribute to call.
+-->
+<link rel="stylesheet" href="/assets/console.css" />
+</head>
+<body>
+
+<a class="skip-link" href="#content" data-i18n="a11y.skip">Skip to main content</a>
+
+<!-- Live regions: the console replaces whole panels on every action, and a screen
+     reader reports none of that unless a region says it should. -->
+<div id="a11y-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="a11y-alerts" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></div>
+
+<header>
+  <h1 data-i18n="console.title">Vanna — Admin console</h1>
+  <span class="tag" id="who">…</span>
+  <span class="grow"></span>
+  <button class="act" id="theme-btn" type="button" data-i18n="console.theme">Theme</button>
+  <a class="act" href="/"
+    ><span class="arrow" aria-hidden="true">&larr;</span> <span data-i18n="console.back">Back to app</span></a>
+  <label class="sr-only" for="locale-btn" data-i18n="console.language">Language</label>
+  <select id="locale-btn" class="act" aria-label="Language"></select>
+  <button class="act" id="reload-btn" type="button" data-i18n="console.reload">Reload</button>
+</header>
+
+<main>
+  <nav id="tabs" role="tablist" data-i18n-attr="aria-label:a11y.sections" aria-label="Sections"></nav>
+  <div id="content" role="tabpanel" tabindex="-1">
+    <div class="empty" data-i18n="common.loading">Loading…</div>
+  </div>
+</main>
+
+<div class="overlay" id="overlay" aria-hidden="true">
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" tabindex="-1"></div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="/assets/console.js"></script>
+</body>
+</html>

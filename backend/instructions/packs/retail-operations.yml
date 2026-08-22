@@ -1,0 +1,40 @@
+# Conventions for store and basket data. Complements finance-conventions rather
+# than repeating it: that pack defines what revenue is, this one defines the
+# denominators retail measures get divided by.
+
+id: retail-operations
+name: Retail and storefront
+description: >-
+  Returns as negative sales, comparable-store rules, and the traffic
+  denominator a conversion rate needs.
+
+instructions:
+  - text: >-
+      A return is a negative sale, not a missing one. Net revenue subtracts
+      returns in the period they came back, and reporting gross as though it
+      were net overstates every category with a high return rate.
+    priority: 62
+
+  - text: >-
+      Comparable growth compares only the stores trading in both periods.
+      Including an opening or a closure attributes a change in the estate to a
+      change in trade.
+    priority: 58
+
+  - text: >-
+      The basket is the unit a shopper controls. Average basket value and items
+      per basket are per transaction, so computing either per line inflates
+      both.
+    priority: 54
+
+  - text: >-
+      A conversion rate needs a traffic denominator from the same place and
+      period as the transactions. Without one, report transactions and say that
+      conversion cannot be computed from this data.
+    priority: 49
+
+  - text: >-
+      Discounts, loyalty redemptions and gift cards each reduce what was
+      collected without reducing what was sold. Say which of those two a
+      revenue figure represents.
+    priority: 45
