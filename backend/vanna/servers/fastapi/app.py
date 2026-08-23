@@ -36,8 +36,8 @@ class VannaFastAPIServer:
         # Create FastAPI app
         app_config = self.config.get("fastapi", {})
         app = FastAPI(
-            title="Vanna Agents API",
-            description="API server for Vanna Agents framework",
+            title="DataLens Agents API",
+            description="API server for the DataLens Agents framework",
             version="0.1.0",
             **app_config,
         )

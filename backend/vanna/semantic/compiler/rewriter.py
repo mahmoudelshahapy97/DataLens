@@ -135,6 +135,36 @@ class SemanticRewriter:
         for name, select in ctes:
             ast = ast.with_(name, as_=select, copy=False)
 
+        # Model CTEs go first. A non-recursive WITH may only reference CTEs
+        # declared before it, so appending them left `WITH cheap AS (SELECT *
+        # FROM tracks), tracks AS (...)` whenever the caller wrote their own CTE
+        # over a model -- which Postgres rejects as an unknown table and the
+        # column checker rejects as an unresolvable column.
+        #
+        # Reordered rather than inserted: `with_(append=False)` *replaces* the
+        # clause, which silently dropped the caller's own CTE and turned the
+        # error into "table `cheap` is not in the catalog".
+        #
+        # Safe as a stable partition: a model CTE reads a physical table and
+        # never a user CTE, so hoisting one can never cross a dependency, and
+        # user CTEs keep their order relative to each other.
+        # `with_` in sqlglot 30, `with` in older ones. Reading only one of them
+        # found nothing and reordered nothing, silently -- which looked exactly
+        # like the reorder being unnecessary. Deliberately not `find(exp.With)`:
+        # that would reach into a subquery's own WITH clause.
+        with_node = (ast.args.get("with_") or ast.args.get("with")) if ctes else None
+        if with_node is not None:
+            declared = {name.lower() for name, _ in ctes}
+            hoisted = [
+                cte for cte in with_node.expressions
+                if (cte.alias_or_name or "").lower() in declared
+            ]
+            rest = [
+                cte for cte in with_node.expressions
+                if (cte.alias_or_name or "").lower() not in declared
+            ]
+            with_node.set("expressions", hoisted + rest)
+
         return CompiledSql(
             sql=ast.sql(dialect=self.dialect, pretty=True),
             dialect=self.dialect or "",

@@ -253,11 +253,129 @@ def _svg_pie(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> st
     return "".join(parts)
 
 
+def _svg_scatter(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> str:
+    """Points, not bars.
+
+    Drawn rather than fudged into a bar chart: this file is what somebody keeps,
+    and a chart of a different kind than the one on screen is not a copy of the
+    dashboard, it is a different claim about the data.
+    """
+    label_col, value_cols = _axis_pick(columns, rows, chart)
+    if label_col is None or not value_cols:
+        return '<p class="muted">Nothing numeric to plot.</p>'
+
+    value_col = value_cols[0]
+    points = [
+        (_number(r[label_col]), _number(r[value_col]))
+        for r in rows[:400]
+        if len(r) > max(label_col, value_col)
+    ]
+    points = [(x, y) for x, y in points if x is not None and y is not None]
+    if not points:
+        # A categorical x has no position of its own; fall back to the ordering.
+        points = [
+            (float(i), _number(r[value_col]) or 0.0)
+            for i, r in enumerate(rows[:400])
+            if len(r) > value_col
+        ]
+    if not points:
+        return '<p class="muted">Nothing numeric to plot.</p>'
+
+    width, height, pad = 640, 260, 34
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    x_lo, x_hi = min(xs), max(xs)
+    y_lo, y_hi = min(min(ys), 0.0), max(ys)
+    x_span = (x_hi - x_lo) or 1.0
+    y_span = (y_hi - y_lo) or 1.0
+
+    parts = [
+        f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img">',
+        f'<line x1="{pad}" y1="{height - pad}" x2="{width - pad}" y2="{height - pad}" '
+        f'stroke="#cbd5e1" />',
+    ]
+    for x, y in points:
+        cx = pad + (x - x_lo) / x_span * (width - 2 * pad)
+        cy = (height - pad) - (y - y_lo) / y_span * (height - 2 * pad)
+        parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3.5" fill="{PALETTE[0]}" '
+                     f'fill-opacity="0.75" />')
+    parts.append("</svg>")
+    if len(rows) > len(points):
+        parts.append(
+            f'<p class="muted small">Showing {len(points)} of {len(rows):,} rows.</p>'
+        )
+    return "".join(parts)
+
+
+def _svg_heatmap(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> str:
+    """A grid of cells: x across, y down, colour by the third column."""
+    label_col, value_cols = _axis_pick(columns, rows, chart)
+    if label_col is None or not value_cols:
+        return '<p class="muted">Nothing numeric to plot.</p>'
+
+    # x, y, value. With only one non-numeric column there is no second axis, so
+    # this degrades to the bar chart rather than inventing one.
+    y_name = getattr(chart, "color_by", None)
+    y_col = columns.index(y_name) if y_name in columns else None
+    if y_col is None:
+        others = [i for i, _ in enumerate(columns) if i != label_col and i not in value_cols]
+        y_col = others[0] if others else None
+    if y_col is None:
+        return _svg_bar_or_line(columns, rows, chart, line=False)
+
+    value_col = value_cols[0]
+    xs, ys, cells = [], [], {}
+    for row in rows[:600]:
+        if len(row) <= max(label_col, y_col, value_col):
+            continue
+        x, y = str(row[label_col]), str(row[y_col])
+        if x not in xs:
+            xs.append(x)
+        if y not in ys:
+            ys.append(y)
+        cells[(x, y)] = _number(row[value_col]) or 0.0
+    if not cells:
+        return '<p class="muted">Nothing numeric to plot.</p>'
+
+    xs, ys = xs[:24], ys[:16]
+    top = max(cells.values()) or 1.0
+    cell_w, cell_h, left, top_pad = 26, 18, 120, 10
+    width = left + cell_w * len(xs) + 10
+    height = top_pad + cell_h * len(ys) + 26
+
+    parts = [f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img">']
+    for row_index, y in enumerate(ys):
+        parts.append(
+            f'<text x="{left - 6}" y="{top_pad + row_index * cell_h + 13}" '
+            f'text-anchor="end" font-size="11" fill="#64748b">{_esc(y[:18])}</text>'
+        )
+        for col_index, x in enumerate(xs):
+            value = cells.get((x, y))
+            shade = 0.08 + 0.92 * (value / top) if value else 0.06
+            parts.append(
+                f'<rect x="{left + col_index * cell_w}" '
+                f'y="{top_pad + row_index * cell_h}" width="{cell_w - 2}" '
+                f'height="{cell_h - 2}" rx="2" fill="{PALETTE[0]}" '
+                f'fill-opacity="{shade:.2f}" />'
+            )
+    for col_index, x in enumerate(xs):
+        parts.append(
+            f'<text x="{left + col_index * cell_w + cell_w / 2}" y="{height - 8}" '
+            f'text-anchor="middle" font-size="10" fill="#64748b">{_esc(x[:6])}</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def _render_chart(tile: Tile, result: TileResult) -> str:
     chart = tile.chart
     kind = getattr(chart, "type", None)
     if kind == ChartType.PIE:
         return _svg_pie(result.columns, result.rows, chart)
+    if kind == ChartType.SCATTER:
+        return _svg_scatter(result.columns, result.rows, chart)
+    if kind == ChartType.HEATMAP:
+        return _svg_heatmap(result.columns, result.rows, chart)
     line = kind in (ChartType.LINE, ChartType.AREA)
     return _svg_bar_or_line(result.columns, result.rows, chart, line=line)
 
@@ -436,7 +554,7 @@ def export_html(
   </p>
   {tiles or '<section class="tile"><p class="muted">This dashboard has no tiles.</p></section>'}
   <footer>
-    Exported from Vanna. No connection details are contained in this file.
+    Exported from DataLens. No connection details are contained in this file.
   </footer>
 </main>
 </html>

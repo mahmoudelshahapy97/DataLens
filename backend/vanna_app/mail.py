@@ -68,7 +68,7 @@ class SmtpMailer(Mailer):
         port: int = 587,
         username: str = "",
         password: str = "",
-        sender: str = "vanna@localhost",
+        sender: str = "datalens@localhost",
         starttls: bool = True,
         timeout: int = 15,
     ) -> None:
@@ -145,7 +145,7 @@ def _shell(body_html: str) -> str:
         'max-width:520px;margin:0 auto;padding:24px">'
         f"{body_html}"
         '<hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0">'
-        '<p style="color:#64748b;font-size:13px">Vanna &middot; if you were not '
+        '<p style="color:#64748b;font-size:13px">DataLens &middot; if you were not '
         "expecting this message you can ignore it.</p></div>"
     )
 
@@ -167,14 +167,14 @@ def password_reset(*, to: str, token: str, base_url: str, ttl_minutes: int) -> M
         f"<p style='color:#64748b;font-size:13px'>The link works once and expires "
         f"in {ttl_minutes} minutes.</p>"
     )
-    return Message(to=to, subject="Reset your Vanna password", text=text, html=html)
+    return Message(to=to, subject="Reset your DataLens password", text=text, html=html)
 
 
 def account_invitation(
     *, to: str, temporary_password: str, base_url: str, workspace: str, invited_by: str
 ) -> Message:
     text = (
-        f"{invited_by} added you to the {workspace} workspace on Vanna.\n\n"
+        f"{invited_by} added you to the {workspace} workspace on DataLens.\n\n"
         f"Sign in at {base_url}\n"
         f"  email:    {to}\n"
         f"  password: {temporary_password}\n\n"
@@ -183,7 +183,7 @@ def account_invitation(
     html = _shell(
         f"<h2 style='margin:0 0 12px;font-size:19px'>You have been added to "
         f"{workspace}</h2>"
-        f"<p>{invited_by} invited you to Vanna.</p>"
+        f"<p>{invited_by} invited you to DataLens.</p>"
         f'<p><a href="{base_url}" style="display:inline-block;background:#4f46e5;'
         'color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px">'
         "Sign in</a></p>"
@@ -194,7 +194,7 @@ def account_invitation(
         "the first time you sign in.</p>"
     )
     return Message(
-        to=to, subject=f"You have been added to {workspace} on Vanna", text=text, html=html
+        to=to, subject=f"You have been added to {workspace} on DataLens", text=text, html=html
     )
 
 
@@ -206,9 +206,9 @@ def password_changed(*, to: str, base_url: str) -> Message:
     controls the session but not the mailbox.
     """
     text = (
-        "The password for your Vanna account was just changed, and every other "
+        "The password for your DataLens account was just changed, and every other "
         "session was signed out.\n\n"
         "If that was not you, reset it immediately at "
         f"{base_url} and tell your administrator."
     )
-    return Message(to=to, subject="Your Vanna password was changed", text=text)
+    return Message(to=to, subject="Your DataLens password was changed", text=text)

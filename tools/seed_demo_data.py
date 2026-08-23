@@ -29,6 +29,13 @@ that does not run is worse than an empty list.
 
 Written against the Chinook sample warehouse the demo workspace is bound to. The
 SQL is deliberately plain -- it is here to produce rows, not to be admired.
+
+It names **models**, not tables: `tracks`, not `chinook.track`. That workspace
+ships a semantic project, and a workspace with a manifest is queried through it --
+naming the physical table behind a model is refused, because doing so would skip
+the row-level rules and column drops the model carries. This script was written
+against the physical names, so every dashboard tile it produced failed on the
+screen with a policy error until both were fixed.
 """
 
 from __future__ import annotations
@@ -55,7 +62,7 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT ROUND(SUM(total)::numeric, 2) AS total_revenue,
                   COUNT(*) AS invoices,
                   ROUND(AVG(total)::numeric, 2) AS average_invoice
-           FROM chinook.invoice""",
+           FROM invoices""",
     ),
     (
         "Who are our top 10 customers by lifetime spend?",
@@ -63,8 +70,8 @@ QUESTIONS: List[Tuple[str, str]] = [
                   c.country,
                   ROUND(SUM(i.total)::numeric, 2) AS lifetime_spend,
                   COUNT(i.invoice_id) AS invoices
-           FROM chinook.invoice i
-           JOIN chinook.customer c ON c.customer_id = i.customer_id
+           FROM invoices i
+           JOIN customers c ON c.customer_id = i.customer_id
            GROUP BY 1, 2
            ORDER BY lifetime_spend DESC
            LIMIT 10""",
@@ -75,7 +82,7 @@ QUESTIONS: List[Tuple[str, str]] = [
                   ROUND(SUM(total)::numeric, 2) AS revenue,
                   COUNT(*) AS invoices,
                   ROUND(AVG(total)::numeric, 2) AS average_invoice
-           FROM chinook.invoice
+           FROM invoices
            GROUP BY 1
            ORDER BY revenue DESC
            LIMIT 25""",
@@ -85,7 +92,7 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT TO_CHAR(DATE_TRUNC('month', invoice_date), 'YYYY-MM') AS month,
                   ROUND(SUM(total)::numeric, 2) AS revenue,
                   COUNT(*) AS invoices
-           FROM chinook.invoice
+           FROM invoices
            GROUP BY 1
            ORDER BY 1
            LIMIT 100""",
@@ -95,9 +102,9 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT g.name AS genre,
                   SUM(il.quantity) AS tracks_sold,
                   ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue
-           FROM chinook.invoice_line il
-           JOIN chinook.track t ON t.track_id = il.track_id
-           JOIN chinook.genre g ON g.genre_id = t.genre_id
+           FROM invoice_lines il
+           JOIN tracks t ON t.track_id = il.track_id
+           JOIN genres g ON g.genre_id = t.genre_id
            GROUP BY 1
            ORDER BY revenue DESC
            LIMIT 15""",
@@ -107,10 +114,10 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT ar.name AS artist,
                   SUM(il.quantity) AS tracks_sold,
                   ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue
-           FROM chinook.invoice_line il
-           JOIN chinook.track t ON t.track_id = il.track_id
-           JOIN chinook.album al ON al.album_id = t.album_id
-           JOIN chinook.artist ar ON ar.artist_id = al.artist_id
+           FROM invoice_lines il
+           JOIN tracks t ON t.track_id = il.track_id
+           JOIN albums al ON al.album_id = t.album_id
+           JOIN artists ar ON ar.artist_id = al.artist_id
            GROUP BY 1
            ORDER BY revenue DESC
            LIMIT 10""",
@@ -120,10 +127,10 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT al.title AS album,
                   ar.name AS artist,
                   ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue
-           FROM chinook.invoice_line il
-           JOIN chinook.track t ON t.track_id = il.track_id
-           JOIN chinook.album al ON al.album_id = t.album_id
-           JOIN chinook.artist ar ON ar.artist_id = al.artist_id
+           FROM invoice_lines il
+           JOIN tracks t ON t.track_id = il.track_id
+           JOIN albums al ON al.album_id = t.album_id
+           JOIN artists ar ON ar.artist_id = al.artist_id
            GROUP BY 1, 2
            ORDER BY revenue DESC
            LIMIT 12""",
@@ -134,9 +141,9 @@ QUESTIONS: List[Tuple[str, str]] = [
                   e.title,
                   COUNT(DISTINCT c.customer_id) AS customers,
                   ROUND(SUM(i.total)::numeric, 2) AS revenue
-           FROM chinook.employee e
-           JOIN chinook.customer c ON c.support_rep_id = e.employee_id
-           JOIN chinook.invoice i ON i.customer_id = c.customer_id
+           FROM employees e
+           JOIN customers c ON c.support_rep_id = e.employee_id
+           JOIN invoices i ON i.customer_id = c.customer_id
            GROUP BY 1, 2
            ORDER BY revenue DESC
            LIMIT 20""",
@@ -147,10 +154,10 @@ QUESTIONS: List[Tuple[str, str]] = [
                   ar.name AS artist,
                   SUM(il.quantity) AS units,
                   ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue
-           FROM chinook.invoice_line il
-           JOIN chinook.track t ON t.track_id = il.track_id
-           LEFT JOIN chinook.album al ON al.album_id = t.album_id
-           LEFT JOIN chinook.artist ar ON ar.artist_id = al.artist_id
+           FROM invoice_lines il
+           JOIN tracks t ON t.track_id = il.track_id
+           LEFT JOIN albums al ON al.album_id = t.album_id
+           LEFT JOIN artists ar ON ar.artist_id = al.artist_id
            GROUP BY 1, 2
            ORDER BY revenue DESC
            LIMIT 15""",
@@ -160,9 +167,9 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT m.name AS media_type,
                   COUNT(DISTINCT t.track_id) AS tracks,
                   SUM(il.quantity) AS units_sold
-           FROM chinook.track t
-           JOIN chinook.media_type m ON m.media_type_id = t.media_type_id
-           LEFT JOIN chinook.invoice_line il ON il.track_id = t.track_id
+           FROM tracks t
+           JOIN media_types m ON m.media_type_id = t.media_type_id
+           LEFT JOIN invoice_lines il ON il.track_id = t.track_id
            GROUP BY 1
            ORDER BY units_sold DESC NULLS LAST
            LIMIT 10""",
@@ -172,7 +179,7 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT billing_city AS city,
                   billing_country AS country,
                   ROUND(SUM(total)::numeric, 2) AS revenue
-           FROM chinook.invoice
+           FROM invoices
            GROUP BY 1, 2
            ORDER BY revenue DESC
            LIMIT 20""",
@@ -181,8 +188,8 @@ QUESTIONS: List[Tuple[str, str]] = [
         "How long are our playlists?",
         """SELECT p.name AS playlist,
                   COUNT(pt.track_id) AS tracks
-           FROM chinook.playlist p
-           LEFT JOIN chinook.playlist_track pt ON pt.playlist_id = p.playlist_id
+           FROM playlists p
+           LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.playlist_id
            GROUP BY 1
            ORDER BY tracks DESC
            LIMIT 20""",
@@ -193,8 +200,8 @@ QUESTIONS: List[Tuple[str, str]] = [
                   COUNT(DISTINCT c.customer_id) AS customers,
                   ROUND(AVG(i.total)::numeric, 2) AS average_invoice,
                   ROUND(SUM(i.total)::numeric, 2) AS revenue
-           FROM chinook.customer c
-           JOIN chinook.invoice i ON i.customer_id = c.customer_id
+           FROM customers c
+           JOIN invoices i ON i.customer_id = c.customer_id
            GROUP BY 1
            HAVING COUNT(DISTINCT c.customer_id) > 1
            ORDER BY average_invoice DESC
@@ -207,8 +214,8 @@ QUESTIONS: List[Tuple[str, str]] = [
                   c.first_name || ' ' || c.last_name AS customer,
                   i.billing_country AS country,
                   ROUND(i.total::numeric, 2) AS total
-           FROM chinook.invoice i
-           JOIN chinook.customer c ON c.customer_id = i.customer_id
+           FROM invoices i
+           JOIN customers c ON c.customer_id = i.customer_id
            ORDER BY i.invoice_date DESC
            LIMIT 20""",
     ),
@@ -217,18 +224,18 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT t.name AS track,
                   ar.name AS artist,
                   ROUND((t.milliseconds / 60000.0)::numeric, 1) AS minutes
-           FROM chinook.track t
-           LEFT JOIN chinook.album al ON al.album_id = t.album_id
-           LEFT JOIN chinook.artist ar ON ar.artist_id = al.artist_id
+           FROM tracks t
+           LEFT JOIN albums al ON al.album_id = t.album_id
+           LEFT JOIN artists ar ON ar.artist_id = al.artist_id
            ORDER BY t.milliseconds DESC
            LIMIT 15""",
     ),
     (
         "How many customers have never bought anything?",
         """SELECT COUNT(*) AS customers_without_invoices
-           FROM chinook.customer c
+           FROM customers c
            WHERE NOT EXISTS (
-               SELECT 1 FROM chinook.invoice i WHERE i.customer_id = c.customer_id
+               SELECT 1 FROM invoices i WHERE i.customer_id = c.customer_id
            )""",
     ),
     (
@@ -236,7 +243,7 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT EXTRACT(YEAR FROM invoice_date)::int AS year,
                   ROUND(SUM(total)::numeric, 2) AS revenue,
                   COUNT(*) AS invoices
-           FROM chinook.invoice
+           FROM invoices
            GROUP BY 1
            ORDER BY 1
            LIMIT 20""",
@@ -246,7 +253,7 @@ QUESTIONS: List[Tuple[str, str]] = [
         """SELECT composer,
                   COUNT(*) AS tracks,
                   ROUND(AVG(milliseconds / 60000.0)::numeric, 1) AS average_minutes
-           FROM chinook.track
+           FROM tracks
            WHERE composer IS NOT NULL AND composer <> ''
            GROUP BY 1
            ORDER BY tracks DESC
@@ -267,6 +274,8 @@ SAVED: List[Tuple[int, str]] = [
     (6, "Best selling albums"),
     (7, "Sales rep leaderboard"),
     (8, "Highest earning tracks"),
+    (9, "Media type mix"),
+    (11, "Playlist sizes"),
     (10, "Revenue by city"),
     (12, "Average invoice by country"),
     (13, "Latest invoices"),
@@ -284,45 +293,45 @@ SAVED: List[Tuple[int, str]] = [
 EXAMPLES: List[Tuple[str, str, List[str]]] = [
     (
         "How many customers do we have?",
-        "SELECT COUNT(*) AS customers FROM chinook.customer",
+        "SELECT COUNT(*) AS customers FROM customers",
         ["count"],
     ),
     (
         "What is total revenue?",
-        "SELECT ROUND(SUM(total)::numeric, 2) AS total_revenue FROM chinook.invoice",
+        "SELECT ROUND(SUM(total)::numeric, 2) AS total_revenue FROM invoices",
         ["revenue"],
     ),
     (
         "Revenue by country",
         "SELECT billing_country AS country, ROUND(SUM(total)::numeric, 2) AS revenue "
-        "FROM chinook.invoice GROUP BY 1 ORDER BY revenue DESC",
+        "FROM invoices GROUP BY 1 ORDER BY revenue DESC",
         ["revenue", "geography"],
     ),
     (
         "Which customer spent the most?",
         "SELECT c.first_name || ' ' || c.last_name AS customer, "
         "ROUND(SUM(i.total)::numeric, 2) AS lifetime_spend "
-        "FROM chinook.invoice i JOIN chinook.customer c ON c.customer_id = i.customer_id "
+        "FROM invoices i JOIN customers c ON c.customer_id = i.customer_id "
         "GROUP BY 1 ORDER BY lifetime_spend DESC LIMIT 1",
         ["customers", "join"],
     ),
     (
         "How many tracks are in each genre?",
-        "SELECT g.name AS genre, COUNT(*) AS tracks FROM chinook.track t "
-        "JOIN chinook.genre g ON g.genre_id = t.genre_id GROUP BY 1 ORDER BY tracks DESC",
+        "SELECT g.name AS genre, COUNT(*) AS tracks FROM tracks t "
+        "JOIN genres g ON g.genre_id = t.genre_id GROUP BY 1 ORDER BY tracks DESC",
         ["catalogue", "join"],
     ),
     (
         "Which tracks sold the most units?",
-        "SELECT t.name AS track, SUM(il.quantity) AS units FROM chinook.invoice_line il "
-        "JOIN chinook.track t ON t.track_id = il.track_id GROUP BY 1 "
+        "SELECT t.name AS track, SUM(il.quantity) AS units FROM invoice_lines il "
+        "JOIN tracks t ON t.track_id = il.track_id GROUP BY 1 "
         "ORDER BY units DESC LIMIT 10",
         ["catalogue", "sales"],
     ),
     (
         "Revenue per month in 2025",
         "SELECT TO_CHAR(DATE_TRUNC('month', invoice_date), 'YYYY-MM') AS month, "
-        "ROUND(SUM(total)::numeric, 2) AS revenue FROM chinook.invoice "
+        "ROUND(SUM(total)::numeric, 2) AS revenue FROM invoices "
         "WHERE invoice_date >= '2025-01-01' AND invoice_date < '2026-01-01' "
         "GROUP BY 1 ORDER BY 1",
         ["revenue", "time"],
@@ -330,21 +339,21 @@ EXAMPLES: List[Tuple[str, str, List[str]]] = [
     (
         "Which employee supports the most customers?",
         "SELECT e.first_name || ' ' || e.last_name AS sales_rep, "
-        "COUNT(c.customer_id) AS customers FROM chinook.employee e "
-        "JOIN chinook.customer c ON c.support_rep_id = e.employee_id "
+        "COUNT(c.customer_id) AS customers FROM employees e "
+        "JOIN customers c ON c.support_rep_id = e.employee_id "
         "GROUP BY 1 ORDER BY customers DESC",
         ["employees", "join"],
     ),
     (
         "How long is the average track, in minutes?",
         "SELECT ROUND(AVG(milliseconds / 60000.0)::numeric, 2) AS average_minutes "
-        "FROM chinook.track",
+        "FROM tracks",
         ["catalogue"],
     ),
     (
         "List the albums by a given artist",
-        "SELECT al.title AS album FROM chinook.album al "
-        "JOIN chinook.artist ar ON ar.artist_id = al.artist_id "
+        "SELECT al.title AS album FROM albums al "
+        "JOIN artists ar ON ar.artist_id = al.artist_id "
         "WHERE ar.name = 'AC/DC' ORDER BY al.title",
         ["catalogue", "filter"],
     ),
@@ -399,7 +408,7 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
             title="Total revenue",
             query={
                 "source": "sql",
-                "sql": "SELECT ROUND(SUM(total)::numeric, 2) AS total_revenue FROM chinook.invoice",
+                "sql": "SELECT ROUND(SUM(total)::numeric, 2) AS total_revenue FROM invoices",
             },
             grid={"x": 0, "y": 2, "width": 3, "height": 3},
         ),
@@ -408,7 +417,7 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
             title="Invoices",
             query={
                 "source": "sql",
-                "sql": "SELECT COUNT(*) AS invoices FROM chinook.invoice",
+                "sql": "SELECT COUNT(*) AS invoices FROM invoices",
             },
             grid={"x": 3, "y": 2, "width": 3, "height": 3},
         ),
@@ -417,7 +426,7 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
             title="Customers",
             query={
                 "source": "sql",
-                "sql": "SELECT COUNT(*) AS customers FROM chinook.customer",
+                "sql": "SELECT COUNT(*) AS customers FROM customers",
             },
             grid={"x": 6, "y": 2, "width": 3, "height": 3},
         ),
@@ -426,7 +435,7 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
             title="Average invoice",
             query={
                 "source": "sql",
-                "sql": "SELECT ROUND(AVG(total)::numeric, 2) AS average_invoice FROM chinook.invoice",
+                "sql": "SELECT ROUND(AVG(total)::numeric, 2) AS average_invoice FROM invoices",
             },
             grid={"x": 9, "y": 2, "width": 3, "height": 3},
         ),
@@ -469,6 +478,40 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
                 grid={"x": 6, "y": 10, "width": 6, "height": 5},
             )
         )
+    # A second reading of the same figures. A trend answers "which way is it
+    # going", a share answers "who is it coming from", and one chart cannot do
+    # both -- which is why a dashboard of tables plus two bar charts leaves most
+    # of the questions people actually arrive with unanswered.
+    if ref("Revenue by country"):
+        revenue_tiles.append(
+            tile(
+                kind="chart",
+                title="Share of revenue by country",
+                query=ref("Revenue by country"),
+                chart={"type": "pie", "x": "country", "y": ["revenue"], "limit": 8},
+                grid={"x": 0, "y": 15, "width": 5, "height": 5},
+            )
+        )
+    if ref("Monthly revenue trend"):
+        revenue_tiles.append(
+            tile(
+                kind="chart",
+                title="Invoices per month",
+                query=ref("Monthly revenue trend"),
+                chart={"type": "area", "x": "month", "y": ["invoices"]},
+                grid={"x": 5, "y": 15, "width": 7, "height": 5},
+            )
+        )
+    if ref("Top 10 customers by lifetime spend"):
+        revenue_tiles.append(
+            tile(
+                kind="chart",
+                title="Lifetime spend, customer by customer",
+                query=ref("Top 10 customers by lifetime spend"),
+                chart={"type": "bar", "x": "customer", "y": ["lifetime_spend"]},
+                grid={"x": 0, "y": 20, "width": 12, "height": 5},
+            )
+        )
     out.append(
         {
             "title": "Revenue overview",
@@ -491,19 +534,19 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
         tile(
             kind="metric",
             title="Tracks in catalogue",
-            query={"source": "sql", "sql": "SELECT COUNT(*) AS tracks FROM chinook.track"},
+            query={"source": "sql", "sql": "SELECT COUNT(*) AS tracks FROM tracks"},
             grid={"x": 0, "y": 2, "width": 4, "height": 3},
         ),
         tile(
             kind="metric",
             title="Artists",
-            query={"source": "sql", "sql": "SELECT COUNT(*) AS artists FROM chinook.artist"},
+            query={"source": "sql", "sql": "SELECT COUNT(*) AS artists FROM artists"},
             grid={"x": 4, "y": 2, "width": 4, "height": 3},
         ),
         tile(
             kind="metric",
             title="Albums",
-            query={"source": "sql", "sql": "SELECT COUNT(*) AS albums FROM chinook.album"},
+            query={"source": "sql", "sql": "SELECT COUNT(*) AS albums FROM albums"},
             grid={"x": 8, "y": 2, "width": 4, "height": 3},
         ),
     ]
@@ -536,13 +579,63 @@ def dashboards(saved_ids: Dict[str, str]) -> List[Dict[str, Any]]:
                 grid={"x": 0, "y": 10, "width": 6, "height": 5},
             )
         )
+    if ref("Genre performance"):
+        catalogue_tiles.append(
+            tile(
+                kind="chart",
+                title="Units against revenue, by genre",
+                query=ref("Genre performance"),
+                # Two series on one axis: the gap between them is the point --
+                # a genre selling many cheap tracks looks nothing like one
+                # selling few expensive ones, and either alone hides that.
+                chart={
+                    "type": "bar",
+                    "x": "genre",
+                    "y": ["tracks_sold", "revenue"],
+                    "limit": 12,
+                },
+                grid={"x": 6, "y": 10, "width": 6, "height": 5},
+            )
+        )
+    if ref("Media type mix"):
+        catalogue_tiles.append(
+            tile(
+                kind="chart",
+                title="Catalogue by media type",
+                query=ref("Media type mix"),
+                chart={"type": "pie", "x": "media_type", "y": ["tracks"]},
+                grid={"x": 0, "y": 15, "width": 5, "height": 5},
+            )
+        )
+    if ref("Highest earning tracks"):
+        catalogue_tiles.append(
+            tile(
+                kind="chart",
+                title="Units sold against revenue",
+                query=ref("Highest earning tracks"),
+                # Scatter, because the question here is about the relationship
+                # rather than the ranking: the outliers are the interesting rows.
+                chart={"type": "scatter", "x": "units", "y": ["revenue"]},
+                grid={"x": 5, "y": 15, "width": 7, "height": 5},
+            )
+        )
+    if ref("Playlist sizes"):
+        catalogue_tiles.append(
+            tile(
+                kind="chart",
+                title="Longest playlists",
+                query=ref("Playlist sizes"),
+                chart={"type": "bar", "x": "playlist", "y": ["tracks"], "limit": 12},
+                grid={"x": 0, "y": 20, "width": 12, "height": 5},
+            )
+        )
     if ref("Highest earning tracks"):
         catalogue_tiles.append(
             tile(
                 kind="table",
                 title="Highest earning tracks",
                 query=ref("Highest earning tracks"),
-                grid={"x": 6, "y": 10, "width": 6, "height": 5},
+                grid={"x": 0, "y": 25, "width": 12, "height": 5},
             )
         )
     out.append(
@@ -913,14 +1006,6 @@ def main() -> int:
 
     print(f"\nauthoring {len(EXAMPLES)} verified examples")
     examples = save_examples(client)
-
-    if tenant:
-        print("\nstarter questions and workspace instructions")
-        starters = save_starters(client, tenant)
-        rules = save_instructions(client, tenant)
-    else:
-        print("\nskipping starters and instructions: they are addressed per tenant")
-        starters = rules = 0
 
     print("\n--- result ---")
     print(f"  questions that ran : {sum(ok.values())}/{len(QUESTIONS)}")

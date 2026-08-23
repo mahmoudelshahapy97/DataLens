@@ -1,4 +1,4 @@
-"""The Vanna application: a multi-tenant deployment of the ``vanna`` library.
+"""The DataLens application: a multi-tenant deployment of the ``vanna`` library.
 
 The library gives you an ``Agent`` and expects you to assemble it. This package is
 that assembly, plus everything a hosted product needs that a library should not

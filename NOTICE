@@ -1,5 +1,5 @@
-Vanna — multi-tenant natural-language querying
-==============================================
+DataLens — multi-tenant natural-language querying
+=================================================
 
 This distribution contains:
 
@@ -16,7 +16,7 @@ This distribution contains:
    eleven thousand lines covering twenty-five vendor integrations -- has been
    removed. Nothing in this distribution imported it.
 
-2. The Vanna application (`docker/vanna_app/`), which is a multi-tenant deployment
+2. The DataLens application (`docker/vanna_app/`), which is a multi-tenant deployment
    of that library: control plane, accounts, billing, and the HTTP surface over
    them. Original to this repository, MIT licensed on the same terms.
 

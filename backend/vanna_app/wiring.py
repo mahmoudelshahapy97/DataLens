@@ -51,7 +51,7 @@ def create_app(settings: Optional[Any] = None) -> Any:
     services = _build_services(settings)
 
     app = FastAPI(
-        title="Vanna",
+        title="DataLens",
         description="Natural-language querying over your database, per workspace",
         # Read, not repeated. `vanna_app.__version__` exists to be the one place
         # this is written down -- it even exports it in __all__ -- and a literal

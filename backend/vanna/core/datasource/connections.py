@@ -204,7 +204,7 @@ ENGINES: Dict[str, Engine] = {
                 "driver",
                 "ODBC driver",
                 default="ODBC Driver 18 for SQL Server",
-                help="Must be installed on the server running Vanna.",
+                help="Must be installed on the server running DataLens.",
             ),
         ),
         notes="Connects through ODBC; the driver must be present in the container.",

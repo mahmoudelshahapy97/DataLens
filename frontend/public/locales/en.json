@@ -1,5 +1,5 @@
 {
-  "signin.title": "Sign in to Vanna",
+  "signin.title": "Sign in to DataLens",
   "signin.lede": "Pick a workspace and identify yourself. Each workspace has its own database, its own members, and its own curated knowledge.",
   "signin.workspace": "Workspace",
   "signin.email": "Your email",
@@ -284,5 +284,10 @@
   "nav.expand": "Show conversations",
   "nav.collapsed": "Conversations hidden",
   "nav.expanded": "Conversations shown",
-  "thread.recents": "Recents"
+  "thread.recents": "Recents",
+  "account.openMenu": "Account, workspace and plan",
+  "account.openMenuFor": "{email} — {role}. Account, workspace and plan.",
+  "account.platformAdmin": "platform admin",
+  "account.noControlPlane": "No control plane — history, saved queries and workspaces are off.",
+  "ask.tryLead": "Try asking"
 }

@@ -58,7 +58,7 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
 
         # Base system prompt
         prompt_parts = [
-            f"You are Vanna, an AI data analyst assistant created to help users with data analysis tasks. Today's date is {today_date}.",
+            f"You are DataLens, an AI data analyst assistant created to help users with data analysis tasks. Today's date is {today_date}.",
             "",
             "Response Guidelines:",
             "- Any summary of what you did or observations should be the final step.",

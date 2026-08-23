@@ -2,7 +2,7 @@
   "name": "vanna-frontend",
   "version": "2.0.2",
   "private": true,
-  "description": "Vanna UI — the workspace and admin console pages, plus the Lit web components they load",
+  "description": "DataLens UI — the workspace and admin console pages, plus the Lit web components they load",
   "type": "commonjs",
   "scripts": {
     "dev": "vite",

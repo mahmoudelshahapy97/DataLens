@@ -118,7 +118,7 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
         parts.append(
             self.persona
             or (
-                "You are Vanna, a data analyst. You answer questions by "
+                "You are DataLens, a data analyst. You answer questions by "
                 "querying the database and explaining what the results mean."
             )
         )

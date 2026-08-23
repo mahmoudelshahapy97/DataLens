@@ -638,6 +638,51 @@ class SqlPolicyValidator:
             node[parts[-1]] = dict.fromkeys(catalog_columns[table_key], "UNKNOWN")
         return schema
 
+    #: Clauses that may refer to a SELECT-list alias by name. Postgres resolves an
+    #: ORDER BY / GROUP BY name against the output list before the table's columns,
+    #: and HAVING/QUALIFY follow the projection for the same reason.
+    _ALIAS_CONTEXTS = ("Order", "Having", "Qualify", "Group")
+
+    @classmethod
+    def _is_output_alias(cls, column: "exp.Column") -> bool:
+        """Whether this bare name is one of its own query's output aliases.
+
+        Scoped deliberately: the alias has to be defined by the very SELECT whose
+        ORDER BY (or GROUP BY, HAVING, QUALIFY) the reference sits in. A name that
+        merely happens to match an alias somewhere else in the statement is still
+        an unattributed column, and still refused.
+        """
+        from sqlglot import expressions as exp
+
+        name = (column.name or "").lower()
+        if not name:
+            return False
+
+        node = column.parent
+        clause = None
+        while node is not None:
+            if type(node).__name__ in cls._ALIAS_CONTEXTS:
+                clause = node
+                break
+            if isinstance(node, exp.Select):
+                # Reached the query without passing through one of those clauses,
+                # so the reference is in the projection or a predicate, where a
+                # bare name means a column.
+                return False
+            node = node.parent
+
+        if clause is None:
+            return False
+
+        select = clause.parent
+        if not isinstance(select, exp.Select):
+            return False
+
+        return any(
+            (projection.alias_or_name or "").lower() == name
+            for projection in select.expressions
+        )
+
     def _check_columns(
         self,
         ast: "exp.Expression",
@@ -729,6 +774,17 @@ class SqlPolicyValidator:
         for column in qualified.find_all(exp.Column):
             source = (column.table or "").lower()
             if source in cte_names:
+                continue
+
+            # `ORDER BY revenue` names the output of `sum(...) AS revenue`, not a
+            # column of any table, and the qualifier leaves it exactly as written.
+            # Treating that as an unattributable column refused the single most
+            # common analytical shape there is -- "top N by something" -- on every
+            # workspace, which is what every dashboard tile with a ranking in it
+            # was hitting. Skipping it skips no permission, for the same reason the
+            # CTE skip above does not: the expression it names is in the SELECT
+            # list, where its own columns are checked.
+            if not source and self._is_output_alias(column):
                 continue
 
             if not source:

@@ -240,6 +240,32 @@
   }
   nav.side .note { padding: 10px 12px; font-size: .75rem; color: var(--muted); }
 
+  nav.side .rail-account {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    margin-top: 6px; padding: 8px 10px; border: 0; border-top: 1px solid var(--border);
+    border-radius: 0; background: transparent; cursor: pointer; text-align: start;
+  }
+  nav.side .rail-account:hover { background: var(--rail-hover); }
+  nav.side .rail-account .avatar {
+    flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--primary); color: var(--primary-fg);
+    font-size: .6875rem; font-weight: 700; text-transform: uppercase;
+  }
+  nav.side .rail-account .who { min-width: 0; display: flex; flex-direction: column; }
+  nav.side .rail-account .line,
+  nav.side .rail-account .sub {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  nav.side .rail-account .line { font-size: .8125rem; }
+  nav.side .rail-account .sub { font-size: .6875rem; color: var(--muted); }
+  /* Collapsed, the avatar is the whole control -- which is what the rest of the
+     mini rail looks like, and it stays a real button with its name intact. */
+  #app[data-rail="mini"] nav.side .rail-account {
+    width: 44px; justify-content: center; padding: 8px 0;
+  }
+  #app[data-rail="mini"] nav.side .rail-account .who { display: none; }
+
   main { min-width: 0; min-height: 0; overflow: auto; padding: 20px 24px 28px; }
   main.flush { padding: 0; overflow: hidden; }
 
@@ -303,16 +329,33 @@
   .small { font-size: .8125rem; }
 
   /* ------------------------------------------------------------ ask --- */
-  #view-ask { display: none; height: 100%; grid-template-rows: auto 1fr; min-height: 0; }
-  #view-ask.on { display: grid; }
-  .starters { padding: 14px 24px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .starters .lead { font-size: .8125rem; color: var(--muted); margin-inline-end: 2px; }
+  #view-ask { display: none; height: 100%; min-height: 0; }
+  #view-ask.on { display: block; }
+  .ask-layout {
+    display: grid; grid-template-columns: 250px minmax(0, 1fr);
+    gap: 16px; height: 100%; min-height: 0; padding: 14px 24px 24px;
+  }
+  /* Hidden until there is something in it, so a deployment with no starters gets
+     the full width for the conversation rather than an empty column. */
+  .ask-side[hidden] { display: none; }
+  .ask-side {
+    display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: auto;
+    padding: 12px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .ask-side .rail-label {
+    margin: 2px 0 4px; padding: 0 2px; font-size: .6875rem; font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
+  }
+  .starters { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
   .starter {
-    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+    padding: 9px 11px; border-radius: 9px; border: 1px solid var(--border);
     background: var(--surface); cursor: pointer; font-size: .8125rem;
+    text-align: start; line-height: 1.35;
   }
   .starter:hover { border-color: var(--primary); color: var(--primary); }
-  .chat-wrap { padding: 14px 24px 24px; min-height: 0; }
+  #ask-tools { margin-top: auto; padding-top: 8px; }
+  .chat-wrap { min-height: 0; }
   vanna-chat { height: 100%; display: block; }
 
   /* --------------------------------------------------------- schema --- */
@@ -339,6 +382,7 @@
     width: min(760px, 100%); max-height: 86vh; overflow: auto; padding: 22px;
     box-shadow: 0 24px 60px rgba(2,6,23,.28);
   }
+  .sheet.wide { width: min(1280px, 100%); }
   .sheet h3 { margin: 0 0 14px; font-size: 1.05rem; }
   .sheet label { display: block; font-size: .8125rem; color: var(--muted); margin: 12px 0 5px; }
   .sheet input, .sheet select, .sheet textarea {
@@ -346,6 +390,21 @@
     border: 1px solid var(--border); background: var(--surface-2);
   }
   .sheet textarea { min-height: 110px; font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; }
+  /* A dashboard is a grid, and every tile has carried its column span since the
+     model was written. Twelve columns, because it divides by 2, 3, 4 and 6. */
+  .tile-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+  .tile-grid .tile { grid-column: span var(--span, 6); margin: 0; min-width: 0; }
+  /* Backstop for the same thing: whatever the chart library decides it needs,
+     it does not get to draw outside the card it was given. */
+  .tile-grid .tile-chart { overflow: hidden; }
+  @media (max-width: 900px) {
+    /* Below this a twelfth is a few pixels wide. Two up, then one. */
+    .tile-grid .tile { grid-column: span min(12, calc(var(--span, 6) * 2)); }
+  }
+  @media (max-width: 620px) {
+    .tile-grid .tile { grid-column: span 12; }
+  }
+
   .sheet .actions { display: flex; gap: 9px; margin-top: 18px; justify-content: flex-end; }
 
   /* --------------------------------------------------------- signin --- */
@@ -400,6 +459,10 @@
     nav.side { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--border); }
     nav.side .spacer, nav.side .note { display: none; }
     .schema-grid { grid-template-columns: 1fr; }
+    /* No room for a second column: the starters go back above the conversation,
+       which is where they were and is fine when the screen is this narrow. */
+    .ask-layout { grid-template-columns: 1fr; padding: 12px; }
+    .ask-side { max-height: 30vh; }
   }
 
 

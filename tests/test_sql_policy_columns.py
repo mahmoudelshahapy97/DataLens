@@ -365,3 +365,87 @@ class TestTheAllowlistMatchesWhatThePromptShowed:
                 assert validate(f"SELECT {column} FROM {table}") != [], (
                     f"{table}.{column} is hidden from the prompt but allowed"
                 )
+
+
+class TestAnOutputAliasIsNotAColumn:
+    """`ORDER BY revenue` names the SELECT list, not a table.
+
+    The qualifier leaves such a reference exactly as written, and treating it as
+    an unattributable column refused the most common analytical shape there is --
+    "top N by something". Every dashboard tile with a ranking in it was blocked by
+    this, on every workspace, which is how it was found.
+
+    Skipping it skips no permission: the expression the alias names is in the
+    SELECT list, where its own columns are checked. The tests below hold that line
+    from both sides.
+
+    (`id` does the grouping throughout: `status` may be read and filtered but not
+    aggregated, and GROUP BY is an aggregate context.)
+    """
+
+    def test_ordering_by_an_aggregate_alias_is_allowed(self, validate):
+        violations = validate(
+            "SELECT id, sum(total) AS revenue FROM sales.orders "
+            "GROUP BY id ORDER BY revenue DESC LIMIT 10"
+        )
+        assert violations == [], [str(v) for v in violations]
+
+    def test_ordering_by_a_column_alias_is_allowed(self, validate):
+        violations = validate(
+            "SELECT status AS state FROM sales.orders ORDER BY state"
+        )
+        assert violations == [], [str(v) for v in violations]
+
+    def test_an_ordinal_is_allowed(self, validate):
+        """The qualifier rewrites `ORDER BY 2` into the aliased output."""
+        violations = validate(
+            "SELECT id, sum(total) AS revenue FROM sales.orders "
+            "GROUP BY id ORDER BY 2 DESC"
+        )
+        assert violations == [], [str(v) for v in violations]
+
+    def test_having_may_name_an_alias(self, validate):
+        violations = validate(
+            "SELECT id, count(id) AS n FROM sales.orders "
+            "GROUP BY id HAVING count(id) > 1 ORDER BY n"
+        )
+        assert violations == [], [str(v) for v in violations]
+
+    def test_the_aliased_expression_is_still_checked(self, validate):
+        """The point of the skip: it defers to the projection, which is checked.
+        `salary` is granted nothing, so reaching it through an alias changes
+        nothing."""
+        violations = validate(
+            "SELECT sum(salary) AS revenue FROM sales.orders ORDER BY revenue"
+        )
+        assert ViolationCode.COLUMN_NOT_ALLOWED in codes(violations)
+
+    def test_a_use_the_grant_does_not_allow_is_still_refused(self, validate):
+        """`total` may be aggregated but not filtered on, and an alias in the
+        ORDER BY does not launder the predicate underneath it."""
+        violations = validate(
+            "SELECT status AS state FROM sales.orders WHERE total > 10 ORDER BY state"
+        )
+        assert ViolationCode.COLUMN_FILTER_NOT_ALLOWED in codes(violations)
+
+    def test_an_unknown_bare_name_in_order_by_is_still_refused(self, validate):
+        """It matches no alias of its own SELECT, so it is what it looks like: a
+        column nobody can attribute to a table."""
+        violations = validate("SELECT status FROM sales.orders ORDER BY mystery")
+        assert ViolationCode.COLUMN_UNRESOLVED in codes(violations)
+
+    def test_an_alias_from_another_scope_does_not_travel(self, validate):
+        """A name defined in a subquery's SELECT list is not in scope for the
+        outer ORDER BY, and must not be waved through because it exists
+        somewhere in the statement."""
+        violations = validate(
+            "SELECT id FROM (SELECT id, sum(total) AS revenue FROM sales.orders "
+            "GROUP BY id) t ORDER BY revenue"
+        )
+        assert violations != []
+
+    def test_a_bare_name_in_the_projection_is_still_refused(self, validate):
+        """The skip is scoped to ORDER BY and friends. A bare unattributable name
+        in the SELECT list itself is exactly the case the check exists for."""
+        violations = validate("SELECT mystery FROM sales.orders")
+        assert ViolationCode.COLUMN_UNRESOLVED in codes(violations)

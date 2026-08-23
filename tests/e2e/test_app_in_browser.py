@@ -79,7 +79,7 @@ class TestItLoads:
     def test_the_page_renders_with_no_console_errors(self, page: Page):
         page.goto(f"{BASE_URL}/", wait_until="networkidle")
 
-        expect(page).to_have_title(re.compile("Vanna"))
+        expect(page).to_have_title(re.compile("DataLens"))
         assert not _errors, f"uncaught JavaScript errors: {_errors}"
         assert not _failed, f"failed requests: {_failed}"
 

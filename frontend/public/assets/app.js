@@ -1,5 +1,5 @@
 /**
- * The Vanna workspace: six screens over one API.
+ * The DataLens workspace: six screens over one API.
  *
  * Dependency-free on purpose. The only built asset is the <vanna-chat> web component
  * bundle. Adding a framework here would mean a second build pipeline to serve six
@@ -41,6 +41,12 @@ let view     = 'ask';
 let chatEl   = null;
 let schemaCache  = null;
 let historyCache = [];
+//: What the account button's sheet reports about this session. Filled by
+//: `loadUsage`, which runs after the first paint, so the sheet reads them rather
+//: than the rail rendering a number that is not there yet.
+let planLine = '';
+let planNearLimit = false;
+let planExpired = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -518,16 +524,13 @@ function setTheme(next) {
 }
 
 function paintChrome() {
-  $('tenant-name').textContent   = me.tenant.name || me.tenant.id;
-  $('tenant-source').textContent = me.tenant.data_source ? `· ${me.tenant.data_source}` : '';
-  $('user-email').textContent    = me.user.email;
-
-  const roleChip = $('user-role');
-  roleChip.textContent = me.is_platform_admin ? 'platform admin' : me.user.role;
-  roleChip.className   = 'chip' + (me.is_admin ? ' admin' : '');
-
-  $('console-link').hidden = !me.is_admin;
+  // Who you are, which workspace, and which database all live behind the account
+  // button at the foot of the rail. They were three separate pills across the top
+  // of every screen, saying things that do not change between one question and the
+  // next -- and the same facts were already in the sheet, so the header was
+  // spending a third of its width restating it.
   $('ask-tools').hidden = !me.is_admin;
+  $('ask-side').hidden = !$('starters').children.length && !me.is_admin;
   // Only shown when the workspace has a semantic layer -- an empty Metrics tab
   // teaches people the feature does not work.
   api('/api/vanna/v2/cubes')
@@ -536,19 +539,96 @@ function paintChrome() {
     })
     .catch(() => {});
   paintDataSources();
-  $('ds-note').textContent = dataSource
-    ? t('ask.queryingDatabase', { name: labelForSource(dataSource) })
-    : (me.tenant.data_source ? `Querying ${me.tenant.data_source}` : '');
+  paintRailAccount();
+}
 
-  if (!me.control_plane) {
-    $('ds-note').textContent =
-      'No control plane configured — history, saved queries and workspaces are disabled.';
+/** Which database this workspace is answering from, in words. */
+function sourceLine() {
+  if (!me.control_plane) return t('account.noControlPlane');
+  if (dataSource) return t('ask.queryingDatabase', { name: labelForSource(dataSource) });
+  return me.tenant.data_source
+    ? t('ask.queryingDatabase', { name: me.tenant.data_source })
+    : '';
+}
+
+/** The foot of the rail: who you are, and the role you hold here. */
+function paintRailAccount() {
+  const button = $('rail-account');
+  if (!button || !me) return;
+  const email = me.user.email || me.user.id || '';
+  const role = me.is_platform_admin ? t('account.platformAdmin') : (me.user.role || '');
+  $('rail-avatar').textContent = email.slice(0, 2) || '--';
+  $('rail-email').textContent = email;
+  $('rail-role').textContent = role;
+  // Collapsed there is no text at all, so the name has to carry both parts.
+  const label = t('account.openMenuFor', { email, role });
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
+/**
+ * Everything about this session, behind the one control at the foot of the rail.
+ *
+ * Built from the same facts the rail used to print as three unclickable notes --
+ * plan, database, admin console -- plus the identity that was in the opposite
+ * corner of the header. Somebody asking "who am I, where am I, and what am I
+ * querying?" now has one place to look.
+ */
+function openAccountSheet() {
+  const others = (me.memberships || []).filter((id) => id !== me.tenant.id);
+  const source = sourceLine();
+  openSheet(`
+    <h3>${esc(me.user.email || '')}</h3>
+    <p class="muted small">
+      <span class="chip ${me.is_admin ? 'admin' : ''}">${esc(
+        me.is_platform_admin ? t('account.platformAdmin') : (me.user.role || '')
+      )}</span>
+      ${t('ws.youAreIn')} <strong>${esc(me.tenant.name || me.tenant.id)}</strong>.
+    </p>
+    ${source ? `<p class="muted small" dir="auto">${esc(source)}</p>` : ''}
+    ${dataSources.length > 1 ? `
+      <label for="db-pick">${t('ask.database')}</label>
+      <select id="db-pick" data-i18n-attr="title:ask.databaseTitle"></select>` : ''}
+    ${planLine ? `<p class="small" style="${planNearLimit ? 'color:var(--warn)' : ''}">
+      ${esc(planLine)}${planExpired ? ` — ${t('plan.expiredNote')}` : ''}
+    </p>` : ''}
+    <div class="roster" style="margin-top:10px">
+      <button id="acct-account">${t('nav.account')}</button>
+      ${me.is_admin ? `<button id="acct-console">${t('nav.console')}</button>` : ''}
+    </div>
+    ${others.length ? `
+      <label style="margin-top:12px">${t('ws.switchTo')}</label>
+      <div class="roster">
+        ${others.map((id) => `<button data-tenant="${esc(id)}">${esc(id)}</button>`).join('')}
+      </div>` : ''}
+    <div class="actions">
+      <button class="btn danger" id="ws-signout">${t('header.signOut')}</button>
+      <button class="btn" data-close>${t('common.close')}</button>
+    </div>`, { label: t('account.openMenu') });
+
+  paintDataSources();
+  const picker = $('db-pick');
+  if (picker) {
+    picker.onchange = (event) => {
+      switchDataSource(event.target.value);
+      closeSheet();
+    };
   }
+  $('acct-account').onclick = () => { closeSheet(); switchView('account'); };
+  const console_ = $('acct-console');
+  if (console_) console_.onclick = () => { window.location.href = '/admin/'; };
+  $('sheet').querySelectorAll('[data-tenant]').forEach((button) => {
+    button.onclick = () => switchWorkspace(button.dataset.tenant);
+  });
+  $('ws-signout').onclick = signOut;
 }
 
 /** Fill the database picker, or hide it when there is nothing to choose. */
 function paintDataSources() {
   const pick = $('db-pick');
+  // Absent unless the account sheet is open. Everything else about a data source
+  // -- the header it travels in, the runtime it resolves to -- is unchanged; this
+  // is only where the choice is made.
   if (!pick) return;
 
   if (dataSources.length < 2) {
@@ -656,32 +736,31 @@ async function loadUsage() {
   try {
     const usage = await api('/api/vanna/v2/usage');
     if (!usage.enabled) return;
-    const note = $('usage-note');
-    const near = usage.used >= usage.limit * 0.8;
+    // Held rather than painted: the rail shows who you are, and the plan lives
+    // one click away with the rest of the session's facts.
     const label = usage.plan_label || '';
-    // The plan belongs next to the number: "184 / 200" prompts "says who?", and
-    // the answer is one word away.
-    note.textContent = label
-      ? `${label} · ${usage.used} / ${usage.limit} today`
-      : `${usage.used} / ${usage.limit} questions today`;
-    note.style.color = near ? 'var(--warn)' : '';
-    note.style.cursor = 'pointer';
-    note.title = usage.expired
-      ? 'This workspace\'s subscription has ended; free limits apply. Open Account for detail.'
-      : 'Counted across the whole workspace over the last 24 hours. Open Account for detail.';
-    note.onclick = () => switchView('account');
+    planLine = label
+      ? `${label} · ${usage.used} / ${usage.limit} ${t('plan.questionsToday')}`
+      : `${usage.used} / ${usage.limit} ${t('plan.questionsToday')}`;
+    planNearLimit = usage.used >= usage.limit * 0.8;
+    planExpired = !!usage.expired;
+    paintRailAccount();
   } catch (_) { /* usage is informational; never block the app on it */ }
 }
 
 async function loadStarters() {
   const box = $('starters');
   box.innerHTML = '';
-  if (!me.control_plane) return;
+  // The panel holds the starters *and* the admin tools, so it stays if either
+  // has something to show.
+  const show = () => {
+    $('ask-side').hidden = !box.children.length && $('ask-tools').hidden;
+  };
+  if (!me.control_plane) return show();
 
   try {
     const { starters } = await api('/api/vanna/v2/starters');
-    if (!starters.length) return;
-    box.innerHTML = '<span class="lead">Try:</span>' + starters.map((s) => (
+    box.innerHTML = starters.map((s) => (
       `<button class="starter" data-q="${esc(s.question)}">${esc(s.question)}</button>`
     )).join('');
     box.querySelectorAll('.starter').forEach((button) => {
@@ -690,6 +769,7 @@ async function loadStarters() {
   } catch (_) {
     // Starters are a convenience; their absence is not worth an error banner.
   }
+  show();
 }
 
 // -------------------------------------------------------------- schema ---
@@ -2194,15 +2274,31 @@ async function openDashboard(summary) {
   const tiles = (summary.document?.tiles) || [];
   const byId = Object.fromEntries(payload.results.map((r) => [r.tile_id, r]));
 
-  const body = tiles.map((tile) => {
+  // Laid out on the 12-column grid each tile has always carried and nothing has
+  // ever read: `grid: {x, y, width, height}` was stored, exported, and then
+  // rendered as one column of stacked cards, so a dashboard built as four
+  // metrics across and two charts side by side arrived as eight full-width
+  // blocks in a modal. Ordering by (y, x) keeps rows intact when a tile's span
+  // does not divide evenly.
+  const laidOut = tiles.slice().sort((left, right) => {
+    const a = left.grid || {}, b = right.grid || {};
+    return (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0);
+  });
+
+  const body = laidOut.map((tile) => {
     const result = byId[tile.id] || {};
+    // The span goes on the card as an inline custom property rather than a class:
+    // a width is a number from the document, and twelve classes to express
+    // twelve numbers is worse than the number.
+    const span = `style="--span:${Math.min(Math.max(tile.grid?.width || 6, 1), 12)}"`;
+
     if (tile.kind === 'text') {
-      return `<div class="card"><strong>${esc(tile.title || '')}</strong>
-                <p class="muted small">${esc(tile.text || '')}</p></div>`;
+      return `<div class="card tile" ${span}><strong>${esc(tile.title || '')}</strong>
+                ${headings(tile.text || '')}</div>`;
     }
     if (result.error) {
       // Per tile, so one broken query leaves the rest of the page readable.
-      return `<div class="card"><strong>${esc(tile.title || 'Untitled')}</strong>
+      return `<div class="card tile" ${span}><strong>${esc(tile.title || 'Untitled')}</strong>
                 <div class="small" style="color:var(--bad);margin-top:6px">
                   ${esc(result.error)}</div></div>`;
     }
@@ -2217,7 +2313,7 @@ async function openDashboard(summary) {
       // own rendering rather than a one-row table.
       const value = rows.length && rows[0].length ? rows[0][rows[0].length - 1] : '--';
       return `
-        <div class="card">
+        <div class="card tile" ${span}>
           <div class="muted small">${esc(tile.title || '')}</div>
           <div style="font-size:2.1rem;font-weight:650;margin-top:4px">${esc(value)}</div>
           ${caveats}
@@ -2227,16 +2323,18 @@ async function openDashboard(summary) {
     if (tile.kind === 'chart') {
       // Rendered after insertion: <plotly-chart> takes its data as properties,
       // which cannot be expressed in an HTML string.
+      const height = Math.max(180, (tile.grid?.height || 5) * 52);
       return `
-        <div class="card">
+        <div class="card tile" ${span}>
           <strong>${esc(tile.title || 'Untitled')}</strong>
           ${caveats}
-          <div class="tile-chart" data-tile="${esc(tile.id)}" style="height:300px;margin-top:10px"></div>
+          <div class="tile-chart" data-tile="${esc(tile.id)}"
+               style="height:${height}px;margin-top:10px"></div>
         </div>`;
     }
 
     return `
-      <div class="card">
+      <div class="card tile" ${span}>
         <strong>${esc(tile.title || 'Untitled')}</strong>
         ${caveats}
         <div class="scroll-x" style="margin-top:10px">
@@ -2252,12 +2350,14 @@ async function openDashboard(summary) {
       </div>`;
   }).join('');
 
-  openSheet(`<h3>${esc(summary.title)}</h3>${body || `<div class="empty">${t('dash.noTiles')}</div>`}
+  openSheet(`<h3>${esc(summary.title)}</h3>
+    <div class="tile-grid">${body || `<div class="empty">${t('dash.noTiles')}</div>`}</div>
     <div class="actions">
       <button class="btn" id="dash-export">${t('dash.export')}</button>
       <button class="btn" data-close>${t('common.close')}</button>
     </div>
-    <p class="muted small">${t('dash.exportHint')}</p>`);
+    <p class="muted small">${t('dash.exportHint')}</p>`,
+    { label: summary.title, wide: true });
 
   // The server re-runs the tiles as this user and streams back a file; the
   // browser never assembles the document, so what is downloaded is exactly what
@@ -2295,10 +2395,30 @@ async function openDashboard(summary) {
 
   // Charts are mounted after the sheet exists, because <plotly-chart> receives
   // its series as element properties rather than attributes.
-  tiles.filter((tile) => tile.kind === 'chart').forEach((tile) => {
+  laidOut.filter((tile) => tile.kind === 'chart').forEach((tile) => {
     const mount = $('sheet').querySelector(`.tile-chart[data-tile="${CSS.escape(tile.id)}"]`);
     if (mount) mountChart(mount, tile, byId[tile.id] || {});
   });
+}
+
+/**
+ * The little of markdown a text tile actually uses: headings and paragraphs.
+ *
+ * `TileKind.TEXT` is documented as markdown and was rendered with `esc()` alone,
+ * so a section heading arrived on screen as a literal `## Catalogue performance`
+ * -- the syntax, not the effect. Deliberately not a markdown parser: every line
+ * is escaped first and only the leading hashes are interpreted, so there is no
+ * path from a stored tile to markup.
+ */
+function headings(text) {
+  return text.split(/\n{2,}|\n(?=#)/).map((block) => {
+    const line = block.trim();
+    if (!line) return '';
+    const hashes = /^(#{1,6})\s+(.*)$/s.exec(line);
+    if (!hashes) return `<p class="muted small">${esc(line)}</p>`;
+    const level = Math.min(hashes[1].length + 2, 6);
+    return `<h${level} style="margin:6px 0 2px;font-size:.95rem">${esc(hashes[2])}</h${level}>`;
+  }).join('');
 }
 
 /** Turn a tile's rows into a Plotly chart, honouring its ChartSpec.
@@ -2323,6 +2443,24 @@ function mountChart(mount, tile, result) {
   const x = rows.map((row) => row[column(xName)]);
   const type = spec.type || 'bar';
 
+  // `heatmap` has been in `ChartType` since the spec was written and had no
+  // branch here, so a tile asking for one silently got a bar chart -- the one
+  // failure mode a chart must not have, because it looks like an answer.
+  if (type === 'heatmap') {
+    const yName = series[0];
+    const valueName = series[1] || series[0];
+    const xs = [...new Set(rows.map((row) => row[column(xName)]))];
+    const ys = [...new Set(rows.map((row) => row[column(yName)]))];
+    const grid = ys.map((yValue) => xs.map((xValue) => {
+      const hit = rows.find(
+        (row) => row[column(xName)] === xValue && row[column(yName)] === yValue
+      );
+      return hit ? Number(hit[column(valueName)]) : null;
+    }));
+    return plot(mount, [{ type: 'heatmap', x: xs, y: ys, z: grid, colorscale: 'Blues' }],
+                { xName, yName: spec.y_label || yName, spec, series: [] });
+  }
+
   const traces = series.map((name) => {
     const y = rows.map((row) => row[column(name)]);
     if (type === 'pie') return { type: 'pie', labels: x, values: y, name };
@@ -2334,19 +2472,40 @@ function mountChart(mount, tile, result) {
     return { type: 'bar', x, y, name };
   });
 
+  return plot(mount, traces, { xName, yName: series.length === 1 ? series[0] : '',
+                              spec, series });
+}
+
+/** Hand a set of traces to `<plotly-chart>`, themed like the rest of the page. */
+function plot(mount, traces, { xName, yName, spec, series }) {
+  // `<plotly-chart>` sizes to `layout.height` and falls back to 400px, with a
+  // `min-height: 400px` under it -- so a chart in a tile shorter than that grew
+  // out of its card and drew over the tile beneath. The tile owns the height
+  // here, so the tile passes it in.
+  const boxed = Math.round(mount.getBoundingClientRect().height) || 300;
+  // A pie carries its own labels; axis titles on one are noise.
+  const circular = traces.some((trace) => trace.type === 'pie');
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const element = document.createElement('plotly-chart');
   element.data = traces;
-  element.layout = {
-    margin: { t: 10, r: 10, b: 40, l: 50 },
+  const layout = {
+    height: boxed,
+    margin: { t: 10, r: 10, b: 40, l: 56 },
     barmode: spec.stacked ? 'stack' : 'group',
-    showlegend: series.length > 1,
-    xaxis: { title: spec.x_label || xName },
-    yaxis: { title: spec.y_label || (series.length === 1 ? series[0] : '') },
+    showlegend: series.length > 1 || circular,
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     font: { color: dark ? '#e5e7eb' : '#0f172a' },
   };
+  // Omitted, not set to `undefined`: Plotly's `cleanLayout` walks whatever axis
+  // keys are present and dereferences them, so an explicit `xaxis: undefined`
+  // throws before anything is drawn -- every pie tile rendered as an empty box
+  // with a console error behind it.
+  if (!circular) {
+    layout.xaxis = { title: spec.x_label || xName };
+    layout.yaxis = { title: spec.y_label || yName };
+  }
+  element.layout = layout;
   element.style.height = '100%';
   mount.innerHTML = '';
   mount.appendChild(element);
@@ -2456,7 +2615,7 @@ function downloadCsv(result) {
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
-  link.download = `vanna-${Date.now()}.csv`;
+  link.download = `datalens-${Date.now()}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -2474,9 +2633,12 @@ let releaseTrap = null;
  * document. `trapFocus` fixes both halves -- it keeps Tab inside and restores focus
  * to whatever opened it.
  */
-function openSheet(html, { label = '' } = {}) {
+function openSheet(html, { label = '', wide = false } = {}) {
   const sheet = $('sheet');
   sheet.innerHTML = html;
+  // A dashboard is a grid of tiles; at the default reading width its twelve
+  // columns are a few pixels each and every chart is a smear.
+  sheet.classList.toggle('wide', wide);
   $('overlay').classList.add('on');
   $('overlay').removeAttribute('aria-hidden');
   if (label) sheet.setAttribute('aria-label', label);
@@ -2494,6 +2656,7 @@ function closeSheet() {
   $('overlay').classList.remove('on');
   $('overlay').setAttribute('aria-hidden', 'true');
   $('sheet').innerHTML = '';
+  $('sheet').classList.remove('wide');
   if (releaseTrap) {
     releaseTrap();
     releaseTrap = null;
@@ -2502,33 +2665,6 @@ function closeSheet() {
 
 // ---------------------------------------------------- workspace switch ---
 
-function openWorkspaceSheet() {
-  const others = (me.memberships || []).filter((id) => id !== me.tenant.id);
-  openSheet(`
-    <h3>${t('ws.title')}</h3>
-    <p class="muted small">${t('ws.youAreIn')} <strong>${esc(me.tenant.name)}</strong>${
-      me.tenant.data_source ? `, ${t('ws.querying')} <span class="mono" dir="ltr">${esc(me.tenant.data_source)}</span>` : ''
-    }.</p>
-    ${others.length ? `
-      <label>${t('ws.switchTo')}</label>
-      <div class="roster">
-        ${others.map((id) => `<button data-tenant="${esc(id)}">${esc(id)}</button>`).join('')}
-      </div>`
-    : `<p class="muted small">${t('ws.only')}</p>`}
-    <div class="actions">
-      <button class="btn danger" id="ws-signout">${t('header.signOut')}</button>
-      <button class="btn" data-close>${t('common.close')}</button>
-    </div>`);
-
-  $('sheet').querySelectorAll('[data-tenant]').forEach((button) => {
-    button.onclick = async () => {
-      // No re-authentication: the session already covers every workspace this
-      // account belongs to.
-      switchWorkspace(button.dataset.tenant);
-    };
-  });
-  $('ws-signout').onclick = signOut;
-}
 
 /**
  * Show only the sign-in options this deployment actually offers.
@@ -2672,9 +2808,7 @@ async function boot() {
   // a listener per paint, which console.js documents the hard way.
   roveFocus($('thread-list'), '.thread [data-open]');
   $('preview-prompt').onclick = previewPrompt;
-  $('db-pick').onchange = (event) => switchDataSource(event.target.value);
-  $('tenant-pill').onclick = openWorkspaceSheet;
-  $('user-pill').onclick   = openWorkspaceSheet;
+  $('rail-account').onclick = openAccountSheet;
   // Escape is handled by the dialog's own focus trap; a second global listener
   // would fire for every keypress on the page whether a dialog is open or not.
   $('overlay').onclick = (event) => { if (event.target === $('overlay')) closeSheet(); };

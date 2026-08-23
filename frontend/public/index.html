@@ -5,10 +5,10 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/favicon.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Vanna — Ask your data</title>
+<title>DataLens — Ask your data</title>
 
 <!--
-  The Vanna workspace.
+  The DataLens workspace.
 
   Six screens over one API: Ask (the chat), Schema, History, Saved queries,
   Dashboards, and the identity and workspace controls that tie them to a workspace.
@@ -54,7 +54,7 @@
 <!-- ------------------------------------------------------------ sign in -->
 <div id="signin">
   <main class="panel">
-    <h1 data-i18n="signin.title">Sign in to Vanna</h1>
+    <h1 data-i18n="signin.title">Sign in to DataLens</h1>
     <p class="lede" data-i18n="signin.lede">Pick a workspace and identify yourself. Each
       workspace has its own database, its own members, and its own curated knowledge.</p>
 
@@ -112,22 +112,7 @@
         <line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.4" />
       </svg>
     </button>
-    <span class="brand"><span class="dot" aria-hidden="true"></span> Vanna</span>
-
-    <button class="pill" id="tenant-pill" type="button"
-            data-i18n-attr="title:header.switchWorkspace" title="Switch workspace"
-            aria-haspopup="dialog">
-      <span id="tenant-name">—</span>
-      <span class="sub" id="tenant-source"></span>
-    </button>
-
-    <!-- Which of the workspace's databases the next question is asked against.
-         Hidden unless there is a choice to make: a control with one option is
-         noise, and every workspace had exactly one database until recently. -->
-    <label class="sr-only" for="db-pick" data-i18n="ask.database">Database</label>
-    <select id="db-pick" class="locale-pick" hidden
-            data-i18n-attr="aria-label:ask.database,title:ask.databaseTitle"
-            aria-label="Database"></select>
+    <span class="brand"><span class="dot" aria-hidden="true"></span> DataLens</span>
 
     <span class="grow"></span>
 
@@ -137,12 +122,6 @@
             aria-label="Language"></select>
     <button class="btn" id="theme-btn" type="button" data-i18n="header.theme"
             data-i18n-attr="title:header.themeTitle" title="Toggle light/dark">Theme</button>
-    <button class="pill" id="user-pill" type="button"
-            data-i18n-attr="title:header.account" title="Account and workspace"
-            aria-haspopup="dialog">
-      <span id="user-email">—</span>
-      <span class="chip" id="user-role">user</span>
-    </button>
   </header>
 
   <div class="body">
@@ -239,10 +218,21 @@
       </div>
 
       <div class="spacer"></div>
-      <a class="note" id="console-link" href="/admin/" hidden
-        ><span data-i18n="nav.console">Admin console</span> <span class="arrow" aria-hidden="true">&rarr;</span></a>
-      <div class="note" id="usage-note"></div>
-      <div class="note" id="ds-note"></div>
+
+      <!-- One control at the foot of the rail, the way every product with a
+           sidebar ends it: who you are, and everything about this session behind
+           it. The three loose notes that used to sit here -- admin console, plan,
+           which database -- were unclickable text taking a quarter of the rail,
+           and the identity they described was in the far corner of the header. -->
+      <button class="rail-account" id="rail-account" type="button" aria-haspopup="dialog"
+              data-i18n-attr="title:account.openMenu,aria-label:account.openMenu"
+              title="Account, workspace and plan">
+        <span class="avatar" id="rail-avatar" aria-hidden="true">--</span>
+        <span class="who">
+          <span class="line" id="rail-email">&mdash;</span>
+          <span class="sub" id="rail-role"></span>
+        </span>
+      </button>
     </nav>
 
     <main id="main" class="flush" tabindex="-1">
@@ -250,14 +240,25 @@
            view switch; losing it would lose the conversation. -->
       <div id="view-ask" class="on" role="tabpanel"
            data-i18n-attr="aria-label:nav.ask" aria-label="Ask">
-        <div class="starters" id="starters"></div>
-        <div class="starters" id="ask-tools" hidden style="padding-top:6px">
-          <button class="starter" id="preview-prompt" type="button"
-                  data-i18n-attr="title:ask.previewTitle"
-                  title="What is the model actually told?"
-                  data-i18n="ask.preview">Preview context</button>
+        <!-- Two columns beside the conversation, not a strip above it. As a
+             horizontal row the starters pushed the chat down the page and wrapped
+             onto a second line the moment a question was long, while the width
+             either side of the card sat empty. A column also lets a question be a
+             sentence rather than something that has to fit in a pill. -->
+        <div class="ask-layout">
+          <aside class="ask-side" id="ask-side" hidden
+                 data-i18n-attr="aria-label:ask.tryLead" aria-label="Try asking">
+            <p class="rail-label" data-i18n="ask.tryLead">Try asking</p>
+            <div class="starters" id="starters"></div>
+            <div class="starters" id="ask-tools" hidden>
+              <button class="starter" id="preview-prompt" type="button"
+                      data-i18n-attr="title:ask.previewTitle"
+                      title="What is the model actually told?"
+                      data-i18n="ask.preview">Preview context</button>
+            </div>
+          </aside>
+          <div class="chat-wrap" id="chat-wrap"></div>
         </div>
-        <div class="chat-wrap" id="chat-wrap"></div>
       </div>
       <div id="view-other" role="tabpanel" hidden></div>
     </main>

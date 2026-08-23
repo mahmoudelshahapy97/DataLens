@@ -14,6 +14,31 @@ So both are checked, at the point each is meaningful: a cheap statement-kind
 check on the semantic SQL before compiling, then the full policy pass on the
 compiled SQL. The compiled statement replaces the tool's argument, which is what
 makes every downstream path -- chat, MCP, dashboards -- go through one seam.
+
+The half that was missing
+-------------------------
+The full pass on the compiled SQL asked *the semantic catalog* whether the tables
+existed -- and that catalog lists models, while compiled SQL names the physical
+tables underneath. So ``require_catalog_tables`` refused every compiled
+statement: ``FROM tracks`` becomes ``FROM chinook.track``, and ``chinook.track``
+is not a model. Every query in every workspace with a manifest was blocked, in
+the words that describe the opposite problem ("the table 'track' is not present
+in the schema catalog"). Dashboards were where it showed, because a dashboard
+runs six tiles at once and prints six copies of it.
+
+The allowlist for the compiled pass is therefore projected *through* the
+manifest: the tables a caller may touch are the ``table_reference`` of each model
+the caller may read, and the columns are those models' columns. Same principle as
+everywhere else on this path -- the allowlist comes from the same filtered view
+the planner was shown, never from a second, wider source.
+
+Which leaves the other direction. ``SELECT ... FROM chinook.track`` compiles to
+itself, because the compiler passes a table it does not recognise straight
+through -- so an allowlist of physical sources would happily admit hand-written
+physical SQL, and that skips the row-level rules and column drops the compiler
+injects while expanding a model. In a semantic workspace the physical tables are
+hidden on purpose, so naming one is refused before compiling: see
+``_reject_unmodelled``.
 """
 
 from __future__ import annotations
@@ -129,6 +154,11 @@ class SemanticSqlPolicyToolRegistry(SqlPolicyToolRegistry):
             if rejection is not None:
                 return rejection
 
+            # -- 1b. Refuse tables the manifest does not model ---------
+            rejection = self._reject_unmodelled(sql, manifest=manifest)
+            if rejection is not None:
+                return rejection
+
             # -- 2. Compile -------------------------------------------
             try:
                 compiled = self.compile_for(sql, user, context)
@@ -169,6 +199,130 @@ class SemanticSqlPolicyToolRegistry(SqlPolicyToolRegistry):
         return await super().transform_args(tool, args, user, context)
 
     # ------------------------------------------------------------------
+
+    def _reject_unmodelled(
+        self, sql: str, *, manifest: Manifest
+    ) -> Optional[ToolRejection]:
+        """Refuse a FROM over anything the manifest does not model.
+
+        The compiler leaves a table it does not recognise exactly as it found it,
+        so without this a caller could name the physical table behind a model and
+        get the rows with none of that model's row-level rules or column drops
+        applied -- the compiler only injects those while expanding a model.
+
+        CTEs declared inside the statement are not table references and are
+        skipped; they resolve within the query.
+        """
+        import sqlglot
+        from sqlglot import expressions as exp
+
+        try:
+            statements = [
+                s for s in sqlglot.parse(sql, read=self.dialect)
+                if s and not isinstance(s, exp.Semicolon)
+            ]
+        except Exception:
+            # The compiler reports parse errors, and its message names the
+            # position; duplicating that here would report it twice.
+            return None
+
+        known = {name.lower() for name in manifest.queryable_names}
+        known.update(cube.name.lower() for cube in manifest.cubes)
+
+        unmodelled: List[str] = []
+        for statement in statements:
+            local = {
+                cte.alias_or_name.lower()
+                for cte in statement.find_all(exp.CTE)
+                if cte.alias_or_name
+            }
+            for table in statement.find_all(exp.Table):
+                name = (table.name or "").lower()
+                if not name or name in local or name in known:
+                    continue
+                qualified = f"{table.db}.{table.name}" if table.db else table.name
+                if qualified.lower() in known:
+                    continue
+                unmodelled.append(qualified)
+
+        if not unmodelled:
+            return None
+
+        offenders = ", ".join(sorted(set(unmodelled))[:5])
+        return ToolRejection(
+            reason=(
+                f"This workspace is queried through its semantic models, and "
+                f"{offenders} is not one of them. Use the names the schema lists "
+                f"-- querying the physical table directly would skip the access "
+                f"rules its model carries."
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # The allowlists the compiled pass is checked against
+    # ------------------------------------------------------------------
+
+    async def _readable_models(self, context: ToolContext) -> List[Any]:
+        """The models this caller may read.
+
+        Read off the catalog rather than straight from the manifest: the catalog
+        in front of us is already narrowed to the caller by
+        ``GrantFilteredCatalog``, and asking the manifest instead would answer the
+        same question a second, wider way.
+        """
+        manifest = self.manifest
+        if manifest is None or self.catalog is None:
+            return []
+        try:
+            visible = await self.catalog.get_tables(
+                context, data_source_id=self.data_source_id
+            )
+        except Exception as exc:
+            # Same asymmetry as the rest of this path: a catalog outage must not
+            # widen the allowlist.
+            logger.error("Schema catalog unavailable during policy check: %s", exc)
+            return []
+        names = {str(t.table_name).lower() for t in visible}
+        return [m for m in manifest.models if m.name.lower() in names]
+
+    async def _catalog_table_names(self, context: ToolContext) -> Optional[List[str]]:
+        if self.manifest is None:
+            return await super()._catalog_table_names(context)
+
+        names: List[str] = []
+        for model in await self._readable_models(context):
+            reference = model.table_reference
+            if not reference:
+                # A `ref_sql` model has no table of its own: the compiler inlines
+                # the query, and whatever that selects from is checked on its own.
+                continue
+            names.append(reference)
+            names.append(reference.split(".")[-1])
+        return names
+
+    async def _catalog_columns(self, context: ToolContext) -> Optional[dict]:
+        if self.manifest is None:
+            return await super()._catalog_columns(context)
+
+        every_use = {"read", "filter", "aggregate"}
+        columns: dict = {}
+        for model in await self._readable_models(context):
+            reference = model.table_reference
+            if not reference:
+                continue
+            allowed = {
+                str(column.name).lower(): set(every_use)
+                for column in model.columns
+                if not column.is_relationship
+            }
+            # Qualified only. `_qualify_schema` reads a dotted key as nesting and
+            # drops a bare duplicate of it, but a *third* spelling -- the CTE the
+            # compiler names after the model -- is neither, and sqlglot infers one
+            # depth for the whole mapping: mixing them resolves nothing at all and
+            # every query fails as "column could not be resolved". The CTE needs no
+            # entry anyway; its columns come from its own SELECT.
+            columns[reference.lower()] = allowed
+        return columns
 
     def _reject_disallowed(
         self, sql: str, *, policy: SqlPolicy, tool_name: str

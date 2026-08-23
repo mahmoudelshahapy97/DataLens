@@ -1,5 +1,5 @@
 {
-  "signin.title": "تسجيل الدخول إلى Vanna",
+  "signin.title": "تسجيل الدخول إلى DataLens",
   "signin.lede": "اختر مساحة عمل وعرّف عن نفسك. لكل مساحة عمل قاعدة بياناتها وأعضاؤها ومعرفتها الخاصة.",
   "signin.workspace": "مساحة العمل",
   "signin.email": "بريدك الإلكتروني",
@@ -284,5 +284,10 @@
   "nav.expand": "إظهار المحادثات",
   "nav.collapsed": "تم إخفاء المحادثات",
   "nav.expanded": "تم إظهار المحادثات",
-  "thread.recents": "الأحدث"
+  "thread.recents": "الأحدث",
+  "account.openMenu": "الحساب ومساحة العمل والخطة",
+  "account.openMenuFor": "{email} — {role}. الحساب ومساحة العمل والخطة.",
+  "account.platformAdmin": "مسؤول المنصة",
+  "account.noControlPlane": "لا توجد لوحة تحكم — السجل والاستعلامات المحفوظة ومساحات العمل معطّلة.",
+  "ask.tryLead": "جرّب أن تسأل"
 }

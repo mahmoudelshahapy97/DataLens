@@ -1,4 +1,4 @@
-# Vanna — multi-tenant natural-language querying
+# DataLens — multi-tenant natural-language querying
 
 Ask a question in English or Arabic, get SQL, results, a chart and a summary — with
 each workspace bound to its own database, its own members, and its own curated
@@ -277,6 +277,51 @@ application and asserts, for every route that names a workspace, that a member o
 another workspace gets a 404 — the property the product is sold on, and the one
 there was previously no automated proof of.
 
+**Domain knowledge: three mechanisms, and which owns what**
+
+Getting this wrong is how a workspace ends up with two rules that contradict each
+other, so the ownership is worth stating plainly.
+
+| | lives in | scope | applied by |
+|---|---|---|---|
+| **Platform baseline** | `backend/instructions/baseline.yml` | every workspace, always | merged at read time; never copied into a tenant |
+| **Workspace rules** | `backend/domains/domains.yml` | one workspace | `make provision` |
+| **Starter library** | `backend/instructions/packs/*.yml` | opt-in, any workspace | `make enable-packs`, or the console |
+| **Starter questions** | `backend/domains/domains.yml` | one workspace | `make provision` |
+
+A **workspace rule** names real tables and columns — that is what earns it a place in
+`domains.yml`. A **pack** names none, which is what makes it reusable: `data-hygiene`
+and `banking-conventions` suit any schema, which is why they are offered rather than
+imposed. If a rule you are about to write names no table, it belongs in a pack.
+
+```bash
+make provision-list                       # what the file says, without applying it
+make provision                            # idempotent; run it twice, the second adds 0
+make enable-packs  E2E_PASSWORD=...       # one pack per workspace
+```
+
+Two sharp edges, both of which have already caused bugs here:
+
+**Provisioning cannot correct a rule.** It deduplicates on exact text, so *editing* a
+rule's wording adds a second rule and leaves the original live in every database
+already provisioned. Append new rules; to withdraw an old one, comment it out in the
+file *and* switch the stored row off — `make retire-wrong-rules` does exactly that for
+the eight rules that named columns their database does not have. Disabling rather than
+deleting is deliberate: the stored text is what the deduplication recognises, so a
+deleted row comes straight back on the next `provision`.
+
+**No pack may be enabled on two workspaces.** Copied pack rules are byte-identical
+wherever they land, and `tests/e2e/test_domains_in_browser.py` asserts that any text
+two workspaces share is a *platform* rule. A pack on both trips that test with a
+message about content, pointing nowhere near pack enablement. The mapping in
+`tools/enable_domain_packs.py` gives each pack one workspace and leaves `pagila` and
+`world` — the pair that test compares — with none.
+
+`tests/test_domain_content.py` enforces all of this offline, in about three seconds.
+It exists because a malformed pack is otherwise discovered as a container that will
+not boot: `InstructionLibrary.load()` runs during startup, and nothing else loaded the
+shipped files.
+
 **In a real browser**
 
 Everything above drives the application through ASGI, which verifies behaviour but
@@ -384,6 +429,9 @@ tools/                standalone scripts. Not imported by anything.
   seed_demo_data.py     fills a workspace with content, over the app's own API
   ask_demo_questions.py asks real questions through the chat, for real history
   export_qa.py          question/answer/query/database, as qa.json
+  enable_domain_packs.py  one starter-library pack per workspace
+  retire_wrong_rules.py   switches off rules naming columns that do not exist
+  prune_chinook_seed.py   removes content this repo used to push over the API
 ```
 
 **There is no package.** `backend/vanna/` and `backend/vanna_app/` are imported

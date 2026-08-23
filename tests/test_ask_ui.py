@@ -193,27 +193,42 @@ def open_app(server, browser, sources, *, remembered=None):
     return page, api, errors
 
 
+def open_settings(page):
+    """Open the account sheet, where the database picker now lives.
+
+    The header used to carry three pills -- workspace, database, identity --
+    restating facts that do not change between one question and the next. They are
+    all behind the account button at the foot of the rail now, so a test that wants
+    the picker has to open it, exactly as a person does.
+    """
+    page.click("#rail-account")
+    page.wait_for_selector("#overlay.on")
+
+
 class TestThePickerAppearsOnlyWhenThereIsAChoice:
-    def test_one_database_hides_it(self, server, browser):
+    def test_one_database_offers_no_picker(self, server, browser):
         """A control offering a single option is noise.
 
         Every workspace had exactly one database until recently, so this is still
         the common case and must look untouched.
         """
         page, _, errors = open_app(server, browser, ONE_DATABASE)
+        open_settings(page)
+        assert page.locator("#db-pick").count() == 0
         assert errors == []
-        assert page.locator("#db-pick").is_hidden()
         page.close()
 
     def test_two_databases_show_it(self, server, browser):
         page, _, errors = open_app(server, browser, TWO_DATABASES)
-        assert errors == []
+        open_settings(page)
         assert page.locator("#db-pick").is_visible()
         assert page.locator("#db-pick option").count() == 2
+        assert errors == []
         page.close()
 
     def test_the_default_is_selected(self, server, browser):
         page, _, _ = open_app(server, browser, TWO_DATABASES)
+        open_settings(page)
         assert page.locator("#db-pick").input_value() == "postgresql://wh/chinook"
         page.close()
 
@@ -221,6 +236,7 @@ class TestThePickerAppearsOnlyWhenThereIsAChoice:
         page, _, _ = open_app(
             server, browser, TWO_DATABASES, remembered="postgresql://wh/world"
         )
+        open_settings(page)
         assert page.locator("#db-pick").input_value() == "postgresql://wh/world"
         page.close()
 
@@ -236,6 +252,7 @@ class TestThePickerAppearsOnlyWhenThereIsAChoice:
         page, _, _ = open_app(
             server, browser, TWO_DATABASES, remembered="postgresql://wh/deleted"
         )
+        open_settings(page)
         assert page.locator("#db-pick").input_value() == "postgresql://wh/chinook"
         page.close()
 
@@ -245,6 +262,7 @@ class TestTheChoiceTravels:
         """A preference, not a credential -- but it has to arrive to be checked."""
         page, api, errors = open_app(server, browser, TWO_DATABASES)
 
+        open_settings(page)
         page.select_option("#db-pick", "postgresql://wh/world")
         page.wait_for_timeout(400)
 
@@ -253,22 +271,39 @@ class TestTheChoiceTravels:
         assert errors == []
         page.close()
 
+    def test_choosing_closes_the_sheet(self, server, browser):
+        """The choice is made and you are back where you were asking. Leaving the
+        sheet open over the answer would make the picker feel like a filter."""
+        page, _, _ = open_app(server, browser, TWO_DATABASES)
+
+        open_settings(page)
+        page.select_option("#db-pick", "postgresql://wh/world")
+        page.wait_for_selector("#overlay.on", state="hidden")
+        page.close()
+
     def test_the_choice_survives_a_reload(self, server, browser):
         page, _, _ = open_app(server, browser, TWO_DATABASES)
+        open_settings(page)
         page.select_option("#db-pick", "postgresql://wh/world")
         page.wait_for_timeout(300)
         page.reload()
         page.wait_for_selector("#app.ready", timeout=15_000)
 
+        open_settings(page)
         assert page.locator("#db-pick").input_value() == "postgresql://wh/world"
         page.close()
 
     def test_switching_says_which_database_is_now_in_use(self, server, browser):
+        """It used to say so in a note pinned to the rail, and before that in a
+        pill across the header. It is one of the facts behind the account button
+        now -- but it still has to be *somewhere* a person can read."""
         page, _, _ = open_app(server, browser, TWO_DATABASES)
+        open_settings(page)
         page.select_option("#db-pick", "postgresql://wh/world")
         page.wait_for_timeout(300)
 
-        assert "World statistics" in page.inner_text("#ds-note")
+        open_settings(page)
+        assert "World statistics" in page.inner_text("#sheet")
         page.close()
 
     def test_switching_starts_a_new_conversation(self, server, browser):
@@ -279,6 +314,7 @@ class TestTheChoiceTravels:
         """
         page, _, _ = open_app(server, browser, TWO_DATABASES)
         before = page.evaluate("window.__vannaThreads || 0")
+        open_settings(page)
         page.select_option("#db-pick", "postgresql://wh/world")
         page.wait_for_timeout(300)
 

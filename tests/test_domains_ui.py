@@ -22,6 +22,8 @@ import pytest
 
 pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
 
+from test_ask_ui import browser  # noqa: E402,F401 - module-scoped browser fixture
+
 PUBLIC = Path(__file__).resolve().parents[1] / "frontend" / "public"
 
 ROUTES = {
@@ -175,11 +177,14 @@ def a_domain(identifier="1", *, name="Sales", tables=(), terminology=None, enabl
     }
 
 
-def open_domains(server, api):
-    from playwright.sync_api import sync_playwright
+def open_domains(server, browser, api):
+    """One browser for the file, a page per test.
 
-    playwright = sync_playwright().start()
-    browser = playwright.chromium.launch()
+    This used to start its own Playwright and launch Chromium per test. That is a
+    fresh browser process for every assertion, and under a full-suite run one of
+    those launches eventually loses the race -- which is exactly how it failed:
+    a Playwright transport error, in a test that passes every time in isolation.
+    """
     page = browser.new_page(viewport={"width": 1400, "height": 1200})
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -189,19 +194,14 @@ def open_domains(server, api):
     page.wait_for_selector("#tabs button")
     page.click('#tabs button[data-tab="domains"]')
     page.wait_for_selector("#dom-new")
-
-    def close():
-        browser.close()
-        playwright.stop()
-
-    return page, errors, close
+    return page, errors, page.close
 
 
 class TestTheTabExists:
-    def test_it_lists_the_workspaces_domains(self, server):
+    def test_it_lists_the_workspaces_domains(self, server, browser):
         api = Api([a_domain(name="Sales", tables=["public.invoices"]),
                    a_domain("2", name="Support")])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             body = page.locator("#content").inner_text()
             assert "Sales" in body and "Support" in body
@@ -209,18 +209,18 @@ class TestTheTabExists:
         finally:
             close()
 
-    def test_it_says_membership_is_not_an_access_control(self, server):
+    def test_it_says_membership_is_not_an_access_control(self, server, browser):
         """A screen listing tables per group invites the other reading, and the
         store's own docstring is emphatic that this steers retrieval only."""
-        page, errors, close = open_domains(server, Api([a_domain()]))
+        page, errors, close = open_domains(server, browser, Api([a_domain()]))
         try:
             assert "not an access control" in page.locator(".banner").inner_text()
             assert errors == []
         finally:
             close()
 
-    def test_an_empty_workspace_says_what_to_do(self, server):
-        page, errors, close = open_domains(server, Api([]))
+    def test_an_empty_workspace_says_what_to_do(self, server, browser):
+        page, errors, close = open_domains(server, browser, Api([]))
         try:
             assert "No domains yet" in page.locator("#content").inner_text()
             assert errors == []
@@ -229,9 +229,9 @@ class TestTheTabExists:
 
 
 class TestCreatingAndEditing:
-    def test_a_new_domain_posts_name_description_and_terms(self, server):
+    def test_a_new_domain_posts_name_description_and_terms(self, server, browser):
         api = Api([])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click("#dom-new")
             page.wait_for_selector("#dom-name")
@@ -252,10 +252,10 @@ class TestCreatingAndEditing:
         finally:
             close()
 
-    def test_a_half_filled_term_is_dropped_rather_than_stored_blank(self, server):
+    def test_a_half_filled_term_is_dropped_rather_than_stored_blank(self, server, browser):
         """A term with no meaning reaches the prompt as noise."""
         api = Api([])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click("#dom-new")
             page.wait_for_selector("#dom-name")
@@ -272,9 +272,9 @@ class TestCreatingAndEditing:
         finally:
             close()
 
-    def test_editing_prefills_and_patches(self, server):
+    def test_editing_prefills_and_patches(self, server, browser):
         api = Api([a_domain(terminology={"churn": "no order in 90 days"})])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click('[data-dom-edit="0"]')
             page.wait_for_selector("#dom-name")
@@ -293,9 +293,9 @@ class TestCreatingAndEditing:
         finally:
             close()
 
-    def test_a_domain_without_a_name_is_not_sent(self, server):
+    def test_a_domain_without_a_name_is_not_sent(self, server, browser):
         api = Api([])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click("#dom-new")
             page.wait_for_selector("#dom-name")
@@ -306,9 +306,9 @@ class TestCreatingAndEditing:
         finally:
             close()
 
-    def test_enabling_and_disabling_is_one_click(self, server):
+    def test_enabling_and_disabling_is_one_click(self, server, browser):
         api = Api([a_domain(enabled=True)])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click('[data-dom-toggle="0"]')
             page.wait_for_function(
@@ -323,11 +323,11 @@ class TestCreatingAndEditing:
 
 
 class TestMembership:
-    def test_tables_come_from_the_catalog_not_a_text_box(self, server):
+    def test_tables_come_from_the_catalog_not_a_text_box(self, server, browser):
         """The backend refuses the whole call on one unknown table, so a typed
         list is a form that rejects itself with no hint which line was wrong."""
         api = Api([a_domain(tables=["public.invoices"])])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click('[data-dom-tables="0"]')
             page.wait_for_selector("#dom-table-list")
@@ -341,9 +341,9 @@ class TestMembership:
         finally:
             close()
 
-    def test_saving_membership_puts_the_whole_set(self, server):
+    def test_saving_membership_puts_the_whole_set(self, server, browser):
         api = Api([a_domain(tables=["public.invoices"])])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click('[data-dom-tables="0"]')
             page.wait_for_selector("#dom-table-list")
@@ -360,9 +360,9 @@ class TestMembership:
         finally:
             close()
 
-    def test_the_list_can_be_filtered(self, server):
+    def test_the_list_can_be_filtered(self, server, browser):
         api = Api([a_domain()])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click('[data-dom-tables="0"]')
             page.wait_for_selector("#dom-filter")
@@ -377,11 +377,11 @@ class TestMembership:
 
 
 class TestDeleting:
-    def test_it_asks_first_and_says_what_survives(self, server):
+    def test_it_asks_first_and_says_what_survives(self, server, browser):
         """``table_annotations.domain_id`` is ON DELETE SET NULL, so descriptions
         somebody wrote for these tables outlive the grouping."""
         api = Api([a_domain()])
-        page, errors, close = open_domains(server, api)
+        page, errors, close = open_domains(server, browser, api)
         try:
             page.click('[data-dom-del="0"]')
             page.wait_for_selector("#overlay.on")

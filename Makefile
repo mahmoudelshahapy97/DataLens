@@ -109,6 +109,32 @@ seed-questions:  ## Ask real questions through the chat, for real Q&A history (s
 		--tenant $(E2E_TENANT) --password $(E2E_PASSWORD)
 	@echo "Tip: E2E_TENANT=all asks every workspace. Budget an hour or two."
 
+.PHONY: provision
+provision:  ## Apply domains.yml -- workspace rules and starter questions (idempotent)
+	$(COMPOSE) exec backend python -m vanna_app.domains provision
+
+.PHONY: provision-list
+provision-list:  ## Show what domains.yml would provision, without applying it
+	$(COMPOSE) exec backend python -m vanna_app.domains list
+
+.PHONY: enable-packs
+enable-packs:  ## Opt each workspace into its starter-library pack
+	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
+	$(PYTHON) tools/enable_domain_packs.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+		--password $(E2E_PASSWORD)
+
+.PHONY: revoke-packs
+revoke-packs:  ## Remove those packs again, keeping any rule a workspace edited
+	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
+	$(PYTHON) tools/enable_domain_packs.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+		--password $(E2E_PASSWORD) --revoke
+
+.PHONY: retire-wrong-rules
+retire-wrong-rules:  ## Switch off the rules naming columns the databases do not have
+	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
+	$(PYTHON) tools/retire_wrong_rules.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+		--password $(E2E_PASSWORD)
+
 .PHONY: seed-writes
 seed-writes:  ## Ask the write bank (propose_write/confirm_write). Refused unless grants exist
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }

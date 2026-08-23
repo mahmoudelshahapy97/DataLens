@@ -790,7 +790,7 @@ export class VannaChat extends LitElement {
     `
   ];
 
-  @property() title = 'Vanna AI Chat';
+  @property() title = 'DataLens Chat';
   /**
    * Interface language. The host page owns this: the chat is one panel inside a
    * page that already has a language picker, and two independent language
