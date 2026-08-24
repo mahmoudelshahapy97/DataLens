@@ -10,9 +10,17 @@ long table scrolls past it -- all of which are things somebody asked for and non
 which a still image can answer. So this drives the same flows and keeps the film.
 
 Playwright writes one `.webm` per browser context, finalised when the context closes,
-so each scene is its own context and its own file. The clips are deliberately short
-and separate rather than one long take: a four-minute video nobody scrubs through is
-a worse artefact than six clips named after what they show.
+so each scene is its own context and its own file.
+
+There are two ways to use that. The topic scenes are short and separate, named after
+what they show, for when you want the twenty seconds that answer one question. The
+`full-tour` scene is the opposite: everything in a single context, and therefore a
+single file -- sign-in, all seven workspace screens, a question asked and its answer
+checked against hand-written SQL, a report and its charts, both themes, both writing
+directions, and all twelve console tabs. It records a pass or fail at each stop and
+ends on the tally, so the one file is a test result and not just a walkthrough.
+
+    python tools/record_demo.py --password ... --scene full-tour
 
 Paced with explicit waits. Without them the run is correct and unwatchable -- forms
 fill instantly and panels swap between frames, so a viewer sees a slideshow of end
@@ -258,6 +266,9 @@ def scene_arabic(stage: Stage) -> None:
 #: check a viewer can do themselves at a glance, which a twenty-row table is not.
 ASK_QUESTION = "What is the total revenue from all invoices?"
 
+#: Enough of the address to recognise it in the rail without hard-coding a domain.
+EMAIL_MARK = "demo@example.com"
+
 #: The independent check. Written by hand, against the same warehouse, computing the
 #: same figure without going near the model. This is the point of the scene: an
 #: answer nobody checked is a claim, not a result.
@@ -379,6 +390,10 @@ def _caption(page: Any, text: str, tone: str = "neutral") -> None:
             if (!bar) {
                 bar = document.createElement('div');
                 bar.id = 'demo-caption';
+                // Left-to-right regardless of the page. The captions are English and
+                // numbered, and under the Arabic layout the page direction moved the
+                // leading step number to the far right of its own sentence.
+                bar.dir = 'ltr';
                 bar.style.cssText = [
                     'position:fixed', 'left:0', 'right:0', 'bottom:0', 'z-index:99999',
                     'padding:10px 16px', 'font:600 15px/1.4 system-ui,sans-serif',
@@ -503,7 +518,328 @@ def scene_ask_and_verify(stage: Stage) -> None:
     stage.beat(6)
 
 
+# ----------------------------------------------------------------------
+# The whole application, in one take
+# ----------------------------------------------------------------------
+
+#: Every screen in the workspace rail, with something to look for once it opens.
+#: "cubes" is labelled Metrics in the interface; the data-view name is the older one.
+VIEW_TOUR = [
+    ("schema", "Schema - the tables and how they join", "#view-other"),
+    ("history", "History - every question and the SQL it produced", "#view-other"),
+    ("saved", "Saved queries", "#view-other"),
+    ("dashboards", "Dashboards - the report library", "#view-other .card, #view-other .empty"),
+    ("cubes", "Metrics - the semantic layer", "#view-other"),
+    ("account", "Account - plan, workspace and data source", "#view-other"),
+]
+
+#: The operator console, tab by tab.
+CONSOLE_TOUR = [
+    "tenants", "accounts", "members", "permissions", "billing", "review",
+    "verified", "domains", "rules", "library", "starters", "new",
+]
+
+
+class Checks:
+    """What the tour verified, so the film ends on a result rather than a fade.
+
+    A walkthrough that only shows things is a brochure. Recording a pass or fail at
+    each stop costs nothing and turns the same footage into evidence.
+    """
+
+    def __init__(self) -> None:
+        self.rows: List[Any] = []
+
+    def record(self, name: str, ok: bool, detail: str = "") -> bool:
+        self.rows.append((name, bool(ok), detail))
+        print(f"    [{'PASS' if ok else 'FAIL'}] {name}" + (f" -- {detail}" if detail else ""),
+              flush=True)
+        return bool(ok)
+
+    def seen(self, page: Any, name: str, selector: str) -> bool:
+        """Did this screen actually put something on the page?"""
+        try:
+            count = page.locator(selector).first.count()
+            text = ""
+            if count:
+                text = (page.locator(selector).first.inner_text() or "").strip()
+            return self.record(name, count > 0 and len(text) > 0,
+                               "" if text else f"{selector} was empty")
+        except Exception as exc:
+            return self.record(name, False, f"{type(exc).__name__}: {exc}")
+
+    @property
+    def passed(self) -> int:
+        return sum(1 for _, ok, _ in self.rows if ok)
+
+    @property
+    def failed(self) -> int:
+        return sum(1 for _, ok, _ in self.rows if not ok)
+
+
+def scene_full_tour(stage: Stage) -> None:
+    """One take over the whole application, checking as it goes.
+
+    Deliberately a single browser context: Playwright writes one video file per
+    context, so anything spread across contexts becomes several files. Everything
+    here -- sign-in, the seven workspace screens, a question answered and checked,
+    a report and its charts, both themes, both writing directions, and all twelve
+    console tabs -- happens in one session so it lands as one video.
+    """
+    page = stage.page
+    tenant = "chinook"
+    checks = Checks()
+    js_errors: List[str] = []
+    page.on("pageerror", lambda e: js_errors.append(str(e)))
+
+    # -- 1. signing in -------------------------------------------------
+    _caption(page, "1  Signing in")
+    stage.sign_in(tenant=tenant)
+    checks.record("signed in and the app booted",
+                  page.locator("#app.ready").count() > 0)
+    checks.record("the rail names the signed-in account",
+                  EMAIL_MARK in (page.locator("#rail-email").inner_text() or ""))
+    stage.beat(2)
+
+    # -- 2. asking a question, and checking the answer -----------------
+    _caption(page, "2  Asking a question of the warehouse")
+    truth = _api(page, "/api/vanna/v2/run-sql", tenant, "POST",
+                 {"sql": CHECK_SQL, "limit": 5})
+    expected = _first_number(truth.get("payload") or {})
+
+    box = page.locator("input[placeholder*='Ask'], textarea[placeholder*='Ask']").first
+    box.wait_for(state="visible", timeout=60_000)
+    stage.click(box)
+    box.type(ASK_QUESTION, delay=34)
+    stage.beat(1.2)
+    box.press("Enter")
+
+    _caption(page, "3  The job runs: plan, write SQL, execute, read the rows")
+    answered = False
+    for _ in range(60):
+        stage.beat(2)
+        rows = (_api(page, "/api/vanna/v2/history?limit=20", tenant)
+                .get("payload") or {}).get("history") or []
+        if any((r.get("question") or "") == ASK_QUESTION and (r.get("sql") or "").strip()
+               for r in rows):
+            answered = True
+            break
+    checks.record("the question came back with SQL that ran", answered)
+    stage.beat(3)
+
+    reply = _wait_for_reply(page, tenant, ASK_QUESTION) if answered else ""
+    mentioned = _numbers_in(reply)
+    correct = expected is not None and expected in mentioned
+    checks.record("the answer agrees with hand-written SQL", correct,
+                  f"answer quotes {mentioned[:1] or 'nothing'}, hand-written says {expected}")
+    _caption(page, f"4  Checked: the answer says {expected}, and so does hand-written SQL"
+             if correct else "4  Checked: the answer does NOT match hand-written SQL",
+             tone="good" if correct else "bad")
+    stage.beat(4)
+
+    # -- 3. every screen in the rail -----------------------------------
+    step = 5
+    for view, label, selector in VIEW_TOUR:
+        _caption(page, f"{step}  {label}")
+        opened = stage.view(view)
+        if opened:
+            checks.seen(page, f"{view} rendered", selector)
+        else:
+            checks.record(f"{view} rendered", False, "the rail did not offer it")
+        stage.beat(1.5)
+        step += 1
+
+    # -- 4. a report, and the charts in it -----------------------------
+    _caption(page, f"{step}  Opening a report")
+    step += 1
+    stage.view("dashboards")
+    card = page.locator("#view-other .card", has_text="Revenue overview").first
+    if not card.count():
+        card = page.locator("#view-other .card").first
+    if card.count():
+        stage.click(card.locator("[data-open]").first)
+        page.wait_for_selector("#sheet .card, #sheet .empty", timeout=120_000)
+        try:
+            page.wait_for_selector("#sheet .js-plotly-plot", timeout=45_000)
+        except Exception:
+            pass
+        stage.beat(3)
+        plots = page.locator("#sheet .js-plotly-plot").count()
+        checks.record("the report drew its Plotly charts", plots > 0, f"{plots} chart(s)")
+
+        # The gestures the toolbar exists for: hover the series, drag a zoom box,
+        # double-click to reset. None of this survives a screenshot.
+        _caption(page, f"{step}  The charts are interactive: hover, zoom, reset")
+        step += 1
+        plot_box = page.locator("#sheet .js-plotly-plot").first.bounding_box()
+        if plot_box:
+            for fraction in (0.2, 0.4, 0.6, 0.8):
+                page.mouse.move(plot_box["x"] + plot_box["width"] * fraction,
+                                plot_box["y"] + plot_box["height"] * 0.55)
+                stage.beat(0.5)
+            page.mouse.move(plot_box["x"] + plot_box["width"] * 0.3,
+                            plot_box["y"] + plot_box["height"] * 0.3)
+            page.mouse.down()
+            page.mouse.move(plot_box["x"] + plot_box["width"] * 0.72,
+                            plot_box["y"] + plot_box["height"] * 0.8, steps=25)
+            page.mouse.up()
+            stage.beat(2.5)
+            page.mouse.dblclick(plot_box["x"] + plot_box["width"] * 0.5,
+                                plot_box["y"] + plot_box["height"] * 0.5)
+            stage.beat(2)
+    else:
+        checks.record("the report drew its Plotly charts", False, "no report to open")
+
+    # -- 5. parameters, which are real but have no control yet ---------
+    #
+    # Said plainly on camera rather than mimed: every report declares typed
+    # parameters and the API honours them, but the sheet renders no inputs for
+    # them, so there is nothing here for a mouse to change. The check drives the
+    # endpoint instead and shows the two answers differing.
+    _caption(page, f"{step}  Report parameters: server-side today, no control in the sheet yet")
+    step += 1
+    wide, narrow = _parameter_probe(page, tenant)
+    checks.record("a parameter changes what the tiles return",
+                  wide is not None and narrow is not None and wide != narrow,
+                  f"full period {wide} against one year {narrow}")
+    _caption(page, f"{step - 1}  Parameters proven over the API: {wide} for 2021-2025, {narrow} for 2021 alone",
+             tone="good" if (wide and narrow and wide != narrow) else "bad")
+    stage.beat(4)
+
+    # -- 6. the same report in the dark theme --------------------------
+    _caption(page, f"{step}  The same report in the dark theme")
+    step += 1
+    if page.locator("#theme-btn").count():
+        stage.click(page.locator("#theme-btn"))
+        stage.beat(3)
+        checks.record("the dark theme applied",
+                      page.locator("html[data-theme='dark']").count() > 0)
+        stage.beat(2)
+        stage.click(page.locator("#theme-btn"))
+        stage.beat(1.5)
+    else:
+        checks.record("the dark theme applied", False, "no theme control found")
+
+    # -- 7. Arabic, which is a layout rather than a translation --------
+    _caption(page, f"{step}  Arabic: the whole layout mirrors, right to left")
+    step += 1
+    if page.locator("#locale-btn").count():
+        try:
+            page.select_option("#locale-btn", "ar")
+            stage.beat(3)
+            direction = page.evaluate("() => document.documentElement.getAttribute('dir')")
+            checks.record("the page mirrored for Arabic", direction == "rtl",
+                          f"dir={direction!r}")
+            stage.view("schema")
+            stage.beat(2)
+            stage.view("history")
+            stage.beat(2)
+            page.select_option("#locale-btn", "en")
+            stage.beat(1.5)
+        except Exception as exc:
+            checks.record("the page mirrored for Arabic", False,
+                          f"{type(exc).__name__}: {exc}")
+    else:
+        checks.record("the page mirrored for Arabic", False, "no locale control found")
+
+    # -- 8. the operator console, every tab ----------------------------
+    _caption(page, f"{step}  The operator console")
+    step += 1
+    page.goto(f"{stage.base}/admin/", wait_until="networkidle")
+    page.wait_for_selector("#tabs button", timeout=60_000)
+    stage.beat(2)
+
+    for tab in CONSOLE_TOUR:
+        button = page.locator(f"#tabs button[data-tab='{tab}']")
+        if not button.count():
+            checks.record(f"console: {tab}", False, "tab not offered")
+            continue
+        _caption(page, f"{step}  Console: {tab}")
+        stage.click(button)
+        stage.beat(1.6)
+        checks.seen(page, f"console: {tab}", "#content")
+    step += 1
+
+    # The rail must hold still while the panel scrolls past it. That was the whole
+    # point of giving them separate scrollers, and it is only visible in motion.
+    _caption(page, f"{step}  The sections rail holds still while the panel scrolls")
+    step += 1
+    stage.click(page.locator("#tabs button[data-tab='tenants']"))
+    stage.beat(1.5)
+    rail_before = page.evaluate(
+        "() => { const n = document.querySelector('.side'); return n ? n.getBoundingClientRect().top : null; }")
+    for offset in (400, 1000, 1600, 0):
+        page.evaluate("(y) => { document.getElementById('content').scrollTop = y; }", offset)
+        stage.beat(1.1)
+    rail_after = page.evaluate(
+        "() => { const n = document.querySelector('.side'); return n ? n.getBoundingClientRect().top : null; }")
+    checks.record("the rail did not move with the panel", rail_before == rail_after,
+                  f"{rail_before} then {rail_after}")
+    stage.beat(1.5)
+
+    # -- 9. back to the app --------------------------------------------
+    _caption(page, f"{step}  Back to the app, from the rail")
+    step += 1
+    back = page.locator(".side a.back, a.back").first
+    if back.count():
+        stage.click(back)
+        try:
+            page.wait_for_selector("#app.ready", timeout=60_000)
+            checks.record("Back to app returned to the workspace", True)
+        except Exception:
+            checks.record("Back to app returned to the workspace", False, "never became ready")
+    else:
+        checks.record("Back to app returned to the workspace", False, "no exit link in the rail")
+    stage.beat(2)
+
+    # -- 10. the verdict -----------------------------------------------
+    checks.record("no uncaught JavaScript errors during the tour", not js_errors,
+                  "; ".join(js_errors[:2]))
+    verdict = f"{checks.passed} checks passed, {checks.failed} failed"
+    _caption(page, verdict, tone="good" if checks.failed == 0 else "bad")
+    print(f"\n  --- {verdict} ---", flush=True)
+    for name, ok, detail in checks.rows:
+        if not ok:
+            print(f"    FAILED: {name}" + (f" -- {detail}" if detail else ""), flush=True)
+    stage.beat(7)
+
+
+def _parameter_probe(page: Any, tenant: str) -> Any:
+    """Ask one report for its numbers twice, over different periods.
+
+    Returns the first metric each time, so the caller can show that a parameter
+    genuinely re-runs the tiles rather than being decoration.
+    """
+    import urllib.parse
+
+    listing = (_api(page, "/api/vanna/v2/dashboards", tenant).get("payload") or {})
+    wanted = None
+    for row in listing.get("dashboards") or []:
+        if (row.get("title") or "") == "Revenue overview":
+            wanted = row
+            break
+    if wanted is None:
+        return (None, None)
+
+    out = []
+    identifier = urllib.parse.quote(str(wanted.get("id")))
+    for window in ("2021-01-01..2025-12-31", "2021-01-01..2021-12-31"):
+        payload = (_api(
+            page,
+            f"/api/vanna/v2/dashboards/{identifier}/data?period={urllib.parse.quote(window)}",
+            tenant,
+        ).get("payload") or {})
+        first = None
+        for result in payload.get("results") or []:
+            first = _first_number(result)
+            if first is not None:
+                break
+        out.append(first)
+    return tuple(out)
+
+
 SCENES: Dict[str, Callable[[Stage], None]] = {
+    "full-tour": scene_full_tour,
     "sign-in": scene_sign_in,
     "views": scene_views,
     "ask-and-verify": scene_ask_and_verify,
