@@ -243,8 +243,8 @@ class TestSignIn:
     @pytest.mark.skipif(not PASSWORD, reason="VANNA_E2E_PASSWORD is not set")
     def test_signing_in_reaches_the_workspace(self, page: Page):
         _sign_in(page)
-        expect(page.locator("#user-email")).to_contain_text(EMAIL)
-        expect(page.locator("#tenant-name")).not_to_have_text("—")
+        expect(page.locator("#rail-email")).to_contain_text(EMAIL)
+        expect(page.locator("#rail-role")).not_to_be_empty()
         assert not _errors, f"JavaScript errors after sign-in: {_errors}"
 
 
@@ -470,7 +470,7 @@ class TestAccessibility:
 
     def test_a_dialog_traps_focus_and_escape_closes_it(self, page: Page):
         _sign_in(page)
-        page.click("#tenant-pill")
+        page.click("#rail-account")
 
         sheet = page.locator("#sheet")
         expect(sheet).to_be_visible()
@@ -481,7 +481,7 @@ class TestAccessibility:
         page.keyboard.press("Escape")
         expect(page.locator("#overlay")).not_to_have_class(re.compile(r"\bon\b"))
         # And focus came back to what opened it.
-        assert page.evaluate("document.activeElement.id") == "tenant-pill"
+        assert page.evaluate("document.activeElement.id") == "rail-account"
 
     def test_every_interactive_control_has_an_accessible_name(self, page: Page):
         _sign_in(page)

@@ -19,6 +19,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..core.errors import ErrorPhase, VannaError
+from .params import ParameterError, resolve, substitute
 from .models import (
     CubeQuery,
     Dashboard,
@@ -49,6 +50,7 @@ async def render_dashboard(
     agent_memory: Any,
     saved_query_sql: Optional[Dict[str, str]] = None,
     max_rows: int = MAX_TILE_ROWS,
+    params: Optional[Dict[str, Any]] = None,
 ) -> List[TileResult]:
     """Execute every tile, as this user.
 
@@ -58,7 +60,21 @@ async def render_dashboard(
         saved_query_sql: Saved-query id -> SQL, resolved by the caller. Passed in
             rather than looked up here so this module needs no storage
             dependency.
+        params: Values for the dashboard's declared parameters. Resolved once here
+            rather than per tile, so every panel on the page is answering the same
+            question -- a report whose tiles disagreed about the date range would
+            be worse than one that failed.
     """
+    try:
+        rendered_params = resolve(dashboard.parameters, params)
+    except ParameterError as exc:
+        # One bad value fails the whole render on purpose. Rendering the other
+        # tiles would produce a page that looks complete and answers a different
+        # question than the controls claim.
+        return [
+            TileResult(tile_id=tile.id, error=str(exc)) for tile in dashboard.tiles
+        ]
+
     semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
     async def run(tile: Tile) -> TileResult:
@@ -70,6 +86,7 @@ async def render_dashboard(
                 agent_memory=agent_memory,
                 saved_query_sql=saved_query_sql or {},
                 max_rows=max_rows,
+                params=rendered_params,
             )
 
     # return_exceptions: one tile failing must leave the other panels readable.
@@ -97,6 +114,7 @@ async def _render_tile(
     agent_memory: Any,
     saved_query_sql: Dict[str, str],
     max_rows: int,
+    params: Optional[Dict[str, str]] = None,
 ) -> TileResult:
     if tile.kind is TileKind.TEXT:
         return TileResult(tile_id=tile.id)
@@ -104,6 +122,14 @@ async def _render_tile(
     sql = _resolve_sql(tile, saved_query_sql)
     if sql is None:
         return TileResult(tile_id=tile.id, error="This tile has no query.")
+
+    # Before the registry, which is what puts the finished statement in front of the
+    # SQL policy. Substituting afterwards would mean the policy approved a statement
+    # that is not the one that runs.
+    try:
+        sql = substitute(sql, params or {})
+    except ParameterError as exc:
+        return TileResult(tile_id=tile.id, error=str(exc))
 
     from ..core.tool import ToolCall, ToolContext
 

@@ -37,18 +37,29 @@
 
 <header>
   <h1 data-i18n="console.title">DataLens — Admin console</h1>
-  <span class="tag" id="who">…</span>
   <span class="grow"></span>
   <button class="act" id="theme-btn" type="button" data-i18n="console.theme">Theme</button>
-  <a class="act" href="/"
-    ><span class="arrow" aria-hidden="true">&larr;</span> <span data-i18n="console.back">Back to app</span></a>
   <label class="sr-only" for="locale-btn" data-i18n="console.language">Language</label>
   <select id="locale-btn" class="act" aria-label="Language"></select>
   <button class="act" id="reload-btn" type="button" data-i18n="console.reload">Reload</button>
 </header>
 
+<!-- Sections down the side rather than across the top. Eleven tabs wrapped onto two
+     rows at any normal width, and a tab strip that wraps stops reading as one control:
+     the second row looks like a different kind of thing. A column also matches the
+     workspace app next door, so moving between the two is not a change of shape.
+
+     Who you are and the way back belong here rather than in the header for the same
+     reason -- they are about *this* console session, and the header is now only the
+     three controls that alter how the page is displayed. -->
 <main>
-  <nav id="tabs" role="tablist" data-i18n-attr="aria-label:a11y.sections" aria-label="Sections"></nav>
+  <div class="side">
+    <span class="tag" id="who">…</span>
+    <nav id="tabs" role="tablist" data-i18n-attr="aria-label:a11y.sections" aria-label="Sections"></nav>
+    <span class="spacer"></span>
+    <a class="back" href="/"
+      ><span class="arrow" aria-hidden="true">&larr;</span> <span data-i18n="console.back">Back to app</span></a>
+  </div>
   <div id="content" role="tabpanel" tabindex="-1">
     <div class="empty" data-i18n="common.loading">Loading…</div>
   </div>

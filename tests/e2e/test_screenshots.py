@@ -89,8 +89,11 @@ TABS = [
     "billing",
     "review",
     "verified",
+    "domains",
     "rules",
+    "library",
     "starters",
+    "new",
 ]
 
 
@@ -237,7 +240,7 @@ class TestSignIn:
 class TestWorkspace:
     def test_the_landing_view(self, page: Page):
         _sign_in(page)
-        expect(page.locator("#user-email")).to_contain_text(EMAIL)
+        expect(page.locator("#rail-email")).to_contain_text(EMAIL)
 
         page.wait_for_timeout(3000)  # the chat element mounts and connects
         _grow(page)
@@ -314,7 +317,17 @@ class TestDashboards:
         # rendered grid. Waiting for a card is what distinguishes the two.
         expect(page.locator("#overlay")).to_have_class(re.compile(r"\bon\b"))
         page.wait_for_selector("#sheet .card, #sheet .empty", timeout=60_000)
-        page.wait_for_timeout(3000)  # let Plotly draw
+        # Wait for the thing being asserted rather than a fixed sleep. Three seconds
+        # was enough for a five-tile report and not for a twelve-tile one, so the test
+        # failed on the dashboard carrying the most charts -- the opposite of useful,
+        # and intermittently, which is worse. A dashboard with no chart at all still
+        # has to be photographed, so a timeout here is not fatal: the assertion
+        # further down is what decides.
+        try:
+            page.wait_for_selector("#sheet .js-plotly-plot", timeout=30_000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)  # let the last figure settle
 
         slug = title.strip().lower().replace(" ", "-") or f"index-{index}"
         _shot_of(page, "#sheet", f"05-dashboard-{index}-{slug}")
@@ -539,3 +552,106 @@ class TestMobilePreview:
             )
         finally:
             context.close()
+
+
+# ----------------------------------------------------------------------
+# The console, below the tab strip
+# ----------------------------------------------------------------------
+#
+# A tab is not a page. Three of the twelve open their own sheets, and one renders
+# something different for each role in a dropdown -- so a screenshot per tab misses
+# most of what an operator actually looks at. These are the screens behind them.
+
+
+@pytest.mark.skipif(not PASSWORD, reason="VANNA_E2E_PASSWORD is not set")
+class TestTheConsoleInDepth:
+    def _console(self, page: Page, tab: str = "") -> None:
+        _sign_in(page)  # the console shares the app's session cookie
+        page.goto(f"{BASE_URL}/admin/", wait_until="networkidle")
+        page.wait_for_selector("#tabs button", timeout=20_000)
+        page.wait_for_timeout(1200)
+        if tab:
+            button = page.locator(f"#tabs button[data-tab='{tab}']")
+            if not button.count():
+                pytest.skip(f"the console has no {tab!r} tab")
+            button.click()
+            page.wait_for_timeout(1500)
+
+    @pytest.mark.parametrize("role", ["admin", "analyst", "viewer"])
+    def test_the_permissions_grid_for_each_role(self, page: Page, role: str):
+        """One tab, three grids.
+
+        The permissions screen is per role, and the whole point of it is that the
+        three differ. A single screenshot of whichever role happened to be selected
+        records the least interesting third of it.
+        """
+        self._console(page, "permissions")
+
+        selector = page.locator("#perm-role")
+        if not selector.count():
+            pytest.skip("this workspace has no permissions grid (no catalog?)")
+        selector.select_option(role)
+        page.wait_for_timeout(1800)  # the grid refetches per role
+
+        _grow(page, 2400)
+        _shot(page, f"08-console-permissions-{role}")
+        assert not _errors, f"the {role} permissions grid raised: {_errors}"
+
+    def test_the_add_database_sheet(self, page: Page):
+        """Reached from Workspaces, and platform-admin only.
+
+        Worth photographing because it is where a datasource URL is typed, and a
+        form that takes a credential is the one most worth looking at.
+        """
+        self._console(page, "tenants")
+
+        opener = page.locator("#tabs button[data-tab='tenants']")
+        if not opener.count():
+            pytest.skip("not a platform admin, so there is no Workspaces tab")
+
+        button = page.locator("button[data-act='databases']").first
+        if not button.count():
+            pytest.skip("no workspace row offers a databases action")
+        button.click()
+        page.wait_for_selector("#db-url", timeout=15_000)
+        page.wait_for_timeout(600)
+
+        _shot(page, "08-console-sheet-databases")
+        assert not _errors, f"the databases sheet raised: {_errors}"
+
+    def test_the_domain_editor(self, page: Page):
+        """The Domains tab edits a glossary in a sheet, not in the page."""
+        self._console(page, "domains")
+
+        button = page.locator("#dom-new")
+        if not button.count():
+            pytest.skip("the console has no domain editor")
+        button.click()
+        page.wait_for_timeout(900)
+
+        _grow(page, 2000)
+        _shot(page, "08-console-sheet-domain")
+        assert not _errors, f"the domain editor raised: {_errors}"
+
+    def test_the_console_in_arabic(self, page: Page):
+        """The operator console mirrored.
+
+        `test_switching_language_keeps_it_readable` already asserts the header does
+        not wrap; this is the whole console, as a picture, because RTL breaks tables
+        and tab strips in ways an assertion has to be told to look for.
+        """
+        self._console(page)
+
+        picker = page.locator("#locale-btn, select#locale, [data-i18n-attr*='locale']").first
+        if not picker.count():
+            pytest.skip("no locale control on the console")
+        try:
+            picker.select_option("ar")
+        except Exception:
+            picker.click()  # a button rather than a select
+        page.wait_for_timeout(1500)
+
+        direction = page.evaluate("document.documentElement.dir")
+        _grow(page, 2400)
+        _shot(page, "08-console-arabic")
+        assert direction == "rtl", f"the console rendered dir={direction!r}, not rtl"

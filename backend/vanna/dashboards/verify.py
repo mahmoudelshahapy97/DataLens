@@ -22,6 +22,11 @@ from dataclasses import dataclass
 from typing import Any, Iterable, List
 
 from .models import Dashboard, Tile, TileKind
+from .params import (
+    ParameterType,
+    declared_placeholders,
+    placeholders_in,
+)
 
 #: Shapes that indicate a credential pasted into a tile. Narrow on purpose:
 #: this runs on SQL, and a pattern loose enough to catch everything would
@@ -118,12 +123,109 @@ def verify_tile(tile: Tile) -> List[VerifyIssue]:
     return issues
 
 
+def _sql_of(tile: Tile) -> str:
+    """The statement text a tile carries, for scanning. Empty when it has none."""
+    query = tile.query
+    for attribute in ("sql",):
+        text = getattr(query, attribute, None)
+        if isinstance(text, str):
+            return text
+    filters = getattr(query, "filters", None)
+    if isinstance(filters, list):
+        return " ".join(str(f) for f in filters)
+    return ""
+
+
+def verify_parameters(dashboard: Dashboard) -> List[VerifyIssue]:
+    """The declarations, and whether the tiles agree with them.
+
+    The important check is the last one. A statement using ``{{ since }}`` that no
+    parameter declares would render as valid SQL with a silently different meaning --
+    the failure a dashboard must not have, so it is an error at save time rather than
+    a surprise at read time.
+    """
+    issues: List[VerifyIssue] = []
+
+    seen = set()
+    for parameter in dashboard.parameters:
+        if parameter.name in seen:
+            issues.append(
+                VerifyIssue("error", f"Duplicate parameter {parameter.name!r}.")
+            )
+        seen.add(parameter.name)
+
+        if parameter.type is ParameterType.ENUM:
+            if not parameter.options:
+                # Without options there is no allowlist, and without an allowlist the
+                # value would have to be trusted.
+                issues.append(
+                    VerifyIssue(
+                        "error",
+                        f"Parameter {parameter.name!r} is an enum with no options, so "
+                        "no value could ever be accepted for it.",
+                    )
+                )
+            elif (
+                parameter.default is not None
+                and str(parameter.default) not in parameter.options
+            ):
+                issues.append(
+                    VerifyIssue(
+                        "error",
+                        f"Parameter {parameter.name!r} defaults to "
+                        f"{parameter.default!r}, which is not one of its options.",
+                    )
+                )
+
+        if (
+            parameter.type is ParameterType.INTEGER
+            and parameter.minimum is not None
+            and parameter.maximum is not None
+            and parameter.minimum > parameter.maximum
+        ):
+            issues.append(
+                VerifyIssue(
+                    "error",
+                    f"Parameter {parameter.name!r} has a minimum above its maximum.",
+                )
+            )
+
+    available = declared_placeholders(dashboard.parameters)
+    for tile in dashboard.tiles:
+        used = placeholders_in(_sql_of(tile))
+        for name in sorted(used - available):
+            issues.append(
+                VerifyIssue(
+                    "error",
+                    f"This tile uses {{{{ {name} }}}} but the report declares no "
+                    f"parameter that fills it.",
+                    tile.id,
+                )
+            )
+
+    used_anywhere = set()
+    for tile in dashboard.tiles:
+        used_anywhere |= placeholders_in(_sql_of(tile))
+    for name in sorted(available - used_anywhere):
+        issues.append(
+            VerifyIssue(
+                "warning",
+                f"Parameter placeholder {{{{ {name} }}}} is declared but no tile uses "
+                "it, so changing it will appear to do nothing.",
+            )
+        )
+
+    return issues
+
+
 def verify_dashboard(dashboard: Dashboard) -> List[VerifyIssue]:
     """Every problem found, errors first."""
     issues: List[VerifyIssue] = []
 
     if not dashboard.title.strip():
         issues.append(VerifyIssue("error", "A dashboard needs a title."))
+
+    issues.extend(verify_parameters(dashboard))
 
     if not dashboard.tiles:
         issues.append(VerifyIssue("warning", "This dashboard has no tiles."))

@@ -382,6 +382,25 @@ back to the question that caused it. Exporting writes properly needs that join
 exposed — the statement is stored, in `pending_writes.statement_preview`; it is just
 not reachable through the API.
 
+**Per-role screenshots.** `make screenshots` photographs the app as the platform
+admin, who can see everything -- which is the least informative view of a product sold
+on different people seeing different things. `make role-accounts` then
+`make role-screenshots` captures four more:
+
+```
+artifacts/admin/      workspace admin  -- the console, tab by tab
+artifacts/analysis/   analyst          -- can save work, no console
+artifacts/viewer/     viewer           -- reads everything, writes nothing
+artifacts/user/       outsider         -- a real user of another workspace
+```
+
+`tests/e2e/test_roles.py` also asserts the boundary each role sits behind, because a
+screenshot proves a page rendered and cannot prove anybody was refused. The three
+refusals are deliberately different: a viewer writing gets **403** naming their role,
+a member who is not an admin gets **404** from the admin routes, and an outsider is
+refused everything. One stated property does not currently hold -- see the strict
+`xfail` at the bottom of that file.
+
 `make screenshots` writes `artifacts/`, which is git-ignored: the images are
 regenerated on every run and the test that produces them is the reviewable artifact.
 Pass `E2E_TENANT` to point the seeders at a different workspace — this account

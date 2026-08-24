@@ -153,6 +153,7 @@
   "dash.runningTiles": "Running tiles…",
   "dash.noTiles": "No tiles.",
   "dash.noData": "No data.",
+  "dash.otherSlice": "Other",
   "dash.deleteConfirm": "Delete “{title}”?",
   "result.saveAsQuery": "Save as query",
   "result.ctrlEnter": "Ctrl+Enter to run",

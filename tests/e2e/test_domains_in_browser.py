@@ -241,9 +241,14 @@ class TestEachWorkspace:
     def test_it_opens_and_names_its_own_database(self, page: Page, domain: Dict[str, Any]):
         _sign_in(page, domain["id"])
 
-        expect(page.locator("#tenant-name")).to_have_text(domain["name"])
-        # The data source is shown so a user can tell which database they are on.
-        source = page.locator("#tenant-source").inner_text()
+        # The workspace name and its data source used to sit in the header as loose
+        # text; they now live in the account sheet behind the rail identity button.
+        # Same two facts, one click further in, so open it and read them there.
+        page.click("#rail-account")
+        page.wait_for_selector("#sheet h3", timeout=10_000)
+        sheet = page.locator("#sheet")
+        expect(sheet).to_contain_text(domain["name"])
+        source = sheet.inner_text()
         assert domain["database"] in source, f"{domain['id']} shows {source!r}"
         assert not page._errors, page._errors
 

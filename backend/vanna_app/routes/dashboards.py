@@ -10,7 +10,7 @@ them.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, Request
 
@@ -79,7 +79,9 @@ def register(app: Any, deps: Deps) -> None:
             raise HTTPException(status_code=404, detail="Not found")
         return {"deleted": True}
 
-    async def _render(user: Any, dashboard_id: str) -> tuple:
+    async def _render(
+        user: Any, dashboard_id: str, params: Optional[Dict[str, Any]] = None
+    ) -> tuple:
         """Load, verify and execute a dashboard as the caller."""
         directory = deps.require_directory()
 
@@ -112,15 +114,35 @@ def register(app: Any, deps: Deps) -> None:
             user=user,
             agent_memory=deps.agent_memory,
             saved_query_sql=saved_sql,
+            params=params,
         )
         return dashboard, results
 
+    def _params_from(request: Request) -> Dict[str, Any]:
+        """Parameter values off the query string.
+
+        Every key is passed through rather than filtered: `resolve` refuses a name
+        the dashboard does not declare, and refusing there means one place decides
+        what a valid parameter is. Reserved keys the browser adds for its own
+        reasons are dropped, so a cache-buster is not mistaken for a parameter.
+        """
+        return {
+            key: value
+            for key, value in request.query_params.items()
+            if key not in {"_", "t", "cache"}
+        }
+
     @app.get("/api/vanna/v2/dashboards/{dashboard_id}/data")
     async def dashboard_data(dashboard_id: str, request: Request) -> Dict[str, Any]:
-        """Execute every tile as the caller."""
+        """Execute every tile as the caller, for these parameter values."""
         user = await deps.caller(request)
-        _, results = await _render(user, dashboard_id)
-        return {"results": [r.model_dump(mode="json") for r in results]}
+        dashboard, results = await _render(user, dashboard_id, _params_from(request))
+        return {
+            "results": [r.model_dump(mode="json") for r in results],
+            # Echoed so the page can build its controls from one response rather
+            # than fetching the document separately and risking the two disagreeing.
+            "parameters": [p.model_dump(mode="json") for p in dashboard.parameters],
+        }
 
     @app.get("/api/vanna/v2/dashboards/{dashboard_id}/export")
     async def export_dashboard(dashboard_id: str, request: Request) -> Any:
@@ -136,7 +158,7 @@ def register(app: Any, deps: Deps) -> None:
         from fastapi.responses import Response
 
         user = await deps.caller(request)
-        dashboard, results = await _render(user, dashboard_id)
+        dashboard, results = await _render(user, dashboard_id, _params_from(request))
 
         from vanna.dashboards import export_filename, export_html
 

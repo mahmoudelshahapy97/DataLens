@@ -20,6 +20,15 @@ from .models import (
     TileKind,
     TileResult,
 )
+from .params import (
+    Parameter,
+    ParameterError,
+    ParameterType,
+    declared_placeholders,
+    placeholders_in,
+    resolve,
+    substitute,
+)
 from .export import export_filename, export_html
 from .render import MAX_TILE_ROWS, render_dashboard
 from .store import DashboardStore, LocalDashboardStore, validated
@@ -28,6 +37,13 @@ from .verify import VerifyIssue, has_errors, verify_dashboard, verify_tile
 __all__ = [
     "export_html",
     "export_filename",
+    "Parameter",
+    "ParameterError",
+    "ParameterType",
+    "declared_placeholders",
+    "placeholders_in",
+    "resolve",
+    "substitute",
     "Dashboard",
     "Tile",
     "TileKind",

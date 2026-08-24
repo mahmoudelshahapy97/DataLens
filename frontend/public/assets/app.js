@@ -2427,7 +2427,7 @@ function headings(text) {
  *  said nothing, which mirrors how the backend treats it. */
 function mountChart(mount, tile, result) {
   const columns = result.columns || [];
-  const rows = result.rows || [];
+  let rows = result.rows || [];
   if (!columns.length || !rows.length) {
     mount.innerHTML = `<div class="empty small">${t('dash.noData')}</div>`;
     return;
@@ -2438,7 +2438,54 @@ function mountChart(mount, tile, result) {
 
   const xName = spec.x && column(spec.x) >= 0 ? spec.x : columns[0];
   const yNames = (spec.y || []).filter((name) => column(name) >= 0);
-  const series = yNames.length ? yNames : columns.filter((c) => c !== xName);
+  const colourName = spec.color_by && column(spec.color_by) >= 0 ? spec.color_by : null;
+  const series = yNames.length
+    ? yNames
+    : columns.filter((c) => c !== xName && c !== colourName);
+
+  // `sort_by`, `descending` and `limit` were declared on ChartSpec from the start
+  // and read by nothing, so a tile asking for the top ten by revenue got every row
+  // in whatever order the warehouse returned -- the same failure the heatmap branch
+  // below was added to fix: a chart that looks like an answer.
+  let ordered = rows;
+  const sortName = spec.sort_by && column(spec.sort_by) >= 0 ? spec.sort_by : null;
+  if (sortName) {
+    const at = column(sortName);
+    ordered = rows.slice().sort((left, right) => {
+      const a = left[at], b = right[at];
+      const numeric = Number(a), other = Number(b);
+      const cmp = Number.isFinite(numeric) && Number.isFinite(other)
+        ? numeric - other
+        : String(a ?? '').localeCompare(String(b ?? ''));
+      return spec.descending ? -cmp : cmp;
+    });
+  }
+
+  // Top-N. Whether the remainder is gathered or dropped depends on what the chart
+  // claims: a pie asserts that its slices are the whole, so dropping the tail there
+  // makes the parts stop summing to it. A ranked bar chart claims no such thing --
+  // and gathering the tail into one bar is actively wrong when the measure is not
+  // additive. Summing the minutes of 3,488 remaining tracks produced an "Other" bar
+  // of 3,000 next to fifteen bars of nine, which is a chart that answers a question
+  // nobody asked.
+  const wholeOfParts = (spec.type || 'bar') === 'pie';
+  if (spec.limit && spec.limit > 0 && ordered.length > spec.limit && !colourName) {
+    const kept = ordered.slice(0, spec.limit);
+    const rest = ordered.slice(spec.limit);
+    if (rest.length && wholeOfParts) {
+      const merged = columns.map((name, index) => {
+        if (index === column(xName)) return t('dash.otherSlice');
+        const total = rest.reduce((sum, row) => {
+          const value = Number(row[index]);
+          return Number.isFinite(value) ? sum + value : sum;
+        }, 0);
+        return total || null;
+      });
+      kept.push(merged);
+    }
+    ordered = kept;
+  }
+  rows = ordered;
 
   const x = rows.map((row) => row[column(xName)]);
   const type = spec.type || 'bar';
@@ -2461,16 +2508,44 @@ function mountChart(mount, tile, result) {
                 { xName, yName: spec.y_label || yName, spec, series: [] });
   }
 
-  const traces = series.map((name) => {
-    const y = rows.map((row) => row[column(name)]);
-    if (type === 'pie') return { type: 'pie', labels: x, values: y, name };
-    if (type === 'scatter') return { type: 'scatter', mode: 'markers', x, y, name };
+  const shape = (name, xs, ys) => {
+    if (type === 'pie') return { type: 'pie', labels: xs, values: ys, name };
+    if (type === 'scatter') return { type: 'scatter', mode: 'markers', x: xs, y: ys, name };
     if (type === 'line' || type === 'area') {
-      return { type: 'scatter', mode: 'lines+markers', x, y, name,
+      return { type: 'scatter', mode: 'lines+markers', x: xs, y: ys, name,
                fill: type === 'area' ? 'tozeroy' : undefined };
     }
-    return { type: 'bar', x, y, name };
-  });
+    return { type: 'bar', x: xs, y: ys, name };
+  };
+
+  // `color_by` splits one measure into a trace per distinct value -- which is what
+  // a legend *is*. Without it a "revenue by month, by country" tile drew a single
+  // line and the country column was silently ignored.
+  if (colourName) {
+    const at = column(colourName);
+    const measure = series[0];
+    const groups = new Map();
+    rows.forEach((row) => {
+      const key = String(row[at] ?? '');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+    let entries = [...groups.entries()];
+    if (spec.limit && spec.limit > 0 && entries.length > spec.limit) {
+      entries = entries.slice(0, spec.limit);  // too many series is unreadable, not wrong
+    }
+    const traces = entries.map(([key, group]) => shape(
+      key,
+      group.map((row) => row[column(xName)]),
+      group.map((row) => row[column(measure)]),
+    ));
+    return plot(mount, traces, { xName, yName: spec.y_label || measure, spec,
+                                 series: traces });
+  }
+
+  const traces = series.map((name) => shape(
+    name, x, rows.map((row) => row[column(name)]),
+  ));
 
   return plot(mount, traces, { xName, yName: series.length === 1 ? series[0] : '',
                               spec, series });
@@ -2487,10 +2562,25 @@ function plot(mount, traces, { xName, yName, spec, series }) {
   const circular = traces.some((trace) => trace.type === 'pie');
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const element = document.createElement('plotly-chart');
+  // `<plotly-chart>` defaults its `theme` property to 'dark' and nothing here was
+  // setting it, so every tile on a light page got the dark-theme modebar: a near
+  // opaque charcoal band across the top of the plot, over the highest gridline and
+  // its tick label. The traces were right and the numbers were right, which is why
+  // it survived -- it reads as a styling quirk rather than the wrong theme.
+  element.theme = dark ? 'dark' : 'light';
   element.data = traces;
   const layout = {
     height: boxed,
-    margin: { t: 10, r: 10, b: 40, l: 56 },
+    // Top margin leaves the modebar somewhere to sit. At t:10 it had to overlay the
+    // plot, so hovering a tile hid the top of the very series being inspected.
+    margin: { t: 28, r: 10, b: 40, l: 56 },
+    // Stacked vertically against the corner and with no background of its own.
+    // The component's default is a horizontal bar with an opaque fill, which spans
+    // the full width of the plot and sits on top of the tallest bar in the chart --
+    // exactly the one being looked at.
+    modebar: { orientation: 'v', bgcolor: 'rgba(0,0,0,0)',
+               color: dark ? '#9aa4b2' : '#6b7280',
+               activecolor: dark ? '#e5e7eb' : '#111827' },
     barmode: spec.stacked ? 'stack' : 'group',
     showlegend: series.length > 1 || circular,
     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -2506,6 +2596,19 @@ function plot(mount, traces, { xName, yName, spec, series }) {
     layout.yaxis = { title: spec.y_label || yName };
   }
   element.layout = layout;
+  // `<plotly-chart>` defaults to `displayModeBar: false`, which is right for the chat
+  // -- an answer with a toolbar on it looks like a control panel. A dashboard tile is
+  // the opposite case: the whole point of looking at it is to zoom into a spike and
+  // read the numbers off, so the tile turns the toolbar back on for itself rather
+  // than the component changing its default for everybody.
+  element.config = {
+    displayModeBar: 'hover',
+    displaylogo: false,
+    scrollZoom: true,
+    // The buttons that only make sense in a notebook, and the lasso nobody uses.
+    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+    toImageButtonOptions: { format: 'png', scale: 2 },
+  };
   element.style.height = '100%';
   mount.innerHTML = '';
   mount.appendChild(element);

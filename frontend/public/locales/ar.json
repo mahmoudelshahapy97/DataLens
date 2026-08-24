@@ -153,6 +153,7 @@
   "dash.runningTiles": "جارٍ تشغيل البطاقات…",
   "dash.noTiles": "لا توجد بطاقات.",
   "dash.noData": "لا توجد بيانات.",
+  "dash.otherSlice": "أخرى",
   "dash.deleteConfirm": "حذف «{title}»؟",
   "result.saveAsQuery": "حفظ كاستعلام",
   "result.ctrlEnter": "Ctrl+Enter للتشغيل",

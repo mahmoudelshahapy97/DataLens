@@ -88,6 +88,23 @@ test-e2e:  ## Browser tests against a running stack (needs E2E_PASSWORD)
 	VANNA_E2E_PASSWORD=$(E2E_PASSWORD) \
 		$(PYTHON) -m pytest tests/e2e -m e2e -q
 
+.PHONY: role-accounts
+role-accounts:  ## Create the four QA accounts the role screenshots sign in as
+	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
+	$(PYTHON) tools/provision_role_accounts.py --url $(E2E_URL) \
+		--admin-email $(E2E_EMAIL) --password $(E2E_PASSWORD)
+
+.PHONY: role-screenshots
+role-screenshots:  ## Photograph the app as admin, analyst, viewer and an outsider
+	VANNA_E2E_URL=$(E2E_URL) $(PYTHON) -m pytest tests/e2e/test_roles.py -m e2e -q
+	@echo "Images in ./artifacts/{admin,analysis,viewer,user}"
+
+.PHONY: demo-video
+demo-video:  ## Record a walkthrough of the running app into artifacts/video
+	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
+	$(PYTHON) tools/record_demo.py --url $(E2E_URL) --email $(E2E_EMAIL) \n		--password $(E2E_PASSWORD)
+	@echo "Clips in ./artifacts/video"
+
 .PHONY: screenshots
 screenshots:  ## Photograph every screen into artifacts/ (needs E2E_PASSWORD)
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }

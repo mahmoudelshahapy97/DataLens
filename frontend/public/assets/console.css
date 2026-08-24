@@ -3,12 +3,15 @@
     --text: #0f172a; --muted: #64748b;
     --primary: #4f46e5; --primary-fg: #ffffff;
     --good: #059669; --bad: #dc2626; --warn: #d97706;
+    --rail: #f7f8fa; --rail-hover: #eceef2;
+    --console-side: 208px;
     --radius: 10px;
     color-scheme: light;
   }
   :root[data-theme="dark"] {
     --bg: #0b1120; --surface: #111827; --surface-2: #0f172a; --border: #1f2937;
     --text: #e5e7eb; --muted: #94a3b8; --primary: #6366f1;
+    --rail: #0d1424; --rail-hover: #161f33;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -25,9 +28,70 @@
   }
   h1 { font-size: 1.05rem; margin: 0; font-weight: 650; }
   .grow { flex: 1; }
-  main { max-width: 1120px; margin: 0 auto; padding: 22px 24px 40px; }
+  /* Two columns: the sections rail, then the panel. `minmax(0, 1fr)` on the second
+     rather than `1fr`, because a grid track defaults to min-content and the widest
+     table in here is far wider than the viewport -- without it the rail gets squeezed
+     to nothing and the page scrolls sideways instead of the table. */
+  /* The shell does not scroll; the two panes inside it do, each on its own.
+     Before this the rail was part of the document flow, so scrolling a long
+     Workspaces table scrolled the sections list off the top of the window -- you
+     had to scroll back up to change tab. `min-height: 0` on the flex child is the
+     part that is easy to miss: without it a flex item refuses to shrink below its
+     content, the whole page grows instead, and neither pane ever scrolls. */
+  body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { flex: 0 0 auto; }
+
+  main {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: var(--console-side) minmax(0, 1fr);
+  }
+
+  /* The rail itself does not scroll -- only the list of sections inside it does.
+     Scrolling the whole rail put "Back to app" below the fold, because the spacer
+     above it grew with the content: the way out of the console was reachable only
+     by scrolling to find it. Pinning the identity at the top and the exit at the
+     bottom, and letting just the middle scroll, is what makes both always present. */
+  .side {
+    background: var(--rail); border-inline-end: 1px solid var(--border);
+    padding: 16px 10px; display: flex; flex-direction: column; gap: 10px;
+    min-height: 0; overflow: hidden;
+  }
+  .side #who, .side .back { flex: 0 0 auto; }
+  /* The spacer is no longer what positions the exit -- the section list flexing to
+     fill does that -- but it stays harmless at zero height on narrow screens. */
+  .side .spacer { flex: 0; }
+  .side #who { align-self: start; margin: 0 2px; }
+  .side .back {
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+    border-radius: 8px; text-decoration: none; font-size: .9rem;
+    color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px;
+  }
+  .side .back:hover { color: var(--primary); }
+
+  /* No max-width. The 1120px cap was right when this was a centred single column
+     under a full-width header; beside a fixed rail it just leaves a dead band down
+     the right of every wide table -- and the tables in here are the widest thing in
+     the product. The rail keeps its size; the panel takes whatever is left. */
+  #content { padding: 22px 24px 40px; min-height: 0; overflow-y: auto; }
 
   nav { display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }
+
+  /* The sections rail. Pills read as a strip; a column of pills reads as a list of
+     unrelated buttons, so down here they are full-width rows like the workspace app's
+     sidebar -- same shape, same affordance. */
+  nav#tabs {
+    flex-direction: column; gap: 2px; margin: 0; flex-wrap: nowrap;
+    flex: 1; min-height: 0; overflow-y: auto;
+  }
+  nav#tabs button {
+    width: 100%; text-align: start; border-radius: 8px; border: 0;
+    padding: 9px 12px; background: transparent;
+  }
+  nav#tabs button:hover { background: var(--rail-hover); }
+  nav#tabs button[aria-selected="true"] {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    color: var(--primary); font-weight: 600;
+  }
   nav button {
     padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border);
     background: transparent; cursor: pointer; font-size: .875rem;
@@ -143,6 +207,8 @@
   table.data tr:last-child td { border-bottom: 0; }
   table.data select { width: auto; padding: 4px 8px; }
   .scroll-x { overflow-x: auto; }
+  /* Scoped with :has so a card holding a form keeps visible overflow. */
+  #content .card:has(table) { overflow-x: auto; }
 
   .empty { text-align: center; padding: 46px 22px; color: var(--muted); }
   .banner {
@@ -255,7 +321,22 @@
 
   @media (max-width: 640px) {
     header { flex-wrap: wrap; gap: 6px; }
-    nav#tabs { overflow-x: auto; }
+    /* One column, and the rail becomes a scroller across the top again. A 208px
+       sidebar next to a data table is most of a phone. */
+    body { height: auto; overflow: visible; }
+    main { grid-template-columns: minmax(0, 1fr); }
+    .side {
+      min-height: 0; flex-direction: row; align-items: center; gap: 8px;
+      border-inline-end: 0; border-bottom: 1px solid var(--border);
+      overflow-x: auto; overflow-y: visible; padding: 10px 12px;
+      position: sticky; top: 0; z-index: 5;
+    }
+    .side .spacer { display: none; }
+    .side .back { border-top: 0; padding-top: 9px; white-space: nowrap; }
+    nav#tabs { flex-direction: row; gap: 5px; overflow-x: auto; }
+    nav#tabs button { width: auto; border-radius: 999px; border: 1px solid var(--border); }
+    /* The page scrolls again, so the panel must not trap it. */
+    #content { overflow-y: visible; }
     table { display: block; overflow-x: auto; white-space: nowrap; }
     .sheet { max-width: none; }
   }

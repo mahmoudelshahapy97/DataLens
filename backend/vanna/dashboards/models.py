@@ -26,6 +26,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .params import Parameter, ParameterType
+
 
 class TileKind(str, Enum):
     """What a tile renders.
@@ -189,6 +191,12 @@ class Dashboard(BaseModel):
     title: str
     description: str = ""
     tiles: List[Tile] = Field(default_factory=list)
+
+    #: Controls the reader may change, filling ``{{ name }}`` placeholders in the
+    #: tiles' SQL. Empty is the norm and means a fixed dashboard; a report is just a
+    #: dashboard that declares some. Defaults matter: a report whose every parameter
+    #: has one renders on first open instead of presenting a form.
+    parameters: List[Parameter] = Field(default_factory=list)
 
     created_by: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
