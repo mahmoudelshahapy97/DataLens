@@ -1,0 +1,12 @@
+name: playlist_tracks
+description: >-
+  The many-to-many bridge between playlists and tracks. It carries no facts of
+  its own; counting rows here counts placements, not distinct tracks.
+table_reference: chinook.playlist_track
+columns:
+  - name: playlist_id
+    type: INTEGER
+    is_hidden: true
+  - name: track_id
+    type: INTEGER
+    is_hidden: true

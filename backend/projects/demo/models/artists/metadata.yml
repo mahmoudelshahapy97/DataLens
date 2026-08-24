@@ -1,0 +1,12 @@
+name: artists
+description: >-
+  A recording artist or band. Reached from a sale only through
+  invoice_lines -> tracks -> albums -> artists; there is no direct link.
+table_reference: chinook.artist
+columns:
+  - name: artist_id
+    type: INTEGER
+    is_primary_key: true
+  - name: name
+    type: VARCHAR
+    description: Artist or band name.

@@ -1,0 +1,242 @@
+[
+  {
+    "question": "Which artist has the most tracks in the catalogue?",
+    "answer": "Iron Maiden has the most tracks in the catalogue with 213 tracks.",
+    "query": "WITH track_counts AS ( SELECT a.artist_id, -- group per artist ar.name AS artist_name, COUNT(t.track_id) AS track_count FROM chinook.track AS t JOIN chinook.album AS a ON a.album_id = t.album_id -- map track to its album JOIN chinook.artist AS ar ON ar.artist_id = a.artist_id -- map album to its artist GROUP BY a.artist_id, ar.name ), ranked AS ( SELECT artist_name, track_count, RANK() OVER (ORDER BY track_count DESC) AS rnk -- highest counts get rank 1 (ties allowed) FROM track_counts ) SELECT artist_name, track_count FROM ranked WHERE rnk = 1 -- keep artist(s) with the most tracks ORDER BY artist_name; -- stable order if there is a tie",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How does revenue in the USA compare with Canada?",
+    "answer": "Revenue by billing country (all time in the dataset):\n- USA: $523.06\n- Canada: $303.96\n\nInterpretation:\n- The USA has $219.10 more revenue than Canada, about 1.7× as much.\n\nUnits: USD, summed from chinook.invoice.total.",
+    "query": "SELECT i.billing_country, ROUND(SUM(i.total), 2) AS revenue_usd FROM chinook.invoice AS i WHERE i.billing_country IN ('USA', 'Canada') AND i.billing_country IS NOT NULL -- exclude missing geography values AND i.total IS NOT NULL -- exclude malformed rows from sums GROUP BY i.billing_country ORDER BY revenue_usd DESC;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which city has the most customers?",
+    "answer": "It’s a tie. The cities with the most customers are:\n- Berlin — 2 customers\n- London — 2 customers\n- Mountain View — 2 customers\n- Paris — 2 customers\n- Prague — 2 customers\n- São Paulo — 2 customers\n\nUnit: customers (count of customer records).",
+    "query": "WITH city_counts AS ( SELECT c.city, COUNT(*) AS customer_count FROM chinook.customer c WHERE c.city IS NOT NULL -- exclude unknown city values GROUP BY c.city ), max_count AS ( SELECT MAX(customer_count) AS max_customer_count FROM city_counts ) SELECT cc.city, cc.customer_count FROM city_counts cc JOIN max_count mc ON cc.customer_count = mc.max_customer_count ORDER BY cc.city ASC; -- return all top cities in case of a tie",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is the average number of tracks per invoice?",
+    "answer": "- Average tracks per invoice: 2.04 tracks/invoice\n- Basis: All invoices in chinook.invoice_line, counting total quantity of tracks per invoice and averaging across invoices.",
+    "query": "-- Average number of tracks (sum of quantities) per invoice across all invoices WITH per_invoice AS ( SELECT il.invoice_id, SUM(il.quantity)::numeric AS tracks_purchased -- total tracks on this invoice FROM chinook.invoice_line il GROUP BY il.invoice_id ) SELECT ROUND(AVG(pi.tracks_purchased)::numeric, 2) AS avg_tracks_per_invoice -- average tracks per invoice FROM per_invoice pi;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How many distinct tracks have we ever sold?",
+    "answer": "We’ve sold 1,984 distinct tracks. Units: count of unique track IDs across all historical sales. Time range: all time in the database.",
+    "query": "SELECT COUNT(DISTINCT il.track_id) AS distinct_tracks_sold FROM chinook.invoice_line AS il;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which support rep has the highest average invoice?",
+    "answer": "Steve Johnson has the highest average invoice at $5.72 USD.\n\nNotes\n- Basis: Average of invoice.total per support rep, using all invoices in the dataset (no date filter).\n- Mapping: Invoices linked to reps via customer.support_rep_id -> employee.employee_id.",
+    "query": "SELECT e.employee_id AS support_rep_id, e.first_name || ' ' || e.last_name AS support_rep_name, ROUND(AVG(i.total), 2) AS avg_invoice_usd FROM chinook.invoice i JOIN chinook.customer c ON i.customer_id = c.customer_id JOIN chinook.employee e ON c.support_rep_id = e.employee_id WHERE c.support_rep_id IS NOT NULL -- exclude customers without an assigned rep GROUP BY e.employee_id, e.first_name, e.last_name ORDER BY AVG(i.total) DESC LIMIT 1;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Are there any tracks that appear on no playlist?",
+    "answer": "No. Every track appears on at least one playlist. \n- Count of tracks with zero playlists: 0 tracks.",
+    "query": "SELECT COUNT(*) AS tracks_without_playlist -- number of tracks that do not appear on any playlist FROM chinook.track t LEFT JOIN chinook.playlist_track pt ON pt.track_id = t.track_id WHERE pt.track_id IS NULL; -- only rows where no playlist mapping exists",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What was our best month ever for revenue?",
+    "answer": "January 2022 was our best month, with $52.62 in revenue (USD), based on all invoices in the database to date.",
+    "query": "WITH monthly AS ( SELECT (date_trunc('month', i.invoice_date))::date AS month_start, -- month bucket SUM(i.total) AS revenue_usd -- revenue from invoice totals (USD) FROM chinook.invoice AS i WHERE i.invoice_date IS NOT NULL AND i.total IS NOT NULL GROUP BY (date_trunc('month', i.invoice_date))::date ) SELECT m.month_start, ROUND(m.revenue_usd::numeric, 2) AS revenue_usd FROM monthly m ORDER BY m.revenue_usd DESC, m.month_start ASC LIMIT 1;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which customers bought music in more than one genre?",
+    "answer": "I pulled customers with purchases spanning more than one genre and ranked them by the number of distinct genres they bought.\n\nWhat I did:\n- Joined invoices -> invoice_line -> track -> genre to identify each customer’s purchased genres.\n- Counted distinct genres per customer and filtered for those with more than one.\n- Returned the top 20 by distinct-genre count.\n\nHighlights (units: count of distinct genres; all-time across the dataset):\n- Customer 57 (Luis Rojas): 12 genres — Alternative & Punk, Blues, Classical, Drama, Easy Listening, Latin, Metal, Rock, Sci Fi & Fantasy, Science Fiction, Soundtrack, TV Shows\n- Customer 45 (Ladislav Kovács): 11 genres — Alternative & Punk, Blues, Comedy, Drama, Electronica/Dance, Latin, Metal, R&B/Soul, Rock, Sci Fi & Fantasy, TV Shows\n- Customer 34 (João Fernandes): 10 genres — Alternative & Punk, Electronica/Dance, Latin, Metal, Pop, R&B/Soul, Rock, Sci Fi & Fantasy, TV Shows, World\n- Customer 14 (Mark Philips): 10 genres — Alternative & Punk, Blues, Bossa Nova, Electronica/Dance, Jazz, Latin, Metal, R&B/Soul, Rock, World\n- Customer 24 (Frank Ralston): 10 genres — Alternative, Alternative & Punk, Classical, Comedy, Hip Hop/Rap, Latin, Metal, R&B/Soul, Rock, TV Shows\n\nI’ve charted the top 20 customers by number of genres purchased so you can quickly see who buys most broadly. Want me to list all such customers instead of the top 20?",
+    "query": "SELECT c.customer_id, c.first_name, c.last_name, COUNT(DISTINCT t.genre_id) AS genre_count, -- number of distinct genres purchased STRING_AGG(DISTINCT g.name, ', ' ORDER BY g.name) AS genres -- list of genres purchased FROM chinook.customer AS c JOIN chinook.invoice AS i ON i.customer_id = c.customer_id JOIN chinook.invoice_line AS il ON il.invoice_id = i.invoice_id JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.genre AS g ON g.genre_id = t.genre_id WHERE t.genre_id IS NOT NULL -- exclude tracks without a genre to avoid inflating counts GROUP BY c.customer_id, c.first_name, c.last_name HAVING COUNT(DISTINCT t.genre_id) > 1 -- more than one genre purchased ORDER BY genre_count DESC, c.last_name, c.first_name LIMIT 20;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is the most expensive track in the catalogue?",
+    "answer": "- The maximum track price in the catalogue is $1.99 USD per track.\n- It’s a tie: 213 tracks are priced at this maximum.\n\nExamples at $1.99 include:\n- A Tale of Two Cities — Lost, Season 3 (Lost)\n- Basketball — The Office, Season 1 (The Office)\n\nIf you’d like, I can list the top 20 tracks at this price.",
+    "query": "WITH max_price AS ( SELECT MAX(unit_price) AS max_unit_price FROM chinook.track ), count_cte AS ( SELECT COUNT(*) AS track_count FROM chinook.track t JOIN max_price m ON t.unit_price = m.max_unit_price ) SELECT ROUND(m.max_unit_price::numeric, 2) AS unit_price_usd, c.track_count FROM max_price m CROSS JOIN count_cte c;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which employees report to Nancy Edwards?",
+    "answer": "Three employees report directly to Nancy Edwards:\n- Steve Johnson\n- Margaret Park\n- Jane Peacock\n\nUnits: count of employees. Timeframe: current employee table snapshot.",
+    "query": "WITH manager AS ( SELECT e.employee_id FROM chinook.employee e WHERE LOWER(e.first_name) = LOWER('Nancy') AND LOWER(e.last_name) = LOWER('Edwards') ) SELECT e.first_name, e.last_name FROM chinook.employee e JOIN manager m ON e.reports_to = m.employee_id -- direct reports to Nancy ORDER BY e.last_name, e.first_name;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How many customers are there in each country?",
+    "answer": "I counted customers per country (customers, count of records; unit: customers) across all countries in the database.\n\nTop countries:\n- USA: 13\n- Canada: 8\n- Brazil: 5\n- France: 5\n- Germany: 4\n- United Kingdom: 3\n- Czech Republic: 2\n- India: 2\n- Portugal: 2\n- 1 customer each in: Argentina, Australia, Austria, Belgium, Chile, Denmark, Finland, Hungary, Ireland, Italy, Netherlands, Norway, Poland, Spain, Sweden\n\nI also created a bar chart titled “Customers by Country” to visualize the distribution.",
+    "query": "SELECT c.country AS country, COUNT(*) AS customer_count FROM chinook.customer AS c WHERE c.country IS NOT NULL -- exclude null countries GROUP BY c.country ORDER BY customer_count DESC, country ASC; -- all countries",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is the longest track we sell, and who wrote it?",
+    "answer": "- Longest track: Through a Looking Glass  \n- Composer: Trent Reznor  \n- Length: 20.07 minutes\n\nUnit: minutes. This is based on the maximum value of track.milliseconds across all tracks.",
+    "query": "-- Longest track(s) by duration in the catalog, with composer and length in minutes SELECT t.name AS track_name, -- track title t.composer AS composer, -- who wrote it (may be NULL) ROUND(t.milliseconds / 60000.0, 2) AS length_minutes -- duration in minutes FROM chinook.track AS t JOIN ( SELECT MAX(milliseconds) AS max_ms -- find the maximum duration FROM chinook.track ) AS m ON t.milliseconds = m.max_ms;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which genres have no sales at all?",
+    "answer": "Opera has no sales at all across all recorded invoices.",
+    "query": "SELECT g.genre_id, g.name FROM chinook.genre AS g WHERE NOT EXISTS ( SELECT 1 FROM chinook.track AS t JOIN chinook.invoice_line AS il ON il.track_id = t.track_id WHERE t.genre_id = g.genre_id ) ORDER BY g.name ASC;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What share of revenue comes from the top 5 customers?",
+    "answer": "The top 5 customers account for 10.10% of all-time revenue, contributing $235.10 out of a total $2,328.60 (USD), based on invoice totals across all invoices in the database.",
+    "query": "WITH customer_rev AS ( SELECT c.customer_id, c.first_name || ' ' || c.last_name AS customer_name, SUM(i.total) AS revenue_usd -- sum of invoice totals per customer (USD) FROM chinook.invoice i JOIN chinook.customer c ON c.customer_id = i.customer_id -- link invoices to customers WHERE i.total IS NOT NULL -- ignore any null totals GROUP BY c.customer_id, customer_name ), total_rev AS ( SELECT SUM(revenue_usd) AS total_revenue_usd FROM customer_rev -- total revenue across all customers ), top5 AS ( SELECT customer_id, customer_name, revenue_usd FROM customer_rev ORDER BY revenue_usd DESC -- highest revenue first LIMIT 5 -- top 5 customers ), top5_sum AS ( SELECT SUM(revenue_usd) AS top5_revenue_usd FROM top5 -- sum revenue of top 5 customers ) SELECT ROUND((t5.top5_revenue_usd / tr.total_revenue_usd) * 100.0, 2) AS top5_share_percent, -- share as percentage of total ROUND(t5.top5_revenue_usd::numeric, 2) AS top5_revenue_usd, -- USD ROUND(tr.total_revenue_usd::numeric, 2) AS total_revenue_usd -- USD FROM top5_sum t5 CROSS JOIN total_rev tr;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How many invoices were there in 2025 compared with 2024?",
+    "answer": "- 2024: 0 invoices\n- 2025: 0 invoices\n\nTime range: calendar years 2024 and 2025. Unit: invoices (count).\n\nInterpretation: There were no invoices recorded in either 2024 or 2025 in the dataset. If you expected activity in those years, we may need a more recent data load.",
+    "query": "-- Count invoices by calendar year 2024 vs 2025 SELECT 2024 AS year, COUNT(*) AS invoice_count FROM chinook.invoice i WHERE i.invoice_date >= DATE '2024-01-01' -- start of 2024 AND i.invoice_date < DATE '2025-01-01' -- up to but not including 2025 UNION ALL SELECT 2025 AS year, COUNT(*) AS invoice_count FROM chinook.invoice i WHERE i.invoice_date >= DATE '2025-01-01' -- start of 2025 AND i.invoice_date < DATE '2026-01-01' -- up to but not including 2026 ORDER BY year;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which country has the highest average invoice value?",
+    "answer": "- Country with the highest average invoice value: Chile\n- Average invoice value: 6.66 USD\n\nNotes\n- Unit: USD (invoice.total).\n- Based on all invoices with a billing country present.",
+    "query": "SELECT i.billing_country AS country, ROUND(AVG(i.total), 2) AS avg_invoice_usd -- average invoice total, rounded to cents FROM chinook.invoice AS i WHERE i.billing_country IS NOT NULL -- exclude any invoices without a billing country GROUP BY i.billing_country ORDER BY AVG(i.total) DESC -- highest average first LIMIT 1; -- return only the top country",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Who are our top 10 customers by lifetime spend?",
+    "answer": "I ranked customers by total invoice spend (USD) across all time and returned the top 10.\n\nTop 10 customers by lifetime spend (USD):\n1. Helena Holý — $49.62\n2. Richard Cunningham — $47.62\n3. Luis Rojas — $46.62\n4. Hugh O'Reilly — $45.62\n5. Ladislav Kovács — $45.62\n6. Julia Barnett — $43.62\n7. Frank Ralston — $43.62\n8. Fynn Zimmermann — $43.62\n9. Victor Stevens — $42.62\n10. Astrid Gruber — $42.62\n\nNotes:\n- Units: USD. Source: chinook.invoice totals summed per customer.\n- Time range: all invoices in the database (lifetime to date).\n- I also created a bar chart of these 10 customers for quick comparison.",
+    "query": "SELECT c.customer_id, (c.first_name || ' ' || c.last_name) AS customer_name, -- customer's full name per rules ROUND(SUM(i.total), 2) AS lifetime_spend_usd -- sum of invoice totals in USD, rounded FROM chinook.customer AS c JOIN chinook.invoice AS i ON i.customer_id = c.customer_id -- link invoices to customers GROUP BY c.customer_id, c.first_name, c.last_name ORDER BY lifetime_spend_usd DESC LIMIT 10; -- top 10 customers by lifetime spend",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is our total revenue?",
+    "answer": "- Total revenue: 2,328.60 USD\n- Time range: 2021-01-01 to 2025-12-22 (from first to last invoice date)",
+    "query": "SELECT ROUND(SUM(i.total)::numeric, 2) AS total_revenue_usd, -- total revenue across all invoices MIN(i.invoice_date) AS first_invoice_date, -- earliest sale date in data MAX(i.invoice_date) AS last_invoice_date -- latest sale date in data FROM chinook.invoice i WHERE i.total IS NOT NULL;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How long is the average track in minutes?",
+    "answer": "The average track length is 6.56 minutes.",
+    "query": "SELECT ROUND(AVG(t.milliseconds) / 60000.0, 2) AS avg_track_length_minutes FROM chinook.track AS t WHERE t.milliseconds IS NOT NULL; -- average length in minutes; 60000 ms = 1 minute",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which composers appear most often in the catalogue?",
+    "answer": "Here are the most frequently credited composers in the catalogue (by number of tracks):\n\n- Steve Harris — 80 tracks\n- U2 — 44\n- Jagger/Richards — 35\n- Billy Corgan — 31\n- Kurt Cobain — 26\n- Bill Berry-Peter Buck-Mike Mills-Michael Stipe — 25\n- The Tea Party — 24\n- Chico Science — 23\n- Chris Cornell — 23\n- Gilberto Gil — 23\n- Miles Davis — 23\n- Titãs — 22\n- Billie Joe Armstrong -Words Green Day -Music — 20\n- J.C. Fogerty — 20\n- Renato Russo — 20\n- Anthony Kiedis/Chad Smith/Flea/John Frusciante — 19\n- Herbert Vianna — 19\n- Chris Robinson/Rich Robinson — 18\n- J. C. Fogerty — 17\n- Vários — 17\n\nNotes\n- Unit: track count.\n- Scope: entire catalogue in chinook.track, excluding null/blank composer entries.\n- I also plotted a bar chart of the top 20 for quick comparison.",
+    "query": "SELECT t.composer AS composer, -- composer name on the track COUNT(*) AS track_count -- how many tracks credit this composer FROM chinook.track AS t WHERE t.composer IS NOT NULL -- exclude missing composers AND TRIM(t.composer) <> '' -- exclude blank strings GROUP BY t.composer ORDER BY track_count DESC, composer ASC -- rank by frequency, then name for stability LIMIT 20; -- show top 20 as default",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is the revenue per year?",
+    "answer": "Here’s revenue per year using invoice totals (USD):\n\n- 2021: $449.46\n- 2022: $481.45\n- 2023: $469.58\n- 2024: $477.53\n- 2025: $450.58\n\nNotes:\n- Units: USD. Revenue is sum of invoice.total per calendar year.\n- Time range: 2021–2025 based on invoice_date.\n\nI also added a line chart to show the year-over-year trend.",
+    "query": "SELECT EXTRACT(YEAR FROM i.invoice_date)::int AS year, -- calendar year of the invoice ROUND(SUM(i.total)::numeric, 2) AS revenue_usd -- revenue from invoice totals (USD) FROM chinook.invoice AS i GROUP BY EXTRACT(YEAR FROM i.invoice_date) ORDER BY year ASC; -- chronological for readability",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which cities generate the most revenue?",
+    "answer": "I pulled revenue by billing_city from all invoices and ranked the top 20 (USD, summed from invoice_line.unit_price × quantity, all time).\n\nTop cities by revenue (USD):\n- Prague: 90.24\n- Mountain View: 77.24\n- Paris: 77.24\n- Berlin: 75.24\n- São Paulo: 75.24\n- London: 75.24\n- Fort Worth: 47.62\n- Santiago: 46.62\n- Dublin: 45.62\n- Budapest: 45.62\n- Frankfurt: 43.62\n- Salt Lake City: 43.62\n- Chicago: 43.62\n- Madison: 42.62\n- Vienne: 42.62\n- Helsinki: 41.62\n- Amsterdam: 40.62\n- Dijon: 40.62\n- Montréal: 39.62\n- Lisbon: 39.62\n\nNotes:\n- Units: USD.\n- Time range: all available data.\n- Based on invoice_line totals (revenue) grouped by invoice.billing_city.\n- I limited to the top 20 cities. If you want the full list or a different time frame, I can adjust. A bar chart of the top 20 has been created for easier comparison.",
+    "query": "SELECT i.billing_city AS city, ROUND(SUM(il.unit_price * il.quantity), 2) AS revenue_usd -- revenue from line items, rounded to 2 decimals FROM chinook.invoice AS i JOIN chinook.invoice_line AS il ON il.invoice_id = i.invoice_id -- join lines to their invoice to get the billing city WHERE i.billing_city IS NOT NULL -- avoid a NULL city bucket GROUP BY i.billing_city ORDER BY revenue_usd DESC LIMIT 20; -- top 20 cities by revenue",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What are the 15 highest earning tracks?",
+    "answer": "Here are the top 15 highest-earning tracks (USD, all-time):\n\n- Gay Witch Hunt — $3.98\n- Hot Girl — $3.98\n- How to Stop an Exploding Man — $3.98\n- Phyllis's Wedding — $3.98\n- Pilot — $3.98\n- The Fix — $3.98\n- The Woman King — $3.98\n- Walkabout — $3.98\n- \"\"\"?\"\"\" — $1.99\n- ...And Found — $1.99\n- \"A Benihana Christmas, Pts. 1 & 2\" — $1.99\n- A Day In the Life — $1.99\n- Adrift — $1.99\n- Back from Vacation — $1.99\n- Baltar's Escape — $1.99\n\nNotes:\n- Units: USD revenue computed as sum(invoice_line.unit_price × invoice_line.quantity).\n- Scope: All time; no date filter applied.\n- I also added a bar chart for a quick comparison.",
+    "query": "SELECT t.name AS track_name, ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue_usd FROM chinook.invoice_line il JOIN chinook.track t ON t.track_id = il.track_id GROUP BY t.track_id, t.name ORDER BY revenue_usd DESC, t.name ASC LIMIT 15;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which albums earned the most money?",
+    "answer": "I ranked albums by total sales value from invoice lines. Unit: USD. Time range: all available sales.\n\nTop-earning albums (USD):\n1) Battlestar Galactica (Classic), Season 1 — Battlestar Galactica (Classic): $35.82\n2) The Office, Season 3 — The Office: $31.84\n3) Minha Historia — Chico Buarque: $26.73\n4) Heroes, Season 1 — Heroes: $25.87\n5) Lost, Season 2 — Lost: $25.87\n6) Greatest Hits — Lenny Kravitz: $25.74\n7) Unplugged — Eric Clapton: $24.75\n8) Battlestar Galactica, Season 3 — Battlestar Galactica: $23.88\n9) Lost, Season 3 — Lost: $21.89\n10) Acústico — Titãs: $21.78\n11) Lost, Season 1 — Lost: $19.90\n12) Greatest Kiss — Kiss: $19.80\n13) Chronicle, Vol. 2 — Creedence Clearwater Revival: $18.81\n14) My Generation - The Very Best Of The Who — The Who: $18.81\n15) Prenda Minha — Caetano Veloso: $18.81\n16) Acústico MTV — Os Paralamas Do Sucesso: $17.82\n17) Chronicle, Vol. 1 — Creedence Clearwater Revival: $17.82\n18) International Superhits — Green Day: $17.82\n19) Rattle And Hum — U2: $16.83\n20) The Best Of R.E.M.: The IRS Years — R.E.M.: $16.83\n\nI also added a bar chart so you can see the comparison at a glance.",
+    "query": "SELECT a.album_id, a.title AS album_title, ar.name AS artist_name, ROUND(SUM(il.unit_price * il.quantity), 2) AS album_revenue_usd FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.album AS a ON a.album_id = t.album_id -- only tracks that belong to an album JOIN chinook.artist AS ar ON ar.artist_id = a.artist_id GROUP BY a.album_id, a.title, ar.name ORDER BY album_revenue_usd DESC, a.title ASC LIMIT 20;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How many customers have never bought anything?",
+    "answer": "0 customers have never bought anything. Units: customers. Timeframe: all time in the database.",
+    "query": "SELECT COUNT(*) AS customers_without_purchases FROM chinook.customer c LEFT JOIN chinook.invoice i ON i.customer_id = c.customer_id WHERE i.invoice_id IS NULL; -- customers with no matching invoice",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How is each sales rep performing?",
+    "answer": "Here’s how each sales rep is performing (all-time, USD):\n\n- Jane Peacock — 21 customers, 146 invoices, $833.04 revenue, $5.71 avg invoice\n- Margaret Park — 20 customers, 140 invoices, $775.40 revenue, $5.54 avg invoice\n- Steve Johnson — 18 customers, 126 invoices, $720.16 revenue, $5.72 avg invoice\n\nWhat this means:\n- Jane leads on total revenue and invoice count.\n- Average invoice values are similar across reps (~$5.5–$5.7), so differences come mainly from volume (more invoices/customers).\n\nI also added a bar chart comparing revenue, invoices, and customers by rep. Want this broken out by a time period (e.g., this year, last quarter) or by country?",
+    "query": "SELECT e.employee_id, (e.first_name || ' ' || e.last_name) AS sales_rep, -- full name per rules COUNT(DISTINCT c.customer_id) AS customers, -- number of customers assigned COUNT(i.invoice_id) AS invoices, -- number of invoices (sales) ROUND(COALESCE(SUM(i.total), 0)::numeric, 2) AS revenue_usd, -- total revenue in USD ROUND(COALESCE(AVG(i.total), 0)::numeric, 2) AS avg_invoice_value_usd -- average invoice value FROM chinook.employee e JOIN chinook.customer c ON c.support_rep_id = e.employee_id -- 'sales rep' defined by customer.support_rep_id LEFT JOIN chinook.invoice i ON i.customer_id = c.customer_id -- include reps with customers but possibly zero sales GROUP BY e.employee_id, e.first_name, e.last_name HAVING COUNT(DISTINCT c.customer_id) > 0 -- only employees who are actual reps ORDER BY revenue_usd DESC LIMIT 20;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "How does revenue break down by country?",
+    "answer": "Here’s the all-time revenue breakdown by billing country (USD), using invoice totals (source of truth) and billing_country on invoices. Showing top 10 countries:\n\n- USA — $523.06\n- Canada — $303.96\n- France — $195.10\n- Brazil — $190.10\n- Germany — $156.48\n- United Kingdom — $112.86\n- Czech Republic — $90.24\n- Portugal — $77.24\n- India — $75.26\n- Chile — $46.62\n\nNotes:\n- Units: USD, summed from invoice totals.\n- Time range: all available history (no date filter).\n- Scope: top 10 countries only. I can share the full list or filter to a specific period if you’d like.\n\nI also created a bar chart of the top 10 for easier comparison.",
+    "query": "-- Revenue by billing country (USD), all-time, using invoice totals as source of truth SELECT i.billing_country AS country, -- where the invoice was billed ROUND(SUM(i.total)::numeric, 2) AS revenue_usd -- revenue in USD, rounded to cents FROM chinook.invoice AS i WHERE i.billing_country IS NOT NULL AND i.total IS NOT NULL GROUP BY i.billing_country ORDER BY revenue_usd DESC, country ASC LIMIT 20; -- show top 20 countries",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Show me the monthly revenue trend",
+    "answer": "I’ve plotted the monthly revenue trend (USD), using invoice.total summed by invoice month, from 2021-01 through 2025-12.\n\nWhat it shows:\n- Revenue is fairly stable around $37–$38 per month, with occasional spikes (e.g., Jan 2022, Apr 2023, Aug–Oct 2024) and dips (e.g., Nov 2023, Feb 2025).\n\nWould you like this broken down by country, sales rep, or compared year-over-year?",
+    "query": "SELECT MIN(DATE_TRUNC('month', i.invoice_date))::date AS first_month, MAX(DATE_TRUNC('month', i.invoice_date))::date AS last_month FROM chinook.invoice AS i;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Who are our best selling artists?",
+    "answer": "I pulled the top 20 best‑selling artists by revenue (USD), all time, based on invoice line item sales (unit_price × quantity).\n\nTop artists by revenue (USD):\n1) Iron Maiden — 22.86\n2) Metallica — 18.42\n3) U2 — 16.85\n4) Lost — 15.86\n5) Led Zeppelin — 15.84\n6) Deep Purple — 15.84\n7) Van Halen — 15.84\n8) Queen — 15.35\n9) Kiss — 14.85\n10) The Rolling Stones — 14.36\n11) Pearl Jam — 14.35\n12) Foo Fighters — 14.35\n13) Lenny Kravitz — 13.86\n14) Black Sabbath — 13.37\n15) Eric Clapton — 13.37\n16) Green Day — 13.36\n17) Ozzy Osbourne — 13.36\n18) Aerosmith — 12.88\n19) Red Hot Chili Peppers — 12.88\n20) Creedence Clearwater Revival — 12.37\n\nNotes:\n- Units: USD revenue, summed across all time.\n- Source: chinook.invoice_line joined to track → album → artist.\n- Limited to the top 20 artists as requested by default. I can break this down by year, country, or customer segment if helpful.",
+    "query": "-- Top 20 best-selling artists by revenue (all time) SELECT a.name AS artist_name, ROUND(SUM((il.unit_price::numeric) * (il.quantity)) , 2) AS revenue_usd -- revenue = unit_price * quantity, rounded to 2 decimals FROM chinook.invoice_line il JOIN chinook.track t ON t.track_id = il.track_id -- sale -> track JOIN chinook.album al ON al.album_id = t.album_id -- track -> album JOIN chinook.artist a ON a.artist_id = al.artist_id -- album -> artist GROUP BY a.artist_id, a.name ORDER BY revenue_usd DESC, artist_name ASC LIMIT 20;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which genres sell the most tracks?",
+    "answer": "Here are the top genres by tracks sold (units = individual tracks, all time). I ranked them descending and returned the top 20.\n\n- Rock — 835\n- Latin — 386\n- Metal — 264\n- Alternative & Punk — 258\n- Jazz — 205\n- TV Shows — 186\n- Blues — 164\n- Drama — 157\n- R&B/Soul — 152\n- Hip Hop/Rap — 145\n- Electronica/Dance — 144\n- Pop — 105\n- Easy Listening — 103\n- Classical — 102\n- Alternative — 96\n- Heavy Metal — 83\n- Comedy — 77\n- Soundtrack — 74\n- Bossa Nova — 68\n- World — 64\n\nInterpretation: Rock is the clear leader by track units sold, with roughly double the next genre (Latin). If you want this broken down by year or country, I can slice it further.",
+    "query": "-- Top genres by tracks sold (all time) SELECT g.name AS genre, SUM(il.quantity) AS tracks_sold FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id -- link sold items to tracks JOIN chinook.genre AS g ON g.genre_id = t.genre_id -- get track genre WHERE t.genre_id IS NOT NULL -- exclude tracks without a genre to avoid NULL group AND g.name IS NOT NULL -- exclude NULL genre names GROUP BY g.name ORDER BY tracks_sold DESC, genre ASC LIMIT 20;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Who are our top 10 customers by lifetime spend?",
+    "answer": "Here are the top 10 customers by lifetime spend (USD), based on all invoices on record:\n\n1) Helena Holý — $49.62 across 7 invoices\n2) Richard Cunningham — $47.62 across 7 invoices\n3) Luis Rojas — $46.62 across 7 invoices\n4) Hugh O'Reilly — $45.62 across 7 invoices\n5) Ladislav Kovács — $45.62 across 7 invoices\n6) Frank Ralston — $43.62 across 7 invoices\n7) Fynn Zimmermann — $43.62 across 7 invoices\n8) Julia Barnett — $43.62 across 7 invoices\n9) Astrid Gruber — $42.62 across 7 invoices\n10) Victor Stevens — $42.62 across 7 invoices\n\nNotes:\n- Unit: USD (sum of invoice totals).\n- Ties are broken by invoice count, then name.",
+    "query": "SELECT c.customer_id, c.first_name || ' ' || c.last_name AS customer_name, ROUND(SUM(i.total)::numeric, 2) AS lifetime_spend_usd, COUNT(i.invoice_id) AS invoice_count FROM chinook.invoice AS i JOIN chinook.customer AS c ON c.customer_id = i.customer_id -- join invoices to the customer who was billed GROUP BY c.customer_id, c.first_name, c.last_name -- aggregate per customer ORDER BY lifetime_spend_usd DESC, invoice_count DESC, customer_name ASC -- rank by spend then ties by activity/name LIMIT 10; -- top 10 customers",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is our total revenue?",
+    "answer": "Total revenue to date is 2,328.60 USD, summed from chinook.invoice.total across all invoices.",
+    "query": "SELECT ROUND(SUM(i.total)::numeric, 2) AS total_revenue_usd FROM chinook.invoice AS i;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Who are our top 10 customers by lifetime spend?",
+    "answer": "Here are the top 10 customers by lifetime spend, based on invoice totals (USD) across all time:\n\n1) Helena Holý — $49.62 (7 invoices)\n2) Richard Cunningham — $47.62 (7)\n3) Luis Rojas — $46.62 (7)\n4) Hugh O'Reilly — $45.62 (7)\n5) Ladislav Kovács — $45.62 (7)\n6) Julia Barnett — $43.62 (7)\n7) Frank Ralston — $43.62 (7)\n8) Fynn Zimmermann — $43.62 (7)\n9) Victor Stevens — $42.62 (7)\n10) Astrid Gruber — $42.62 (7)\n\nNotes:\n- Units: USD, summed from chinook.invoice.total.\n- Time range: all available history in the database.\n- I limited the output to the top 10 customers. A bar chart has been created to visualize the ranking.",
+    "query": "SELECT c.customer_id, c.first_name || ' ' || c.last_name AS customer_name, ROUND(SUM(i.total), 2) AS lifetime_spend_usd, -- sum of invoice totals per customer in USD COUNT(i.invoice_id) AS invoice_count -- how many invoices contributed FROM chinook.customer AS c JOIN chinook.invoice AS i ON i.customer_id = c.customer_id -- link invoices to customers GROUP BY c.customer_id, c.first_name, c.last_name ORDER BY lifetime_spend_usd DESC -- rank by highest lifetime spend LIMIT 10; -- top 10 customers",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is our total revenue?",
+    "answer": "Total revenue is $2,328.60 USD, summed across all invoices and line items in the database (lifetime, no date filter).",
+    "query": "SELECT ROUND(SUM((il.unit_price * il.quantity)::numeric), 2) AS total_revenue_usd -- revenue = price * quantity across all line items FROM chinook.invoice_line AS il;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is our total revenue?",
+    "answer": "Our total revenue to date is 2328.60 USD.\n\n- Source: chinook.invoice.total summed across all invoices\n- Units: USD\n- Time range: entire dataset (all available invoices)",
+    "query": "-- Total revenue across all invoices (USD) SELECT ROUND(SUM(i.total)::numeric, 2) AS total_revenue_usd FROM chinook.invoice AS i;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "What is our total revenue?",
+    "answer": "Total revenue is $2,328.60 USD, summed across all sales on record.",
+    "query": "SELECT ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS total_revenue_usd -- revenue = sum of line item price * quantity FROM chinook.invoice_line AS il;",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which artists earn the most revenue?",
+    "answer": "Here are the top-earning artists by revenue (USD), all time:\n\n- Iron Maiden — $138.60\n- U2 — $105.93\n- Metallica — $90.09\n- Led Zeppelin — $86.13\n- Lost — $81.59\n- The Office — $49.75\n- Os Paralamas Do Sucesso — $44.55\n- Deep Purple — $43.56\n- Faith No More — $41.58\n- Eric Clapton — $39.60\n- R.E.M. — $38.61\n- Creedence Clearwater Revival — $36.63\n- Queen — $36.63\n- Battlestar Galactica (Classic) — $35.82\n- Guns ' Roses — $35.64\n- Titãs — $33.66\n- Green Day — $32.67\n- Pearl Jam — $31.68\n- Kiss — $30.69\n- Van Halen — $28.71\n\nNotes:\n- Units: USD revenue from sales line items (unit_price × quantity), rounded to cents.\n- Time range: all available time in the database.\n- I limited the list to the top 20 artists as requested by default. A bar chart of this ranking has been created for easier comparison. Want it by a specific time period or country?",
+    "query": "SELECT a.artist_id, a.name AS artist_name, ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue_usd -- revenue = unit_price * quantity, rounded to cents FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id -- line item -> track JOIN chinook.album AS al ON al.album_id = t.album_id -- track -> album JOIN chinook.artist AS a ON a.artist_id = al.artist_id -- album -> artist GROUP BY a.artist_id, a.name ORDER BY revenue_usd DESC -- highest earners first LIMIT 20; -- show top 20 by default",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which artists earn the most revenue?",
+    "answer": "Here are the top-earning artists by total revenue (USD), all time:\n\n1) Iron Maiden — $138.60\n2) U2 — $105.93\n3) Metallica — $90.09\n4) Led Zeppelin — $86.13\n5) Lost — $81.59\n6) The Office — $49.75\n7) Os Paralamas Do Sucesso — $44.55\n8) Deep Purple — $43.56\n9) Faith No More — $41.58\n10) Eric Clapton — $39.60\n11) R.E.M. — $38.61\n12) Creedence Clearwater Revival — $36.63\n13) Queen — $36.63\n14) Battlestar Galactica (Classic) — $35.82\n15) Guns ' Roses — $35.64\n16) Titãs — $33.66\n17) Green Day — $32.67\n18) Pearl Jam — $31.68\n19) Kiss — $30.69\n20) Van Halen — $28.71\n\nNotes:\n- Units: USD, summed from invoice lines (unit_price × quantity).\n- Time range: all available data.\n- I also created a bar chart titled “Top 20 artists by revenue (USD) - all time” for a quick visual comparison.",
+    "query": "SELECT a.name AS artist_name, ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue_usd -- revenue from invoice lines FROM chinook.invoice_line il JOIN chinook.track t ON t.track_id = il.track_id -- link line item to track JOIN chinook.album al ON al.album_id = t.album_id -- link track to album JOIN chinook.artist a ON a.artist_id = al.artist_id -- link album to artist GROUP BY a.artist_id, a.name -- aggregate at artist level ORDER BY revenue_usd DESC -- highest earners first LIMIT 20; -- top 20",
+    "database": "postgresql://db_postgres/chinook"
+  },
+  {
+    "question": "Which artists earn the most revenue?",
+    "answer": "Here are the top-earning artists by revenue (USD), computed from invoice line revenue across all time:\n\n- Iron Maiden — $138.60\n- U2 — $105.93\n- Metallica — $90.09\n- Led Zeppelin — $86.13\n- Lost — $81.59\n- The Office — $49.75\n- Os Paralamas Do Sucesso — $44.55\n- Deep Purple — $43.56\n- Faith No More — $41.58\n- Eric Clapton — $39.60\n- R.E.M. — $38.61\n- Queen — $36.63\n- Creedence Clearwater Revival — $36.63\n- Battlestar Galactica (Classic) — $35.82\n- Guns ' Roses — $35.64\n\nNotes:\n- Unit: US dollars (sum of invoice_lines.unit_price × quantity).\n- Scope: Entire dataset (no date filter).\n- I limited the list to the top 15 artists. Want me to show all artists or a different time window?",
+    "query": "-- Top earning artists by line-item revenue across all time SELECT a.name AS artist, -- artist name ROUND(SUM(il.unit_price * il.quantity)::numeric, 2) AS revenue_usd -- revenue in USD per rules FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id -- invoice_line -> track JOIN chinook.album AS al ON al.album_id = t.album_id -- track -> album JOIN chinook.artist AS a ON a.artist_id = al.artist_id -- album -> artist GROUP BY a.artist_id, a.name ORDER BY SUM(il.unit_price * il.quantity) DESC -- highest revenue first LIMIT 20; -- show top 20",
+    "database": "postgresql://db_postgres/chinook"
+  }
+]

@@ -1,0 +1,9 @@
+name: media_types
+description: File format a track is sold in (MPEG, AAC, protected variants).
+table_reference: chinook.media_type
+columns:
+  - name: media_type_id
+    type: INTEGER
+    is_primary_key: true
+  - name: name
+    type: VARCHAR

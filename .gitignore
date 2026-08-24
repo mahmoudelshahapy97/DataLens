@@ -141,10 +141,13 @@ docker-compose.override.yml
 *.sqlite
 *.sqlite3
 
-# Local database data
-data/
-database/
-db_data/
+# Local database data. Anchored to the repository root on purpose: unanchored,
+# `data/` matched backend/vanna/components/rich/data/ and kept three Python
+# source files out of git entirely, and `database/` matched the SQL schema
+# directory, so migrations 0010 to 0012 and its README were never committed.
+# The earlier migrations survived only because they predated the rule.
+/data/
+/db_data/
 
 # ============================================
 # Uploads / Generated Files
@@ -167,10 +170,13 @@ temp/
 *.safetensors
 *.bin
 
-models/
-checkpoints/
-runs/
-wandb/
+# Also anchored: these name machine-learning outputs, but `models/` unanchored
+# matched backend/projects/*/models/, which is the authored semantic layer --
+# 23 metadata.yml files describing the warehouse, not a training checkpoint.
+/models/
+/checkpoints/
+/runs/
+/wandb/
 
 # ============================================
 # Redis
@@ -217,15 +223,16 @@ htmlcov/
 .coverage
 coverage.xml
 
-# Screenshots written by tests/e2e/test_screenshots.py. Regenerated on every run
-# against a live stack, and a 2MB PNG per screen is not something to carry in
-# history -- the test that produces them is the reviewable artifact.
-artifacts/
+# artifacts/ is tracked, by request. The screenshots and videos under it are
+# regenerated on every run against a live stack, so they are derived files and
+# each run rewrites them -- carrying them in history means every re-record adds
+# its own copy of a few megabytes. That is a deliberate trade for being able to
+# see the evidence without running the suite. Worth moving to Git LFS if the
+# repository starts feeling slow to clone.
 
-# The Q&A export. Its answers quote query results verbatim -- customer names,
-# revenue figures -- so it falls under the same rule as query_results_*.csv above:
-# data pulled from a warehouse does not belong in version control. Regenerate it
-# with `make qa-json`. The glob covers the variants people export alongside it
-# (qa_updated_100.json and friends) -- one rule, rather than a list that grows
-# by one line every time somebody names a file differently.
-qa*.json
+# The Q&A export is tracked, by request. Its answers do quote query results
+# verbatim -- names and revenue figures -- which is why it was excluded before.
+# It is defensible here because every warehouse behind it is a public sample
+# database (chinook, northwind, pagila and friends), so the names are fictional.
+# Point this repository at a real warehouse and the export stops being safe to
+# commit: regenerate with `make qa-json` and re-add the `qa*.json` rule.

@@ -1,0 +1,29 @@
+name: orders
+description: One row per customer order.
+table_reference: orders
+columns:
+  - name: order_id
+    type: BIGINT
+    is_primary_key: true
+  - name: user_id
+    type: BIGINT
+    is_hidden: true
+  - name: order_number
+    type: TEXT
+  - name: status
+    type: TEXT
+    description: Order lifecycle state.
+  - name: currency
+    type: CHAR
+  - name: subtotal
+    type: NUMERIC
+  - name: discount_total
+    type: NUMERIC
+  - name: shipping_total
+    type: NUMERIC
+  - name: grand_total
+    type: NUMERIC
+    description: Order value in dollars, after discount and shipping.
+  - name: ship_region
+    type: TEXT
+    description: Region the order shipped to.

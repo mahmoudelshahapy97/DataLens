@@ -1,0 +1,23 @@
+name: invoices
+description: >-
+  One row per customer invoice. `total` is the invoice-level amount; per-track
+  revenue lives in invoice_lines and is not the same number.
+table_reference: chinook.invoice
+columns:
+  - name: invoice_id
+    type: INTEGER
+    is_primary_key: true
+  - name: customer_id
+    type: INTEGER
+    is_hidden: true
+  - name: invoice_date
+    type: TIMESTAMP
+  - name: billing_city
+    type: VARCHAR
+  - name: billing_state
+    type: VARCHAR
+  - name: billing_country
+    type: VARCHAR
+  - name: total
+    type: NUMERIC
+    description: Invoice total in dollars.

@@ -1,0 +1,28 @@
+name: customers
+description: One row per customer. `support_rep` links to the employee who serves them.
+table_reference: chinook.customer
+columns:
+  - name: customer_id
+    type: INTEGER
+    is_primary_key: true
+  - name: first_name
+    type: VARCHAR
+  - name: last_name
+    type: VARCHAR
+  - name: full_name
+    type: VARCHAR
+    is_calculated: true
+    expression: first_name || ' ' || last_name
+  - name: company
+    type: VARCHAR
+  - name: city
+    type: VARCHAR
+  - name: state
+    type: VARCHAR
+  - name: country
+    type: VARCHAR
+  - name: email
+    type: VARCHAR
+  - name: support_rep_id
+    type: INTEGER
+    is_hidden: true

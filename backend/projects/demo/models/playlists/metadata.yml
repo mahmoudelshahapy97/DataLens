@@ -1,0 +1,9 @@
+name: playlists
+description: A named playlist. Its tracks are reached through playlist_tracks.
+table_reference: chinook.playlist
+columns:
+  - name: playlist_id
+    type: INTEGER
+    is_primary_key: true
+  - name: name
+    type: VARCHAR

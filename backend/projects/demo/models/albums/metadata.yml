@@ -1,0 +1,13 @@
+name: albums
+description: One row per album. The only bridge between a track and its artist.
+table_reference: chinook.album
+columns:
+  - name: album_id
+    type: INTEGER
+    is_primary_key: true
+  - name: title
+    type: VARCHAR
+    description: Album title.
+  - name: artist_id
+    type: INTEGER
+    is_hidden: true
