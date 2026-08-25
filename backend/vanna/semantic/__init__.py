@@ -39,6 +39,7 @@ from .project import (
     build_manifest,
     load_built_manifest,
     load_manifest_from_project,
+    manifest_from_documents,
     write_model_yaml,
     write_relationships_yaml,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "NormalizedExprType",
     # project io
     "load_manifest_from_project",
+    "manifest_from_documents",
     "build_manifest",
     "load_built_manifest",
     "write_model_yaml",

@@ -63,7 +63,11 @@ export class PlotlyChart extends LitElement {
 
       .plotly-div {
         width: 100%;
-        min-height: 400px;
+        /* 400px is the right default for a chat answer, and the wrong one for a
+           dashboard tile: min-height beats an explicit height, so a tile 312px
+           tall drew its plot inside a 400px box and overflowed its own card. The
+           host overrides the variable when it knows the height it wants. */
+        min-height: var(--plotly-min-height, 400px);
       }
 
       /* Plotly layering fix for Shadow DOM */
@@ -196,12 +200,80 @@ export class PlotlyChart extends LitElement {
       const layout = this._getDefaultLayout();
       const config = this._getDefaultConfig();
 
+      // Let an explicit height win over the 400px floor above.
+      if (this.layout.height) {
+        this.plotlyDiv.style.setProperty(
+          '--plotly-min-height', `${this.layout.height}px`
+        );
+      }
+
       const Plotly = await loadPlotly();
       await Plotly.newPlot(this.plotlyDiv, this.data, layout, config);
+      this._adoptPlotlyStyles();
     } catch (err) {
       this.error = err instanceof Error ? err.message : 'Failed to render chart';
       console.error('Plotly chart error:', err);
     }
+  }
+
+  /**
+   * Copy Plotly's own stylesheet into this shadow root.
+   *
+   * Without this the plot area is *inert*: hovering a bar shows no tooltip and
+   * dragging does not zoom, while the figure itself is perfectly correct and the
+   * modebar buttons work. That last part is what makes it so confusing to look
+   * at -- the toolbar responds, so the chart appears alive.
+   *
+   * Plotly injects its CSS into `document.head` at first use, and a shadow root
+   * does not inherit document styles. The one rule everything depends on is
+   *
+   *     .js-plotly-plot .plotly .main-svg { pointer-events: none }
+   *
+   * because Plotly stacks several `main-svg` elements and re-enables pointer
+   * events only on the pieces that need them -- `.draglayer { pointer-events:
+   * all }`. Without it the topmost `main-svg` covers the plot and swallows every
+   * pointer event before it reaches the drag layer underneath.
+   *
+   * **The rules have to be read through the CSSOM, not copied off the element.**
+   * Plotly builds its stylesheet with `insertRule`, so the `<style>` element's
+   * `textContent` is the empty string -- cloning the node clones nothing, which
+   * looks like it works and changes not one thing.
+   */
+  private _adoptPlotlyStyles() {
+    const root = this.shadowRoot;
+    if (!root) return;
+
+    document
+      .querySelectorAll<HTMLStyleElement>('style[id^="plotly.js-style"]')
+      .forEach((source) => {
+        const marker = source.id;
+        const existing = root.querySelector<HTMLStyleElement>(
+          `style[data-plotly-style="${marker}"]`
+        );
+
+        let cssText = '';
+        try {
+          const sheet = source.sheet;
+          // Same-origin, so `cssRules` is readable. Guarded anyway: a browser
+          // that refuses should leave the chart drawn rather than throwing out
+          // of `_renderChart`.
+          cssText = sheet
+            ? Array.from(sheet.cssRules, (rule) => rule.cssText).join('\n')
+            : source.textContent || '';
+        } catch {
+          cssText = source.textContent || '';
+        }
+        if (!cssText) return;
+
+        // Plotly adds per-plot rules as more charts appear, so an adopted copy
+        // can go stale. Rewriting is cheap and idempotent.
+        const target = existing ?? document.createElement('style');
+        if (target.textContent !== cssText) target.textContent = cssText;
+        if (!existing) {
+          target.setAttribute('data-plotly-style', marker);
+          root.appendChild(target);
+        }
+      });
   }
 
   render() {

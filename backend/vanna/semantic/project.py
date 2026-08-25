@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -53,11 +53,9 @@ def _as_model(raw: Dict[str, Any], *, source: Path) -> SemanticModel:
 
 def load_manifest_from_project(paths: ProjectPaths, *, dialect: str = "") -> Manifest:
     """Assemble a manifest from a project's YAML tree."""
-    models: List[SemanticModel] = []
-
+    model_documents: List[Tuple[str, Dict[str, Any]]] = []
     for model_dir in paths.model_dirs():
         raw = _read_yaml(model_dir / MODEL_METADATA)
-        raw.setdefault("name", model_dir.name)
 
         # A sidecar ref_sql.sql wins over an inline one: it is the form that
         # gets syntax highlighting and a sensible diff, so it is the form people
@@ -67,52 +65,90 @@ def load_manifest_from_project(paths: ProjectPaths, *, dialect: str = "") -> Man
             text = sidecar.read_text(encoding="utf-8").strip()
             if text:
                 raw["ref_sql"] = text
-                raw.pop("refSql", None)
-                # A model with a sidecar query has no table; carrying both
-                # would trip the "exactly one source" rule at validation.
-                raw.pop("table_reference", None)
-                raw.pop("tableReference", None)
 
-        models.append(_as_model(raw, source=model_dir / MODEL_METADATA))
+        model_documents.append((model_dir.name, raw))
 
-    relationships: List[Relationship] = []
+    relationship_document: Dict[str, Any] = {}
     if paths.relationships_file.is_file():
-        raw = _read_yaml(paths.relationships_file)
-        for entry in raw.get("relationships") or []:
-            try:
-                relationships.append(Relationship.model_validate(entry))
-            except Exception as exc:
-                raise VannaError(
-                    ErrorCode.INVALID_MANIFEST,
-                    f"{paths.relationships_file}: {exc}",
-                    phase=ErrorPhase.PROJECT_LOAD,
-                    cause=exc,
-                )
+        relationship_document = _read_yaml(paths.relationships_file)
 
-    cubes: List[Cube] = []
-    for cube_file in paths.cube_files():
-        entry = _read_yaml(cube_file)
-        entry.setdefault("name", cube_file.stem)
+    return manifest_from_documents(
+        models=model_documents,
+        relationships=relationship_document,
+        cubes=[(path.stem, _read_yaml(path)) for path in paths.cube_files()],
+        views=[
+            (path.stem, path.read_text(encoding="utf-8").strip())
+            for path in paths.view_files()
+        ],
+        dialect=dialect,
+        where=str(paths.root),
+    )
+
+
+def manifest_from_documents(
+    *,
+    models: Sequence[Tuple[str, Dict[str, Any]]] = (),
+    relationships: Optional[Dict[str, Any]] = None,
+    cubes: Sequence[Tuple[str, Dict[str, Any]]] = (),
+    views: Sequence[Tuple[str, str]] = (),
+    dialect: str = "",
+    where: str = "the project",
+) -> Manifest:
+    """Build and validate a manifest from already-parsed documents.
+
+    The compilation step, separated from reading files, because the sources are no
+    longer necessarily files: with configuration in the control plane they are rows,
+    and an administrator editing a cube in a browser needs the same manifest built
+    the same way. Two implementations of "compile a project" would drift, and the
+    one that drifted would produce a manifest the file-based build does not --
+    which is a difference nobody would notice until a query was refused.
+
+    Each document is paired with the name it is filed under, so a model or cube
+    that does not name itself still gets the name it is addressed by.
+    """
+    built_models: List[SemanticModel] = []
+    for name, raw in models:
+        document = dict(raw or {})
+        document.setdefault("name", name)
+        if document.get("ref_sql"):
+            document.pop("refSql", None)
+            # A model with a sidecar query has no table; carrying both would trip
+            # the "exactly one source" rule at validation.
+            document.pop("table_reference", None)
+            document.pop("tableReference", None)
+        built_models.append(_as_model(document, source=Path(where) / name))
+
+    built_relationships: List[Relationship] = []
+    for entry in (relationships or {}).get("relationships") or []:
         try:
-            cubes.append(Cube.model_validate(entry))
+            built_relationships.append(Relationship.model_validate(entry))
         except Exception as exc:
             raise VannaError(
                 ErrorCode.INVALID_MANIFEST,
-                f"{cube_file}: {exc}",
+                f"{where}: relationship {entry!r}: {exc}",
                 phase=ErrorPhase.PROJECT_LOAD,
                 cause=exc,
             )
 
-    views: List[View] = [
-        View(name=path.stem, statement=path.read_text(encoding="utf-8").strip())
-        for path in paths.view_files()
-    ]
+    built_cubes: List[Cube] = []
+    for name, raw in cubes:
+        document = dict(raw or {})
+        document.setdefault("name", name)
+        try:
+            built_cubes.append(Cube.model_validate(document))
+        except Exception as exc:
+            raise VannaError(
+                ErrorCode.INVALID_MANIFEST,
+                f"{where}: cube {name}: {exc}",
+                phase=ErrorPhase.PROJECT_LOAD,
+                cause=exc,
+            )
 
     return Manifest(
-        models=models,
-        relationships=relationships,
-        cubes=cubes,
-        views=views,
+        models=built_models,
+        relationships=built_relationships,
+        cubes=built_cubes,
+        views=[View(name=name, statement=statement) for name, statement in views],
         data_source=dialect or None,
     )
 

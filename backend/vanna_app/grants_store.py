@@ -14,7 +14,6 @@ makes revoking a grant stop a write that was already approved.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -530,12 +529,7 @@ class PostgresGrantStore(GrantStore):
     async def _transact(self, body: Callable[[Any], None]) -> None:
         """Run ``body(cursor)`` inside one transaction, off the event loop."""
 
-        def run() -> None:
-            with self.db.transaction() as connection:
-                with connection.cursor() as cursor:
-                    body(cursor)
-
-        await asyncio.to_thread(run)
+        await self.db.transact(body)
 
 
 def _bump(cursor: Any, tenant: str, data_source_id: str) -> None:

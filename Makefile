@@ -21,6 +21,7 @@ NPM ?= npm
 # Where the integration tests find PostgreSQL. Override for a different instance:
 #   make test-integration DB_URL=postgresql://user:pass@host:5432/postgres
 DB_URL ?= postgresql://postgres:postgres123@localhost:5432/postgres
+APP_DB_URL ?= postgresql://postgres:postgres123@localhost:5432/vanna_app
 
 # Where the browser tests find the running stack, and who they sign in as. The
 # password has no default on purpose: `make password` prints the generated one, and
@@ -72,6 +73,31 @@ typecheck-frontend:  ## tsc over the web components
 .PHONY: test
 test:  ## Unit tests (no database needed)
 	$(PYTHON) -m pytest -m "not integration" -q
+
+.PHONY: plotly-bundle
+plotly-bundle:  ## Rebuild the Plotly bundle embedded in exported dashboards
+	@docker run --rm \
+	  -v "$(CURDIR)/tools/plotly_export_bundle:/src:ro" \
+	  -v "$(CURDIR)/backend/vanna/dashboards/vendor:/out" \
+	  -w /build node:20-alpine sh -c '\
+	    cp /src/package.json /src/entry.js . && \
+	    npm install --no-audit --no-fund --silent && \
+	    ./node_modules/.bin/esbuild entry.js --bundle --minify --format=iife \
+	      --target=es2018 --define:global=window \
+	      --define:process.env.NODE_ENV=\"production\" \
+	      --outfile=/out/plotly-export.min.js'
+	@# The figure builder is the browser's own, copied rather than reimplemented:
+	@# the export and the dashboard page have to draw a tile the same way.
+	cp frontend/public/assets/shared/tile-figure.js backend/vanna/dashboards/vendor/
+	@ls -l backend/vanna/dashboards/vendor/
+
+.PHONY: seed-config
+seed-config:  ## Migrate, import backend/ into the config catalog, regenerate database/
+	VANNA_APP_DATABASE_URL=$(APP_DB_URL) $(PYTHON) tools/seed_database.py
+
+.PHONY: export-schema
+export-schema:  ## Regenerate database/sql_schema.sql and database/seed/
+	VANNA_APP_DATABASE_URL=$(APP_DB_URL) $(PYTHON) tools/export_sql_schema.py
 
 .PHONY: test-integration
 test-integration:  ## Integration tests (needs PostgreSQL at DB_URL)

@@ -55,6 +55,11 @@ Thumbs.db
 
 *.md
 !README.md
+# ...except a project's curated knowledge, which is configuration rather than
+# documentation. The boot-time import catalogs the tree under /app, and excluding
+# these would give a container a catalog quietly missing rows the host's import
+# writes -- a difference between two "identical" deployments that nothing reports.
+!backend/projects/**/*.md
 docs/
 notebooks/
 img/

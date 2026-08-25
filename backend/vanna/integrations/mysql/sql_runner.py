@@ -3,7 +3,12 @@
 from typing import Optional
 import pandas as pd
 
-from vanna.capabilities.sql_runner import BaseSqlRunner, ExecutionPolicy
+from vanna.capabilities.sql_runner import (
+    BaseSqlRunner,
+    ConnectionPool,
+    ExecutionPolicy,
+    looks_dead,
+)
 
 
 class MySQLRunner(BaseSqlRunner):
@@ -29,6 +34,8 @@ class MySQLRunner(BaseSqlRunner):
         *,
         policy: Optional[ExecutionPolicy] = None,
         read_only: bool = True,
+        pool_max_size: int = 2,
+        pool_min_size: int = 0,
         **kwargs,
     ):
         """Initialize with MySQL connection parameters.
@@ -46,6 +53,11 @@ class MySQLRunner(BaseSqlRunner):
                 PostgreSQL, MySQL has no per-session read-only transaction
                 mode to fall back on, so the SQL policy above is doing more of
                 the work here.
+            pool_max_size: Connections this runner may hold open. Multiply by the
+                number of cached runtimes and again by the worker count to get
+                what the server sees -- see VANNA_CONNECTION_BUDGET.
+            pool_min_size: Accepted for symmetry with the other runners; this
+                pool opens lazily and never eagerly, so it is unused.
             **kwargs: Additional PyMySQL connection parameters
         """
         super().__init__(policy)
@@ -67,6 +79,40 @@ class MySQLRunner(BaseSqlRunner):
         self.port = port
         self.kwargs = kwargs
 
+        # Pooled. This opened a fresh connection per query -- a TCP handshake and
+        # an authentication round trip on every question, and a spike of new
+        # connections rather than a bounded set of reused ones whenever several
+        # people asked at once.
+        #
+        # `ping(reconnect=True)` is pymysql's own liveness check and is cheaper
+        # than discovering a dead socket by sending a query into it, so the pool
+        # uses it to decide whether a connection is worth handing out.
+        self._pool = ConnectionPool(
+            self._open,
+            alive=lambda connection: (connection.ping(reconnect=False) or True),
+            max_size=pool_max_size,
+            name=f"mysql {database}",
+        )
+
+    def _open(self):
+        """One new connection, with the timeouts the policy asks for."""
+        timeout = int(getattr(self.policy, "timeout_seconds", 30) or 30)
+        return self.pymysql.connect(
+            host=self.host,
+            user=self.user,
+            password=self.password,
+            database=self.database,
+            port=self.port,
+            cursorclass=self.pymysql.cursors.DictCursor,
+            connect_timeout=timeout,
+            read_timeout=timeout,
+            **self.kwargs,
+        )
+
+    def close(self) -> None:
+        """Close pooled connections. Called when a runtime is retired."""
+        self._pool.close()
+
     def _execute_sync(self, sql: str, timeout_seconds: int) -> pd.DataFrame:
         """Run the query on a worker thread.
 
@@ -74,20 +120,10 @@ class MySQLRunner(BaseSqlRunner):
         server resources instead of merely losing its client -- the wall-clock
         timeout in BaseSqlRunner cancels our wait, not MySQL's work.
         """
-        conn = self.pymysql.connect(
-            host=self.host,
-            user=self.user,
-            password=self.password,
-            database=self.database,
-            port=self.port,
-            cursorclass=self.pymysql.cursors.DictCursor,
-            connect_timeout=timeout_seconds,
-            read_timeout=timeout_seconds,
-            **self.kwargs,
-        )
+        conn = self._pool.acquire()
+        broken = False
 
         try:
-            conn.ping(reconnect=True)
             cursor = conn.cursor()
             try:
                 # Milliseconds, and SELECT-only in MySQL -- a failure here is
@@ -129,8 +165,15 @@ class MySQLRunner(BaseSqlRunner):
                 )
             finally:
                 cursor.close()
+        except BaseException as exc:
+            # Only the connection's health is judged here. Whether to *retry* is
+            # not this layer's decision and deliberately is not taken: the
+            # statement may have reached the server, and running it twice is
+            # worse than failing once. The pool retries acquisition, nothing else.
+            broken = looks_dead(exc)
+            raise
         finally:
-            conn.close()
+            self._pool.release(conn, broken=broken)
 
     def dry_run_sql(self, sql: str) -> None:
         """Plan the query without running it."""

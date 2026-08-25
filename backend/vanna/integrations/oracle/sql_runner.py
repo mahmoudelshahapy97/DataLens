@@ -52,9 +52,20 @@ class OracleRunner(BaseSqlRunner):
             oracledb.Error: If query execution fails
         """
         # Connect to the database
+        # `call_timeout` is in milliseconds and is the only server-side limit
+        # oracledb offers. Without it the wall-clock timeout in BaseSqlRunner
+        # abandons the client's wait while the query carries on burning Oracle's
+        # CPU -- the same distinction PostgresRunner draws with
+        # `statement_timeout`, which is why it is worth setting even though this
+        # runner is not yet pooled.
         conn = self.oracledb.connect(
             user=self.user, password=self.password, dsn=self.dsn, **self.kwargs
         )
+        try:
+            conn.call_timeout = max(1, int(timeout_seconds)) * 1000
+        except Exception:  # pragma: no cover - older driver builds
+            # Not worth losing the query over; the client-side wait still applies.
+            pass
 
         cursor = conn.cursor()
 

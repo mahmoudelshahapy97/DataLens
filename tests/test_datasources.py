@@ -313,11 +313,15 @@ class TestTheRuntimeCacheIsKeyedOnThePair:
             # for the wrong reason.
             self.last_used = time.monotonic()
             self.closed = False
+            self.retired = False
 
         def touch(self):
             import time
 
             self.last_used = time.monotonic()
+
+        def retire(self):
+            self.retired = True
 
         def close(self):
             self.closed = True
@@ -400,7 +404,14 @@ class TestTheRuntimeCacheIsKeyedOnThePair:
 
         await platform.runtime_for("acme", data_source_id="db-a", invalidate=True)
 
-        assert a.closed and b.closed
+        # Retired, not closed. This used to assert `closed`, which pinned a bug:
+        # invalidation happens while the workspace is being used, and closing a
+        # runtime's connection pool underneath a request that is still running
+        # fails that request -- observed under load as a 400 on `/run-sql`, sharing
+        # its request id with "connection pool is closed". Dropping the reference
+        # releases the connections when the last user lets go instead.
+        assert a.retired and b.retired
+        assert not a.closed and not b.closed
         # globex is untouched, and acme/db-a was rebuilt.
         assert {key[0] for key in platform._runtimes} == {"acme", "globex"}
 

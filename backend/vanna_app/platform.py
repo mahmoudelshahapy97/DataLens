@@ -30,6 +30,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from .config_store import ConfigCache
 from .observability import get_metrics
 from .secrets import Secret
 from .tenancy import describe_data_source
@@ -232,7 +233,7 @@ class TenantRuntime:
 
     __slots__ = (
         "tenant_id", "data_source", "dialect", "runner", "catalog", "policy",
-        "agent", "handler", "built_at", "last_used", "write_service",
+        "agent", "handler", "built_at", "last_used", "write_service", "retired",
     )
 
     def __init__(
@@ -259,12 +260,34 @@ class TenantRuntime:
         self.write_service = write_service
         self.built_at = time.monotonic()
         self.last_used = self.built_at
+        #: True once evicted. The object stays usable -- whoever still holds it is
+        #: mid-request -- it simply is not in the cache any more.
+        self.retired = False
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
 
+    def retire(self) -> None:
+        """Stop being cached, without closing anything.
+
+        The eviction path calls this instead of :meth:`close`. Closing on eviction
+        was a use-after-close: a runtime leaves the LRU the moment a newer one
+        arrives, which can be while one of its own requests is still running, and
+        that request then fails with "connection pool is closed" -- observed as a
+        400 on `/run-sql` under load, sharing its request id with the warning.
+
+        Dropping the reference is enough. The runner closes its pool in `__del__`,
+        so the connections go back exactly when the last user lets go, which is
+        the guarantee a grace period can only approximate.
+        """
+        self.retired = True
+
     def close(self) -> None:
-        """Release the warehouse connection this runtime holds."""
+        """Release the warehouse connection this runtime holds, now.
+
+        For shutdown, where there are no in-flight requests to strand. Anywhere
+        else, prefer :meth:`retire`.
+        """
         for attribute in ("close", "dispose", "shutdown"):
             method = getattr(self.runner, attribute, None)
             if callable(method):
@@ -303,7 +326,16 @@ def build_sql_runner(
         return SqliteRunner(settings.sqlite_path, policy=policy, read_only=True)
 
     try:
-        return build_runner(database_url, policy=policy, read_only=read_only)
+        return build_runner(
+            database_url,
+            policy=policy,
+            read_only=read_only,
+            # Sized from the connection budget rather than the driver's default:
+            # this number is multiplied by the number of cached runtimes and again
+            # by the worker count, which is how five became several hundred.
+            pool_max=settings.warehouse_pool_max,
+            pool_min=settings.warehouse_pool_min,
+        )
     except UnsupportedDataSource:
         # Deliberately not a fall back to SQLite. That is what this did before, and
         # it meant a workspace pointed at `mysql://...` quietly answered from the
@@ -343,6 +375,7 @@ class Platform:
         catalog_factory: Any = None,
         domain_store: Any = None,
         datasource_registry: Any = None,
+        config_store: Any = None,
     ) -> None:
         from vanna.core.generation import LocalGenerationStore
         from vanna.core.llm import DelegatingLlmService
@@ -454,6 +487,21 @@ class Platform:
         self._locks: Dict[Tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
 
+        # Semantic projects, from the catalog rather than from disk when this
+        # deployment has switched over. None in `disk` mode and without a control
+        # plane, in which case `load_project` reads the YAML tree as it always did.
+        self.config_store = config_store
+        # Built manifests, held between runtime builds and dropped when the
+        # catalog's fingerprint moves. `on_change` retires the cached runtimes
+        # rather than only the manifests: a runtime holds the tool registry that
+        # was built around the old manifest, so forgetting one without the other
+        # would leave every existing runtime enforcing the previous cubes.
+        self.config_cache = ConfigCache(
+            config_store,
+            refresh_seconds=settings.config_refresh_seconds,
+            on_change=self._forget_runtimes_after_config_change,
+        )
+
     # -- lock management -----------------------------------------------
 
     async def _lock_for(self, key: Tuple[str, str]) -> asyncio.Lock:
@@ -472,6 +520,11 @@ class Platform:
         A manifest describes *one* database. Applying a single global manifest to
         every tenant shows a workspace another workspace's models and makes every
         query fail against a schema that does not contain them.
+
+        Only consulted in ``disk`` mode. With ``VANNA_CONFIG_SOURCE=database`` the
+        same rule -- a directory per workspace, named for it -- survives as the
+        ``tenant_id`` column on ``config_files``, so which project belongs to
+        which workspace does not depend on which mode is running.
         """
         if self.settings.projects_dir:
             candidate = Path(self.settings.projects_dir) / tenant_id
@@ -483,12 +536,88 @@ class Platform:
 
         return None
 
-    def load_project(self, tenant_id: str) -> Tuple[Any, Any]:
+    async def load_project(self, tenant_id: str) -> Tuple[Any, Any]:
         """Load one workspace's semantic project. Returns ``(project, manifest)``.
 
         Reads the *built* manifest rather than the YAML tree, so what runs is what
         somebody deliberately compiled with ``vanna project build``.
+
+        Cached in ``database`` mode, because this runs on every cold runtime build
+        and a manifest is a few hundred kilobytes of JSON to parse and validate.
+        The cache re-checks the catalog's fingerprint rather than trusting an
+        in-process invalidation, which is what makes an edit visible to all four
+        workers -- see :class:`~vanna_app.config_store.ConfigCache`.
+
+        Not cached in ``disk`` mode, and that is not an oversight. The fingerprint
+        the cache revalidates against is a query, so with no catalog behind it an
+        entry would live for the life of the process -- and editing a YAML file
+        under a bind mount would stop taking effect at all, which is the whole
+        local development loop.
         """
+        if self.settings.config_source != "database":
+            return await self._load_project(tenant_id)
+        return await self.config_cache.get(
+            ("project", tenant_id), lambda: self._load_project(tenant_id)
+        )
+
+    async def _load_project(self, tenant_id: str) -> Tuple[Any, Any]:
+        if self.settings.config_source == "database":
+            return await self._load_project_from_catalog(tenant_id)
+        # Off the event loop: reading and validating a manifest is tens of
+        # milliseconds of blocking file IO and pydantic, and it used to run inline
+        # on the loop that was streaming somebody else's answer.
+        return await asyncio.to_thread(self._load_project_from_disk, tenant_id)
+
+    async def _load_project_from_catalog(self, tenant_id: str) -> Tuple[Any, Any]:
+        """The same project, read from ``config_files``.
+
+        Deliberately without a fallback to disk. A deployment that has switched to
+        the catalog and finds it empty has a failed import, and quietly running
+        the YAML that happens to be baked into the image would hide that behind a
+        healthy-looking service serving whatever was shipped -- which is the
+        failure mode moving configuration into PostgreSQL exists to remove.
+        """
+        from .config_store import ConfigurationUnavailable, StoredProject
+
+        if self.config_store is None:
+            raise ConfigurationUnavailable(
+                "VANNA_CONFIG_SOURCE=database, but there is no control plane to "
+                "read the configuration catalog from."
+            )
+
+        config_row = await self.config_store.get(
+            f"projects/{tenant_id}/vanna_project.yml"
+        )
+        if config_row is None:
+            # Not an error: a workspace with no semantic project queries its
+            # physical catalog, exactly as one with no project directory does.
+            return None, None
+
+        project = StoredProject.from_record(config_row)
+
+        manifest_row = await self.config_store.get(
+            f"projects/{tenant_id}/target/mdl.json"
+        )
+        if manifest_row is None or manifest_row.parsed is None:
+            # An incomplete configuration, not an absent one. Falling through to
+            # the physical catalog here would silently widen what the workspace
+            # can reach: grants for a semantic workspace name models, so a
+            # workspace that loses its manifest loses the enforcement built on it.
+            raise ConfigurationUnavailable(
+                f"Workspace {tenant_id} has a semantic project in the catalog but "
+                f"no built manifest (projects/{tenant_id}/target/mdl.json). Run "
+                "`vanna project build` and re-import, or remove the project."
+            )
+
+        from vanna.semantic.models import Manifest
+
+        # The same validation the file path uses, so a bad stored manifest fails
+        # in the same place and with the same message as a bad file one.
+        manifest = Manifest.from_json_dict(manifest_row.parsed)
+        self._log_semantic_layer(tenant_id, project, manifest, source="the catalog")
+        return project, manifest
+
+    def _load_project_from_disk(self, tenant_id: str) -> Tuple[Any, Any]:
         project_dir = self._project_dir_for(tenant_id)
         if not project_dir:
             return None, None
@@ -512,15 +641,60 @@ class Platform:
             )
             return project, None
 
+        self._log_semantic_layer(tenant_id, project, manifest, source=project_dir)
+        return project, manifest
+
+    @staticmethod
+    def _log_semantic_layer(
+        tenant_id: str, project: Any, manifest: Any, *, source: str
+    ) -> None:
         logger.info(
-            "Semantic layer for %s: %d models, %d relationships, %d cubes (fanout_guard=%s)",
+            "Semantic layer for %s from %s: %d models, %d relationships, %d cubes "
+            "(fanout_guard=%s)",
             tenant_id,
+            source,
             len(manifest.models),
             len(manifest.relationships),
             len(manifest.cubes),
             project.config.fanout_guard,
         )
-        return project, manifest
+
+    def forget_configuration(self) -> None:
+        """Drop cached configuration and the runtimes built on it, now.
+
+        For the worker that took a configuration write: it should not have to wait
+        for its own fingerprint check to see its own edit. The other workers find
+        out on their next check, which is what bounds how stale they can be.
+        """
+        self.config_cache.clear()
+        self._forget_runtimes_after_config_change()
+
+    def _forget_runtimes_after_config_change(self) -> None:
+        """Retire every cached runtime, because the configuration behind it moved.
+
+        Retired rather than closed, for the reason `retire` documents: a
+        configuration change lands while requests are in flight, and closing a
+        runner underneath one of them fails that request with "connection pool is
+        closed". The next request builds a fresh runtime from the new manifest.
+
+        Synchronous on purpose -- it is called from the cache's revalidation,
+        which cannot await a per-key lock without deadlocking against a build it
+        may be racing. Emptying the dict is enough: a builder holding the lock
+        installs its runtime afterwards, and the next fingerprint check retires
+        that one too.
+        """
+        stale, self._runtimes = list(self._runtimes.values()), OrderedDict()
+        for runtime in stale:
+            runtime.retire()
+        if stale:
+            logger.info(
+                "Retired %d cached runtime(s) after a configuration change",
+                len(stale),
+            )
+            try:
+                get_metrics().tenant_runtimes.set(0)
+            except Exception:  # pragma: no cover - metrics are never load-bearing
+                pass
 
     # -- runtimes ------------------------------------------------------
 
@@ -619,7 +793,8 @@ class Platform:
                 current.touch()
                 return current
             if current is not None:
-                current.close()
+                # Same reasoning as eviction: somebody may still be using it.
+                current.retire()
                 self._runtimes.pop(key, None)
 
             runtime = await self._build_runtime(tenant_id, source_id, database_url)
@@ -638,11 +813,13 @@ class Platform:
         return ttl > 0 and (time.monotonic() - runtime.last_used) > ttl
 
     def _evict_if_needed(self) -> None:
-        """Keep the cache within its bound, closing what leaves."""
+        """Keep the cache within its bound, retiring what leaves."""
         limit = self.settings.max_tenant_runtimes
         while len(self._runtimes) > limit:
             (tenant_id, source_id), runtime = self._runtimes.popitem(last=False)
-            runtime.close()
+            # Retire, do not close: a request may still be running on this
+            # runtime, and closing its pool underneath it fails that request.
+            runtime.retire()
             logger.info(
                 "Evicted cached runtime for %s/%s (cache limit %d reached). The limit now counts workspace-database pairs, so a workspace with several databases uses several slots.",
                 tenant_id, source_id, limit,
@@ -660,7 +837,12 @@ class Platform:
             async with lock:
                 stale = self._runtimes.pop(key, None)
             if stale is not None:
-                stale.close()
+                # Retired, not closed. Invalidation happens while the workspace is
+                # in use -- a data source is added, a plan changes -- so the same
+                # use-after-close applies here as on eviction. The next request
+                # builds a fresh runtime either way; this one's connections go back
+                # when its last in-flight request lets go.
+                stale.retire()
                 logger.info("Dropped cached runtime for %s/%s", key[0], key[1])
 
         # The catalog describes the *old* database. Left in place, the agent is
@@ -907,7 +1089,7 @@ class Platform:
         """
         from vanna.core.sql_policy import SqlPolicyToolRegistry
 
-        project, manifest = self.load_project(tenant_id)
+        project, manifest = await self.load_project(tenant_id)
         fanout_guard = project.config.fanout_guard if project else "warn"
         session_properties = dict(self.session_properties)
         if project is not None:

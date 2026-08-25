@@ -13,7 +13,19 @@ leak than one without.
 
 ```
 database/
-└── migrations/        0001_initial.sql … 0009_grant_defaults.sql
+├── migrations/            0001_initial.sql … 0014_configuration_catalog.sql
+├── seed/
+│   └── configuration.sql  config_files + config_versions
+└── sql_schema.sql         every applied migration, concatenated. No rows.
+```
+
+`migrations/` is hand-written and is the source of truth for the schema. The other
+two are **generated**, by `tools/export_sql_schema.py`, and rebuilding an empty
+database from them is two commands:
+
+```bash
+psql "$VANNA_APP_DATABASE_URL" -f database/sql_schema.sql
+psql "$VANNA_APP_DATABASE_URL" -f database/seed/configuration.sql
 ```
 
 ## How the schema changes
@@ -71,6 +83,67 @@ is a step to forget.
 `tests/test_migrations.py` covers discovery, ordering and the lock, and
 `tests/test_concurrent_boot.py` covers several replicas booting at once. Both run
 without a database except where marked `integration`.
+
+## The configuration catalog
+
+`config_files` holds the YAML and JSON this deployment runs on — semantic projects
+(`vanna_project.yml`, `cubes/`, `models/`, `relationships.yml`, `target/mdl.json`),
+the instruction baseline and packs, and `domains/domains.yml`. `config_versions`
+holds every previous version of each, with who changed it and why.
+
+With `VANNA_CONFIG_SOURCE=database` this is what the application reads. **Disk is
+not consulted at all** — not as a fallback, not when a row is missing. A missing
+manifest is an error, because a deployment that quietly serves the YAML baked into
+its image while you believe it is serving the catalog is worse than one that stops.
+
+The direction of travel is one-way:
+
+```
+files ──import──▶ config_files ──▶ ConfigStore + cache ──▶ runtime
+                       ▲
+        console / API ─┘
+```
+
+Once an administrator has edited a cube through the API, the files are the stale
+copy. `tools/import_config_files.py` overwrites the catalog from them, so running
+it after that is a deliberate act, not a routine one — and the boot-time bootstrap
+only ever fills an **empty** catalog, so a restart cannot do it by accident.
+
+Three commands:
+
+| | |
+|---|---|
+| `python tools/seed_database.py` | migrate, import, regenerate this directory |
+| `python tools/import_config_files.py --dry-run` | what would change, without writing |
+| `python tools/export_sql_schema.py` | regenerate `sql_schema.sql` and `seed/` |
+
+### What is not in here, and why
+
+`export_sql_schema.py` writes the schema and the configuration, and nothing else.
+
+`--reference-data` adds business domains, starter questions, instructions and the
+permission matrix. Those hold no credentials, but a workspace's rules and grants
+are written by its own administrators — committing them to this repository is a
+decision worth making deliberately, so it is a flag rather than a default.
+
+`--full` adds everything. It does **not** otherwise write `users`, `sessions`,
+`api_tokens`,
+`password_resets`, `tenant_datasources`, `tenants`, `generations`,
+`pending_writes`, `conversations`, `saved_queries` or either audit table. Those
+carry password hashes, token hashes, encrypted warehouse credentials and the
+questions customers asked.
+
+`--full` insists on `--out` pointing somewhere **outside any git repository**. That is not ceremony: content that reaches git history once stays
+there, and `.gitignore` does not stop `git add -f`.
+
+### Editing a cube changes the manifest
+
+`target/mdl.json` is a build output — the compiled form of the project's YAML — and
+the runtime reads only the compiled form. So a write through the API recompiles it
+in the same transaction, using the same `manifest_from_documents` that
+`vanna project build` uses for files. A save that left the manifest alone would
+report success and change nothing, which is the most confusing outcome a working
+save can have.
 
 ## Where the analytics databases come from
 

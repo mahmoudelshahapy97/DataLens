@@ -157,6 +157,21 @@ class Settings:
     app_pool_min: int = 2
     app_pool_max: int = 16
     app_pool_wait_seconds: int = 10
+    app_statement_timeout_ms: int = 15_000
+    #: Connections one *runtime* may open to its warehouse. Multiplied by the
+    #: number of cached runtimes and again by the worker count -- see
+    #: `connection_ceiling`.
+    warehouse_pool_max: int = 2
+    warehouse_pool_min: int = 0
+    #: What `uvicorn --workers` was started with. The application cannot read it,
+    #: and every pool is per process, so the arithmetic needs it stated.
+    web_concurrency: int = 4
+    #: Connections this deployment is allowed to open to one database server.
+    connection_budget: int = 80
+    #: Threads for the blocking work the event loop hands off -- every control-plane
+    #: query, every warehouse query, every example search. Sized explicitly because
+    #: `asyncio.to_thread` does not remove pressure, it relocates it.
+    thread_pool_max: int = 32
     auto_migrate: bool = True
 
     # -- llm -----------------------------------------------------------
@@ -183,7 +198,7 @@ class Settings:
     rate_limit_per_min: int = 20
     login_max_attempts: int = 8
     login_window_seconds: int = 300
-    max_tenant_runtimes: int = 32
+    max_tenant_runtimes: int = 2
     tenant_runtime_ttl_seconds: int = 1800
     generation_retention_days: int = 365
 
@@ -201,6 +216,27 @@ class Settings:
     index_backend: str = "lexical"
     project_dir: str = ""
     projects_dir: str = ""
+
+    # -- where configuration is read from ------------------------------
+    #: ``database`` reads semantic projects and the instruction library from
+    #: ``config_files``; ``disk`` reads the YAML tree, which is what every
+    #: deployment did before the catalog existed.
+    #:
+    #: Two modes rather than "try the database, fall back to disk". A silent
+    #: fallback turns a failed import into a deployment that looks healthy while
+    #: running last week's cubes, and the whole point of moving configuration
+    #: into PostgreSQL is that what is running is knowable. Switching back is a
+    #: one-variable rollback, which is a different thing from an automatic one.
+    config_source: str = "disk"
+    #: How long a worker may serve cached configuration before re-checking the
+    #: catalog fingerprint. Four workers each hold their own cache, so this --
+    #: not the write itself -- is what bounds how long an edit takes to appear.
+    config_refresh_seconds: int = 5
+    #: Import ``backend/`` into the catalog at boot when it is empty. For a fresh
+    #: volume and for local work; a deployment that manages configuration through
+    #: the API wants this off, so a restart cannot resurrect the shipped files.
+    config_bootstrap: bool = False
+
     payment_provider: str = "manual"
 
     # -- http ----------------------------------------------------------
@@ -312,6 +348,14 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         app_pool_min=_number(env, "VANNA_APP_POOL_MIN", 2, minimum=1),
         app_pool_max=_number(env, "VANNA_APP_POOL_MAX", 16, minimum=1),
         app_pool_wait_seconds=_number(env, "VANNA_APP_POOL_WAIT_SECONDS", 10, minimum=1),
+        app_statement_timeout_ms=_number(
+            env, "VANNA_APP_STATEMENT_TIMEOUT_MS", 15_000, minimum=1_000
+        ),
+        warehouse_pool_max=_number(env, "VANNA_WAREHOUSE_POOL_MAX", 2, minimum=1),
+        warehouse_pool_min=_number(env, "VANNA_WAREHOUSE_POOL_MIN", 0, minimum=0),
+        web_concurrency=_number(env, "VANNA_WEB_CONCURRENCY", 4, minimum=1),
+        connection_budget=_number(env, "VANNA_CONNECTION_BUDGET", 80, minimum=1),
+        thread_pool_max=_number(env, "VANNA_THREAD_POOL_MAX", 32, minimum=4),
         auto_migrate=_flag(env, "VANNA_AUTO_MIGRATE", True),
         llm_provider=_text(env, "VANNA_LLM_PROVIDER", "auto").lower(),
         admin_emails=_emails(env, "VANNA_ADMIN_EMAILS"),
@@ -334,7 +378,7 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         rate_limit_per_min=_number(env, "VANNA_RATE_LIMIT_PER_MIN", 20, minimum=1),
         login_max_attempts=_number(env, "VANNA_LOGIN_MAX_ATTEMPTS", 8, minimum=1),
         login_window_seconds=_number(env, "VANNA_LOGIN_WINDOW_SECONDS", 300, minimum=1),
-        max_tenant_runtimes=_number(env, "VANNA_MAX_TENANT_RUNTIMES", 32, minimum=1),
+        max_tenant_runtimes=_number(env, "VANNA_MAX_TENANT_RUNTIMES", 2, minimum=1),
         tenant_runtime_ttl_seconds=_number(
             env, "VANNA_TENANT_RUNTIME_TTL_SECONDS", 1800, minimum=60
         ),
@@ -350,6 +394,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         index_backend=_text(env, "VANNA_INDEX_BACKEND", "lexical"),
         project_dir=_text(env, "VANNA_PROJECT_DIR"),
         projects_dir=_text(env, "VANNA_PROJECTS_DIR"),
+        config_source=_text(env, "VANNA_CONFIG_SOURCE", "disk").lower(),
+        config_refresh_seconds=_number(env, "VANNA_CONFIG_REFRESH_SECONDS", 5, minimum=0),
+        config_bootstrap=_flag(env, "VANNA_CONFIG_BOOTSTRAP", False),
         payment_provider=_text(env, "VANNA_PAYMENT_PROVIDER", "manual"),
         cors_origins=tuple(_list(env, "VANNA_CORS_ORIGINS", "http://localhost:3000")),
         smtp_host=_text(env, "VANNA_SMTP_HOST"),
@@ -466,6 +513,50 @@ _BASELINE_RULES: Tuple[Tuple[Callable[[Settings], bool], str], ...] = (
 )
 
 
+def connection_ceiling(settings: Settings) -> int:
+    """The most connections this configuration can open to one database server.
+
+    Every pool is per process, so each term is multiplied by the worker count::
+
+        workers x (control plane + cached runtimes x warehouse pool)
+
+    This is the *maximum possible*, which is not the maximum observed and not what
+    the budget allows -- three numbers that get confused in every conversation
+    about connection limits. Measured on this deployment, 27 concurrent users
+    across nine workspaces peaked at 47 while the arithmetic permitted 704: the LRU
+    keeps the middle term far below its ceiling in practice. The ceiling still
+    decides whether a bad afternoon ends in `too many clients`, which takes
+    authentication down with it because the control plane shares the server.
+    """
+    per_worker = settings.app_pool_max + (
+        settings.max_tenant_runtimes * settings.warehouse_pool_max
+    )
+    return settings.web_concurrency * per_worker
+
+
+def warn_about_connections(settings: Settings) -> Optional[str]:
+    """The budget complaint, or None. A warning, never a refusal.
+
+    The real limit lives on a database server this process does not administer, so
+    refusing to boot over our own estimate would be worse than saying it plainly
+    and starting. Returned rather than logged so a test can read it.
+    """
+    ceiling = connection_ceiling(settings)
+    if ceiling <= settings.connection_budget:
+        return None
+    return (
+        f"Connection ceiling {ceiling} exceeds VANNA_CONNECTION_BUDGET "
+        f"({settings.connection_budget}): "
+        f"{settings.web_concurrency} workers x ("
+        f"VANNA_APP_POOL_MAX {settings.app_pool_max} + "
+        f"VANNA_MAX_TENANT_RUNTIMES {settings.max_tenant_runtimes} x "
+        f"VANNA_WAREHOUSE_POOL_MAX {settings.warehouse_pool_max}). "
+        "Every term is multiplied by the worker count, so VANNA_WEB_CONCURRENCY is "
+        "the largest lever. If the control plane and the warehouses share a server, "
+        "they share this budget."
+    )
+
+
 def validate(settings: Settings) -> List[str]:
     """Every problem with this configuration. Empty means it is safe to start."""
     problems: List[str] = []
@@ -485,6 +576,24 @@ def validate(settings: Settings) -> List[str]:
             f"VANNA_APP_POOL_MIN ({settings.app_pool_min}) is greater than "
             f"VANNA_APP_POOL_MAX ({settings.app_pool_max})."
         )
+    if settings.warehouse_pool_min > settings.warehouse_pool_max:
+        problems.append(
+            f"VANNA_WAREHOUSE_POOL_MIN ({settings.warehouse_pool_min}) is greater "
+            f"than VANNA_WAREHOUSE_POOL_MAX ({settings.warehouse_pool_max})."
+        )
+    if settings.config_source not in ("disk", "database"):
+        problems.append(
+            f"VANNA_CONFIG_SOURCE is {settings.config_source!r}. It must be "
+            "'database' (semantic projects and the instruction library come from "
+            "the config_files catalog) or 'disk' (they come from the YAML tree)."
+        )
+    if settings.config_source == "database" and not settings.app_database_url:
+        problems.append(
+            "VANNA_CONFIG_SOURCE=database needs VANNA_APP_DATABASE_URL: the "
+            "catalog lives in the control plane, and there is no control plane "
+            "configured to read it from."
+        )
+
     unknown = set(settings.auth_methods) - {"password", "oidc"}
     if unknown:
         problems.append(
@@ -501,6 +610,10 @@ def load_and_validate(env: Optional[Mapping[str, str]] = None) -> Settings:
     if problems:
         raise ConfigError(problems)
 
+    # Deliberately not logged here. This function runs inside `get_settings()`,
+    # which `create_app` calls *before* `configure_logging`, so anything logged at
+    # this point is discarded. `wiring._log_startup_summary` says it instead, at
+    # the first moment a reader could see it.
     if settings.mode == DEMO:
         logger.warning(
             "Running in DEMO mode: anonymous access is permitted, limits are "

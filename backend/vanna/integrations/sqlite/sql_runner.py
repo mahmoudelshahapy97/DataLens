@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from typing import Optional
 
 import pandas as pd
@@ -45,14 +46,50 @@ class SqliteRunner(BaseSqlRunner):
         super().__init__(policy=policy)
         self.database_path = database_path
         self.read_only = read_only
+        # One connection, reused, guarded by a lock.
+        #
+        # Deliberately *not* the pool the client/server runners use: SQLite is a
+        # file, not a server, so there is no handshake to amortise and no
+        # `max_connections` to respect -- the cost being avoided here is opening
+        # and parsing the database header on every query, which for a file on a
+        # container volume is not free.
+        #
+        # A lock rather than a connection per thread because SQLite serialises
+        # writes to a database anyway, and `check_same_thread=False` without a
+        # lock is how you get "SQLite objects created in a thread can only be
+        # used in that same thread" in production and nowhere else.
+        self._connection: Optional[sqlite3.Connection] = None
+        self._lock = threading.Lock()
 
     def _connect(self) -> sqlite3.Connection:
-        if self.read_only:
-            # file: URI with mode=ro makes the engine reject writes outright,
-            # independent of anything the policy layer did or did not catch.
-            uri = f"file:{self.database_path}?mode=ro"
-            return sqlite3.connect(uri, uri=True)
-        return sqlite3.connect(self.database_path)
+        """The shared connection, opened on first use."""
+        if self._connection is not None:
+            return self._connection
+        with self._lock:
+            if self._connection is None:
+                if self.read_only:
+                    # file: URI with mode=ro makes the engine reject writes
+                    # outright, independent of anything the policy layer did or
+                    # did not catch.
+                    uri = f"file:{self.database_path}?mode=ro"
+                    connection = sqlite3.connect(
+                        uri, uri=True, check_same_thread=False
+                    )
+                else:
+                    connection = sqlite3.connect(
+                        self.database_path, check_same_thread=False
+                    )
+                self._connection = connection
+        return self._connection
+
+    def close(self) -> None:
+        """Close the shared connection. Called when a runtime is retired."""
+        with self._lock:
+            if self._connection is not None:
+                try:
+                    self._connection.close()
+                finally:
+                    self._connection = None
 
     def dry_run_sql(self, sql: str) -> None:
         """Validate via ``EXPLAIN``, which prepares the statement without running it.
@@ -62,10 +99,8 @@ class SqliteRunner(BaseSqlRunner):
         without touching a single row.
         """
         conn = self._connect()
-        try:
+        with self._lock:
             conn.execute(f"EXPLAIN {sql}")
-        finally:
-            conn.close()
 
     def _execute_sync(self, sql: str, timeout_seconds: int) -> pd.DataFrame:
         """Execute *sql*. Runs on a worker thread."""
@@ -82,23 +117,26 @@ class SqliteRunner(BaseSqlRunner):
         def _abort_if_expired() -> int:
             return 1 if time.monotonic() > deadline else 0
 
-        conn.set_progress_handler(_abort_if_expired, 10_000)
+        # Held for the whole statement: the connection is shared now, and two
+        # threads interleaving cursors on one SQLite connection is undefined at
+        # best. The progress handler is per connection too, so an unsynchronised
+        # second query would inherit -- or clear -- this one's deadline.
+        with self._lock:
+            conn.set_progress_handler(_abort_if_expired, 10_000)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql)
 
-        try:
-            cursor = conn.cursor()
-            cursor.execute(sql)
+                if cursor.description is None:
+                    return pd.DataFrame()
 
-            if cursor.description is None:
-                return pd.DataFrame()
-
-            rows = cursor.fetchall()
-            columns = [d[0] for d in cursor.description]
-            if not rows:
-                return pd.DataFrame(columns=columns)
-            return pd.DataFrame([dict(row) for row in rows])
-        finally:
-            conn.set_progress_handler(None, 0)
-            conn.close()
+                rows = cursor.fetchall()
+                columns = [d[0] for d in cursor.description]
+                if not rows:
+                    return pd.DataFrame(columns=columns)
+                return pd.DataFrame([dict(row) for row in rows])
+            finally:
+                conn.set_progress_handler(None, 0)
 
     # ------------------------------------------------------------------
     # Writes
@@ -133,6 +171,10 @@ class SqliteRunner(BaseSqlRunner):
 
         started = time.perf_counter()
         conn = self._connect()
+        # A write holds the shared connection for the whole transaction. Sharing
+        # it with a concurrent read would let that read see uncommitted rows or,
+        # worse, have its cursor stepped by the other thread.
+        self._lock.acquire()
         conn.row_factory = sqlite3.Row
         # Without this, sqlite3 opens an implicit transaction for DML and
         # commits it at the next DDL or on close -- which would defeat the
@@ -192,7 +234,8 @@ class SqliteRunner(BaseSqlRunner):
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
         finally:
-            conn.close()
+            # Released, not closed: the connection outlives this write now.
+            self._lock.release()
 
 
 def _constraint_kind(exc: Exception) -> str:

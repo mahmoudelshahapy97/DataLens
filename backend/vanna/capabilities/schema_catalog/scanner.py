@@ -113,6 +113,30 @@ def is_sensitive_column(name: str) -> bool:
     return bool(_SENSITIVE_RE.search(name))
 
 
+def _cell(row: Any, name: str) -> Any:
+    """One column of a result row, whatever case the engine returned it in.
+
+    ``information_schema`` is standard; the *case* its columns come back in is
+    not. PostgreSQL and SQLite hand back ``table_name``, MySQL hands back
+    ``TABLE_NAME`` -- because that is how MySQL declares them and DictCursor
+    reports what the server said. Oracle uppercases everything by convention.
+
+    Reading only the lowercase spelling made every MySQL scan produce a table
+    called ``None.None``, which failed validation with a message about a string
+    -- an error a long way from its cause. Rather than normalise every driver's
+    rows somewhere else, every read of a result row goes through here.
+    """
+    if not isinstance(row, dict):
+        return None
+    if name in row:
+        return row[name]
+    lowered = name.lower()
+    for key, value in row.items():
+        if str(key).lower() == lowered:
+            return value
+    return None
+
+
 class SchemaScanner:
     """Populates a :class:`SchemaCatalog` by introspecting a live database.
 
@@ -248,7 +272,20 @@ class SchemaScanner:
                 "WHERE type IN ('table','view') "
                 "AND name NOT LIKE 'sqlite_%' ORDER BY name",
             )
-            return [(None, r["name"]) for r in rows]
+            return [(None, _cell(r, "name")) for r in rows]
+
+        # In MySQL a "schema" *is* a database, and one server routinely holds a
+        # dozen unrelated ones. "Everything that is not a system schema" therefore
+        # means every other customer's database on the same server: a scan of
+        # `sakila` came back with 71 tables belonging to booking, chinook,
+        # healthcare and northwind. Wrong, and a disclosure.
+        #
+        # `DATABASE()` is the one the connection string named, which is exactly the
+        # scope the workspace was pointed at. PostgreSQL is unaffected -- its
+        # schemas live inside one database and the connection already bounds them.
+        if schema is None and self.dialect == "mysql":
+            current = await self._query(context, "SELECT DATABASE() AS db")
+            schema = _cell(current[0], "db") if current else None
 
         # information_schema is supported by PostgreSQL, MySQL, Snowflake,
         # SQL Server, DuckDB, ClickHouse, and BigQuery (per-dataset).
@@ -264,7 +301,7 @@ class SchemaScanner:
             f"WHERE table_type IN ('BASE TABLE','VIEW') {where} "
             "ORDER BY table_schema, table_name",
         )
-        return [(r.get("table_schema"), r.get("table_name")) for r in rows]
+        return [(_cell(r, "table_schema"), _cell(r, "table_name")) for r in rows]
 
     async def _scan_table(
         self,
@@ -319,7 +356,7 @@ class SchemaScanner:
         if not rows:
             return None
         try:
-            return int(rows[0]["n"])
+            return int(_cell(rows[0], "n") or 0)
         except (KeyError, TypeError, ValueError):
             return None
 
@@ -343,11 +380,11 @@ class SchemaScanner:
             columns = [
                 ColumnMetadata(
                     name=r["name"],
-                    data_type=(r.get("type") or "unknown").lower(),
-                    nullable=not r.get("notnull"),
-                    is_primary_key=bool(r.get("pk")),
-                    is_generated=int(r.get("hidden") or 0) in (2, 3),
-                    has_default=r.get("dflt_value") is not None,
+                    data_type=(_cell(r, "type") or "unknown").lower(),
+                    nullable=not _cell(r, "notnull"),
+                    is_primary_key=bool(_cell(r, "pk")),
+                    is_generated=int(_cell(r, "hidden") or 0) in (2, 3),
+                    has_default=_cell(r, "dflt_value") is not None,
                 )
                 for r in rows
             ]
@@ -399,11 +436,13 @@ class SchemaScanner:
 
         columns = [
             ColumnMetadata(
-                name=r["column_name"],
-                data_type=(r.get("data_type") or "unknown").lower(),
-                nullable=str(r.get("is_nullable", "YES")).upper() == "YES",
-                is_generated=_yes(r.get("is_generated")) or _yes(r.get("is_identity")),
-                has_default=r.get("column_default") is not None,
+                name=_cell(r, "column_name"),
+                data_type=(_cell(r, "data_type") or "unknown").lower(),
+                nullable=str(_cell(r, "is_nullable") or "YES").upper() == "YES",
+                is_generated=(
+                    _yes(_cell(r, "is_generated")) or _yes(_cell(r, "is_identity"))
+                ),
+                has_default=_cell(r, "column_default") is not None,
             )
             for r in rows
         ]
@@ -444,16 +483,19 @@ class SchemaScanner:
 
         by_name = {c.name.lower(): c for c in columns}
         for row in rows:
-            column = by_name.get(str(row.get("column_name", "")).lower())
+            column = by_name.get(str(_cell(row, "column_name") or "").lower())
             if not column:
                 continue
-            if row.get("constraint_type") == "PRIMARY KEY":
+            if _cell(row, "constraint_type") == "PRIMARY KEY":
                 column.is_primary_key = True
-            elif row.get("constraint_type") == "FOREIGN KEY" and row.get("ref_table"):
+            elif (
+                _cell(row, "constraint_type") == "FOREIGN KEY"
+                and _cell(row, "ref_table")
+            ):
                 column.foreign_key = ForeignKey(
                     column=column.name,
-                    references_table=str(row["ref_table"]),
-                    references_column=str(row.get("ref_column") or ""),
+                    references_table=str(_cell(row, "ref_table")),
+                    references_column=str(_cell(row, "ref_column") or ""),
                 )
 
     async def _profile_column(
@@ -496,7 +538,9 @@ class SchemaScanner:
         if not rows:
             return
 
-        values = [str(r["v"]) for r in rows if r.get("v") is not None]
+        values = [
+            str(_cell(r, "v")) for r in rows if _cell(r, "v") is not None
+        ]
 
         if len(values) > self.max_categories:
             if self.sample_rows:

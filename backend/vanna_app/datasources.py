@@ -43,6 +43,45 @@ class UnknownDataSource(LookupError):
     """
 
 
+async def _ping(runner: Any, tenant_id: str) -> None:
+    """The cheapest question that proves a connection works."""
+    from vanna.capabilities.sql_runner import RunSqlToolArgs
+    from vanna.core.tool import ToolContext
+    from vanna.core.user import User
+
+    from .platform import _build_memory
+
+    context = ToolContext(
+        user=User(id="health", email="health@internal", tenant_id=tenant_id),
+        conversation_id="health",
+        request_id="health",
+        tenant_id=tenant_id,
+        agent_memory=_build_memory(),
+    )
+    await runner.run_sql(RunSqlToolArgs(sql="SELECT 1"), context)
+
+
+def _sanitise(error: BaseException, url: str) -> str:
+    """A driver message with the credentials taken out.
+
+    psycopg2 and pymysql both echo the connection they attempted, password
+    included. This is shown in a browser, so the URL is replaced rather than
+    trusted to be absent.
+    """
+    text = str(error) or type(error).__name__
+    if url:
+        text = text.replace(url, "<connection string>")
+        # And the password on its own, which appears in some driver messages
+        # without the rest of the URL around it.
+        if "://" in url and "@" in url:
+            secret = url.split("://", 1)[1].split("@", 1)[0]
+            if ":" in secret:
+                password = secret.split(":", 1)[1]
+                if password:
+                    text = text.replace(password, "<redacted>")
+    return text[:500]
+
+
 class DataSourceRegistry:
     """Which databases a workspace may query, and how to reach them."""
 
@@ -60,7 +99,8 @@ class DataSourceRegistry:
         """Every registered source. Credentials omitted unless asked for."""
         rows = await self.db.fetch_all(
             f"""
-            SELECT data_source_id, database_url, label, is_default, is_active
+            SELECT data_source_id, database_url, label, is_default, is_active,
+                   last_checked_at, last_ok, last_error
               FROM {SCHEMA}.tenant_datasources
              WHERE tenant_id = %s AND is_active
              ORDER BY is_default DESC, data_source_id
@@ -74,11 +114,90 @@ class DataSourceRegistry:
                 # Falls back to the derived id, which is already credential-free.
                 "label": row["label"] or row["data_source_id"],
                 "is_default": row["is_default"],
+                # Health as last observed. `last_ok` is None for a source nobody
+                # has checked -- which the console must show differently from a
+                # source known to be working, or "unknown" reads as "fine".
+                "last_ok": row["last_ok"],
+                "last_checked_at": (
+                    row["last_checked_at"].isoformat()
+                    if row["last_checked_at"]
+                    else None
+                ),
+                "last_error": row["last_error"],
             }
             if include_urls:
                 item["database_url"] = self._decrypt(row["database_url"])
             out.append(item)
         return out
+
+    async def record_health(
+        self,
+        tenant_id: str,
+        data_source_id: str,
+        *,
+        ok: bool,
+        error: Optional[str] = None,
+    ) -> None:
+        """Store the result of a connection check.
+
+        Errors are truncated and never include the connection string: a driver's
+        message routinely carries the host, the user and sometimes the password it
+        tried, and this text is rendered in a browser for anyone who administers
+        the workspace.
+        """
+        await self.db.execute(
+            f"""
+            UPDATE {SCHEMA}.tenant_datasources
+               SET last_checked_at = now(),
+                   last_ok = %s,
+                   last_error = %s
+             WHERE tenant_id = %s AND data_source_id = %s
+            """,
+            (ok, (error or None) and str(error)[:500], tenant_id, data_source_id),
+        )
+
+    async def check(self, tenant_id: str, data_source_id: str) -> Dict[str, Any]:
+        """Try to reach one source now, and remember the answer.
+
+        Runs the same ``probe`` the registration path uses -- one row, short
+        timeout, read-only -- so "it worked when I added it" and "it works now" are
+        the same question asked twice rather than two different checks that can
+        disagree.
+        """
+        import asyncio
+
+        from vanna.core.datasource.runners import UnsupportedDataSource, probe
+
+        resolved = await self.resolve(tenant_id, data_source_id)
+        if resolved is None:
+            raise UnknownDataSource(data_source_id)
+
+        url = resolved["database_url"]
+        url = url.reveal() if hasattr(url, "reveal") else str(url)
+
+        runner = None
+        try:
+            runner = probe(url)
+            # `probe` only builds the runner; connecting happens on first use, so
+            # the check has to actually ask for something.
+            await asyncio.wait_for(_ping(runner, tenant_id), timeout=15)
+        except UnsupportedDataSource as exc:
+            await self.record_health(tenant_id, data_source_id, ok=False, error=str(exc))
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            reason = _sanitise(exc, url)
+            await self.record_health(tenant_id, data_source_id, ok=False, error=reason)
+            return {"ok": False, "error": reason}
+        finally:
+            close = getattr(runner, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # pragma: no cover - teardown
+                    pass
+
+        await self.record_health(tenant_id, data_source_id, ok=True, error=None)
+        return {"ok": True, "error": None}
 
     async def resolve(
         self, tenant_id: str, data_source_id: Optional[str]

@@ -31,6 +31,7 @@ logger = logging.getLogger("vanna.locks")
 #: long migration cannot block seeding or vice versa.
 KEY_MIGRATE = 0x5641_4E4E_4D49_4752  # "VANNMIGR"
 KEY_SEED = 0x5641_4E4E_5345_4544     # "VANNSEED"
+KEY_CONFIG = 0x5641_4E4E_434F_4E46    # "VANNCONF"
 
 
 @contextmanager

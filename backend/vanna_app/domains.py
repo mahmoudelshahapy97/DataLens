@@ -62,21 +62,29 @@ DEFINITIONS = _definitions_path()
 
 
 def load_definitions(path: Path = DEFINITIONS) -> List[Dict[str, Any]]:
-    """Read and validate the domain file.
-
-    Validation is not decoration: a typo in a database name produces a workspace
-    bound to a database that does not exist, which fails later, per question, as a
-    connection error nobody traces back to here.
-    """
+    """Read and validate the domain file."""
     import yaml
 
     if not path.is_file():
         raise FileNotFoundError(f"No domain definitions at {path}")
 
     document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    domains = document.get("domains") or []
+    return validate_definitions(document, where=str(path))
+
+
+def validate_definitions(document: Any, *, where: str) -> List[Dict[str, Any]]:
+    """Check an already-parsed domain document and return its domains.
+
+    Validation is not decoration: a typo in a database name produces a workspace
+    bound to a database that does not exist, which fails later, per question, as a
+    connection error nobody traces back to here.
+
+    Taken apart from the file read so the catalog gets the same checks. The
+    document is the same either way -- only where it was read from differs.
+    """
+    domains = (document or {}).get("domains") or []
     if not domains:
-        raise ValueError(f"{path} defines no domains")
+        raise ValueError(f"{where} defines no domains")
 
     seen = set()
     for domain in domains:
@@ -92,6 +100,35 @@ def load_definitions(path: Path = DEFINITIONS) -> List[Dict[str, Any]]:
                 raise ValueError(f"{domain['id']}: an instruction has no text")
 
     return domains
+
+
+async def read_definitions(
+    settings: Any, database: Any = None, *, path: Path = DEFINITIONS
+) -> List[Dict[str, Any]]:
+    """The domain definitions, from wherever this deployment keeps them.
+
+    With ``VANNA_CONFIG_SOURCE=database`` this reads the catalog, so provisioning
+    applies what the deployment is actually running rather than what happens to be
+    in the image -- which are different things the moment somebody edits a domain
+    through the API.
+    """
+    if settings.config_source != "database" or database is None:
+        return load_definitions(path)
+
+    from .config_store import KIND_DOMAIN, PostgresConfigStore
+
+    rows = await PostgresConfigStore(database).list(kind=KIND_DOMAIN)
+    if not rows:
+        raise FileNotFoundError(
+            "VANNA_CONFIG_SOURCE=database, but the catalog holds no domain "
+            "definitions. Import them with `python tools/import_config_files.py`."
+        )
+    if rows[0].parsed is None:
+        raise ValueError(
+            f"{rows[0].relative_path} is stored in the catalog but could not be "
+            "parsed. Fix the file and re-import it."
+        )
+    return validate_definitions(rows[0].parsed, where=rows[0].relative_path)
 
 
 def database_url_for(domain: Dict[str, Any], template: str) -> str:
@@ -135,18 +172,13 @@ async def provision(
     from .secrets import Cipher
     from .tenancy import Directory
 
-    domains = load_definitions(path)
-    if only:
-        wanted = set(only)
-        unknown = wanted - {d["id"] for d in domains}
-        if unknown:
-            raise ValueError(f"Unknown domain(s): {', '.join(sorted(unknown))}")
-        domains = [d for d in domains if d["id"] in wanted]
-
     database = build_app_database(settings)
     if database is None:
         raise RuntimeError("No control plane configured; nothing to provision into.")
 
+    # Read inside the try, so a definition problem still closes the pool it just
+    # opened -- the definitions now come *from* the database, so the read can
+    # itself fail.
     directory = Directory(database, Cipher(settings.secret_key))
 
     # Rules go wherever the running app reads them from. With a control plane
@@ -159,6 +191,14 @@ async def provision(
     summary: Dict[str, Any] = {"created": [], "updated": [], "rules": 0, "starters": 0}
 
     try:
+        domains = await read_definitions(settings, database, path=path)
+        if only:
+            wanted = set(only)
+            unknown = wanted - {d["id"] for d in domains}
+            if unknown:
+                raise ValueError(f"Unknown domain(s): {', '.join(sorted(unknown))}")
+            domains = [d for d in domains if d["id"] in wanted]
+
         for domain in domains:
             tenant_id = domain["id"]
             url = database_url_for(domain, settings.database_url)
@@ -281,6 +321,21 @@ async def _load_starters(directory: Any, tenant_id: str, domain: Dict[str, Any])
 # ----------------------------------------------------------------------
 
 
+async def _definitions_for_listing(settings: Any) -> List[Dict[str, Any]]:
+    """For the CLI's `list`: the catalog when that is the source, else the file."""
+    if settings.config_source != "database":
+        return load_definitions()
+
+    from .db import build_app_database
+
+    database = build_app_database(settings)
+    try:
+        return await read_definitions(settings, database)
+    finally:
+        if database is not None:
+            database.close()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="vanna-app-domains")
     parser.add_argument("command", choices=("provision", "list"), nargs="?", default="list")
@@ -291,8 +346,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     from .config import get_settings
 
+    settings = get_settings()
+
     if args.command == "list":
-        for domain in load_definitions():
+        for domain in asyncio.run(_definitions_for_listing(settings)):
             rules = len(domain.get("instructions") or [])
             starters = len(domain.get("starters") or [])
             print(
@@ -301,7 +358,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         return 0
 
-    settings = get_settings()
     summary = asyncio.run(provision(settings, only=args.only))
 
     print(f"created:  {', '.join(summary['created']) or 'none'}")

@@ -8,9 +8,22 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from vanna.capabilities.sql_runner import BaseSqlRunner, ExecutionPolicy
+from vanna.capabilities.sql_runner import (
+    BaseSqlRunner,
+    ConnectionPool,
+    ExecutionPolicy,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _still_open(connection: Any) -> bool:
+    """Whether psycopg2 still considers this connection usable.
+
+    `connection.closed` is 0 for open and non-zero for closed, and it notices a
+    server that went away without the round trip a `SELECT 1` would cost.
+    """
+    return getattr(connection, "closed", 1) == 0
 
 
 class PostgresRunner(BaseSqlRunner):
@@ -126,26 +139,54 @@ class PostgresRunner(BaseSqlRunner):
             return self._pool
         with self._pool_lock:
             if self._pool is None:
-                if self.connection_string:
-                    self._pool = self.psycopg2.pool.ThreadedConnectionPool(
-                        self._pool_min_size,
-                        self._pool_max_size,
-                        self.connection_string,
-                    )
-                else:
-                    self._pool = self.psycopg2.pool.ThreadedConnectionPool(
-                        self._pool_min_size,
-                        self._pool_max_size,
-                        **(self.connection_params or {}),
-                    )
+                self._pool = ConnectionPool(
+                    self._open_connection,
+                    alive=_still_open,
+                    max_size=self._pool_max_size,
+                    name=f"postgres {self._describe()}",
+                )
             return self._pool
 
+    def _open_connection(self):
+        """One new psycopg2 connection, from whichever form was configured."""
+        if self.connection_string:
+            return self.psycopg2.connect(self.connection_string)
+        return self.psycopg2.connect(**(self.connection_params or {}))
+
+    def _describe(self) -> str:
+        """A name for log lines that is not a connection string."""
+        params = self.connection_params or {}
+        return str(params.get("dbname") or params.get("database") or "database")
+
     def close(self) -> None:
-        """Close all pooled connections."""
+        """Close all pooled connections.
+
+        Only safe when nothing is using this runner. A pool closed underneath an
+        in-flight query cannot take its connection back -- the borrower gets
+        "connection pool is closed" and the request fails. Callers that are merely
+        *finished caching* a runner should drop their reference instead and let
+        :meth:`__del__` do this once the last user has gone.
+        """
         with self._pool_lock:
             if self._pool is not None:
-                self._pool.closeall()
+                self._pool.close()
                 self._pool = None
+
+    def __del__(self) -> None:
+        """Close the pool when the last reference goes.
+
+        This is what makes dropping a reference a safe way to retire a runner: the
+        connections are released exactly when nobody can still be holding one, with
+        no timer to tune and no window to lose a request in.
+
+        Guarded to the point of paranoia because finalisers run during interpreter
+        shutdown, when the modules this needs may already be torn down, and an
+        exception in `__del__` is unraisable noise on stderr.
+        """
+        try:
+            self.close()
+        except Exception:  # pragma: no cover - interpreter teardown
+            pass
 
     # ------------------------------------------------------------------
     # Execution
@@ -160,7 +201,7 @@ class PostgresRunner(BaseSqlRunner):
         read-only session.
         """
         pool = self._get_pool()
-        conn = pool.getconn()
+        conn = pool.acquire()
         broken = False
         try:
             conn.set_session(readonly=True, autocommit=False)
@@ -175,7 +216,7 @@ class PostgresRunner(BaseSqlRunner):
             raise
         finally:
             try:
-                pool.putconn(conn, close=broken)
+                pool.release(conn, broken=broken)
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Failed returning connection to pool: %s", e)
 
@@ -187,7 +228,7 @@ class PostgresRunner(BaseSqlRunner):
         connection in an unknown state poisons the next caller.
         """
         pool = self._get_pool()
-        conn = pool.getconn()
+        conn = pool.acquire()
         broken = False
         try:
             conn.set_session(readonly=self.read_only, autocommit=False)
@@ -246,7 +287,7 @@ class PostgresRunner(BaseSqlRunner):
             raise
         finally:
             try:
-                pool.putconn(conn, close=broken)
+                pool.release(conn, broken=broken)
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Failed returning connection to pool: %s", e)
 
@@ -294,7 +335,7 @@ class PostgresRunner(BaseSqlRunner):
         )
 
         pool = self._get_pool()
-        conn = pool.getconn()
+        conn = pool.acquire()
         broken = False
         started = time.perf_counter()
         results: list = []
@@ -374,7 +415,7 @@ class PostgresRunner(BaseSqlRunner):
             raise
         finally:
             try:
-                pool.putconn(conn, close=broken)
+                pool.release(conn, broken=broken)
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Failed returning connection to pool: %s", e)
 

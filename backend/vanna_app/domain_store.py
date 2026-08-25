@@ -23,7 +23,6 @@ tables and a table belongs to one database.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set
@@ -213,12 +212,7 @@ class DomainStore:
         await self._transact(run)
 
     async def _transact(self, body: Callable[[Any], None]) -> None:
-        def run() -> None:
-            with self.db.transaction() as connection:
-                with connection.cursor() as cursor:
-                    body(cursor)
-
-        await asyncio.to_thread(run)
+        await self.db.transact(body)
 
 
 async def readable_tables_for(

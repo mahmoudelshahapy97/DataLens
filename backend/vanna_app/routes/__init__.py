@@ -193,6 +193,7 @@ def register_all(app: Any, deps: Deps) -> None:
         admin,
         auth,
         catalog,
+        config,
         dashboards,
         data,
         domains,
@@ -212,3 +213,4 @@ def register_all(app: Any, deps: Deps) -> None:
     catalog.register(app, deps)
     instructions.register(app, deps)
     admin.register(app, deps)
+    config.register(app, deps)

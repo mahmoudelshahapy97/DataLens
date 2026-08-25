@@ -16,6 +16,8 @@ class MSSQLRunner(BaseSqlRunner):
     def __init__(self, odbc_conn_str: str, *,
         policy: Optional[ExecutionPolicy] = None,
         read_only: bool = True,
+        pool_max_size: int = 2,
+        pool_min_size: int = 0,
         **kwargs):
         """Initialize with MSSQL connection parameters.
 
@@ -24,6 +26,12 @@ class MSSQLRunner(BaseSqlRunner):
             policy: Row cap and timeout.
             read_only: Refuse to commit anything. Default, and the only safe
                 one for a natural-language query interface.
+            pool_max_size: Ceiling on pooled connections. SQLAlchemy's own
+                defaults are ``pool_size=5`` with ``max_overflow=10``, so a
+                runner that took them could hold fifteen -- multiplied by the
+                number of cached runtimes and again by the worker count. This
+                caps it at what the connection budget allocated.
+            pool_min_size: Accepted for symmetry with the other runners.
             **kwargs: Additional SQLAlchemy engine parameters
         """
         super().__init__(policy)
@@ -56,8 +64,32 @@ class MSSQLRunner(BaseSqlRunner):
             "mssql+pyodbc", query={"odbc_connect": odbc_conn_str}
         )
 
-        # Create the engine
-        self.engine = self.create_engine(connection_url, **kwargs)
+        # Create the engine.
+        #
+        # `max_overflow=0` because the point of a ceiling is that it is one; with
+        # SQLAlchemy's default of 10 the "pool size" is a floor, not a limit.
+        #
+        # `pool_pre_ping` is SQLAlchemy's stale-connection check: it issues a
+        # trivial statement on checkout and transparently replaces a connection
+        # that has died. This is the *safe* retry -- nothing has been sent yet, so
+        # replacing the connection cannot re-run anything -- and it is the reason
+        # a database restart no longer surfaces as a failed question.
+        #
+        # `pool_recycle` retires connections before the far end does. Idle
+        # timeouts on the network path are the usual cause of a "dead" connection
+        # nobody closed.
+        engine_options = {
+            "pool_size": max(1, pool_max_size),
+            "max_overflow": 0,
+            "pool_pre_ping": True,
+            "pool_recycle": 1800,
+        }
+        engine_options.update(kwargs)
+        self.engine = self.create_engine(connection_url, **engine_options)
+
+    def close(self) -> None:
+        """Dispose the pool. Called when a runtime is retired."""
+        self.engine.dispose()
 
     def _execute_sync(self, sql: str, timeout_seconds: int) -> pd.DataFrame:
         """Execute SQL query against MSSQL database and return results as DataFrame.

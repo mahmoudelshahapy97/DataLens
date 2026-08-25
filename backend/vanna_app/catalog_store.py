@@ -696,11 +696,11 @@ class PostgresSchemaCatalog(SchemaCatalog):
         A scan is one transaction so a reader never sees half of it -- a catalog
         with the new tables but the old columns would render a prompt describing
         a schema that never existed.
+
+        Through ``transaction_async`` so the connection is counted. This used to
+        call the ungated ``transaction()``, which meant a scan could take a pool
+        connection the semaphore did not know about -- and a scan holds it for the
+        length of a whole catalog rewrite, which is the worst possible thing to
+        hide from the gate.
         """
-
-        def run() -> None:
-            with self.db.transaction() as connection:
-                with connection.cursor() as cursor:
-                    body(cursor)
-
-        await asyncio.to_thread(run)
+        await self.db.transact(body)

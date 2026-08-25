@@ -33,6 +33,8 @@ def build_runner(
     *,
     policy: Any = None,
     read_only: bool = True,
+    pool_max: Optional[int] = None,
+    pool_min: Optional[int] = None,
 ) -> Any:
     """Return a SQL runner for *database_url*.
 
@@ -42,6 +44,13 @@ def build_runner(
         read_only: Ask the driver for a read-only connection where it supports
             one. Not every engine can; those that cannot rely on the SQL policy
             and the statement allow-list instead.
+        pool_max: Connections this runner may open. The docstring below has
+            always said to multiply this by the worker count, and until now
+            nothing passed it -- so every runtime in every worker quietly took
+            the default of five and a nine-workspace deployment sat on forty-odd
+            idle connections it never gave back.
+        pool_min: Connections opened eagerly. Zero means an idle workspace costs
+            nothing until somebody asks it a question.
 
     Raises:
         UnsupportedDataSource: if the URL names an engine with no runner. This
@@ -65,11 +74,21 @@ def build_runner(
 
     name = engine.name
 
+    # Only the pooling runners take these. The rest accept them once they pool.
+    pool_args = {}
+    if pool_max is not None:
+        pool_args["pool_max_size"] = pool_max
+    if pool_min is not None:
+        pool_args["pool_min_size"] = pool_min
+
     if name == "postgres":
         from ...integrations.postgres import PostgresRunner
 
         return PostgresRunner(
-            connection_string=database_url, policy=policy, read_only=read_only
+            connection_string=database_url,
+            policy=policy,
+            read_only=read_only,
+            **pool_args,
         )
 
     if name == "mysql":
@@ -82,6 +101,7 @@ def build_runner(
             password=get("password"),
             port=int(get("port", "3306")),
             policy=policy,
+            **pool_args,
         )
 
     if name == "clickhouse":

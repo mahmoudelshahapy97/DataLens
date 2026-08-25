@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+import time
+from contextlib import asynccontextmanager, contextmanager
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg2
@@ -36,6 +37,18 @@ from psycopg2.pool import ThreadedConnectionPool
 logger = logging.getLogger("vanna.db")
 
 SCHEMA = "vanna_app"
+
+
+def _metrics() -> Any:
+    """The metric set, fetched per call rather than held.
+
+    ``configure_metrics`` replaces the module-level set at startup, and this
+    module is imported before that runs -- a reference captured at import time
+    would write to the no-op set for the life of the process.
+    """
+    from .observability import get_metrics
+
+    return get_metrics()
 
 
 class ControlPlaneUnavailable(RuntimeError):
@@ -137,18 +150,38 @@ class AppDatabase:
         minconn: int = 2,
         maxconn: int = 16,
         wait_seconds: int = 10,
+        statement_timeout_ms: int = 15_000,
         create_if_missing: bool = True,
     ) -> None:
         self.url = url
         self.wait_seconds = wait_seconds
         if create_if_missing:
             ensure_database(url)
-        self._pool = ThreadedConnectionPool(minconn, maxconn, url, connect_timeout=10)
+        # A server-side deadline on every control-plane connection.
+        #
+        # Without one, a single query that never comes back holds its pool slot
+        # forever: with a pool of eight per worker, eight such queries and nobody
+        # can sign in, because authentication needs the same pool. The warehouse
+        # runner has always set a `statement_timeout` per query for exactly this
+        # reason; the control plane was the half that did not.
+        #
+        # Set through `options` rather than per query so it also covers the paths
+        # that take a raw connection -- migrations, advisory locks, `transact`.
+        options = f"-c statement_timeout={int(statement_timeout_ms)}"
+        self._pool = ThreadedConnectionPool(
+            minconn, maxconn, url, connect_timeout=10, options=options
+        )
         # Gate on entry rather than discovering exhaustion inside psycopg2. Sized to
         # the pool exactly: one permit is one connection.
         self._slots = asyncio.Semaphore(maxconn)
         self._maxconn = maxconn
+        self._in_use = 0
+        self._waiting = 0
         self._closed = False
+        # Publish the ceiling once. It cannot change without a restart, and a
+        # gauge that reports the configured limit next to the live number is what
+        # turns "are we close?" into a question with an answer.
+        _metrics().pool_ceiling.set(maxconn)
 
     # -- plumbing ------------------------------------------------------
 
@@ -177,22 +210,50 @@ class AppDatabase:
                     return cursor.rowcount
                 return None
 
-    async def _guarded(self, sql: str, params: Sequence[Any], fetch: str) -> Any:
-        """Acquire a slot, then do the blocking work off the event loop."""
+    async def _acquire(self) -> None:
+        """Take a pool slot, or fail saying the pool is the reason.
+
+        Shared by every path that checks out a connection, including
+        ``transaction()`` -- which used to bypass this entirely, so the semaphore's
+        count was not the truth and callers could still reach the raw
+        ``PoolError`` the semaphore exists to prevent.
+        """
         if self._closed:
             raise ControlPlaneUnavailable("The control-plane pool is closed.")
+
+        metrics = _metrics()
+        self._waiting += 1
+        metrics.pool_waiters.set(self._waiting)
+        started = time.monotonic()
         try:
             await asyncio.wait_for(self._slots.acquire(), timeout=self.wait_seconds)
         except asyncio.TimeoutError as exc:
+            metrics.pool_saturated.inc()
             raise ControlPlaneUnavailable(
                 f"The control plane is saturated: all {self._maxconn} connections "
                 f"were busy for {self.wait_seconds}s. Raise VANNA_APP_POOL_MAX, or "
                 "look for a query holding a connection open."
             ) from exc
+        finally:
+            self._waiting -= 1
+            metrics.pool_waiters.set(self._waiting)
+            metrics.pool_wait_seconds.observe(time.monotonic() - started)
+
+        self._in_use += 1
+        metrics.pool_in_use.set(self._in_use)
+
+    def _release(self) -> None:
+        self._slots.release()
+        self._in_use -= 1
+        _metrics().pool_in_use.set(self._in_use)
+
+    async def _guarded(self, sql: str, params: Sequence[Any], fetch: str) -> Any:
+        """Acquire a slot, then do the blocking work off the event loop."""
+        await self._acquire()
         try:
             return await asyncio.to_thread(self._run, sql, params, fetch=fetch)
         finally:
-            self._slots.release()
+            self._release()
 
     # -- queries -------------------------------------------------------
 
@@ -220,9 +281,55 @@ class AppDatabase:
 
     @contextmanager
     def transaction(self) -> Iterator[Any]:
-        """A raw connection with an open transaction, for the migration runner."""
+        """A raw connection with an open transaction, **for the migration runner**.
+
+        Ungated on purpose: it runs at startup, before there is an event loop to
+        hold a semaphore slot on. Every other caller wants
+        :meth:`transaction_async`, which does account for the connection it takes.
+        """
         with self._connection() as connection:
             yield connection
+
+    @asynccontextmanager
+    async def transaction_async(self) -> AsyncIterator[Any]:
+        """A transaction that occupies a pool slot for its whole life.
+
+        The gated counterpart to :meth:`transaction`. Without this, a caller could
+        check a connection out of the pool without passing the semaphore -- so the
+        gate's count was lower than reality and `getconn` could still raise the
+        `PoolError` the gate exists to prevent. A schema scan is exactly that
+        caller: one long transaction, taken while ordinary requests are queueing
+        politely for slots that were already gone.
+
+        The body runs on the caller's thread; hand it to ``asyncio.to_thread``
+        yourself if it blocks, which is what ``catalog_store`` does.
+        """
+        await self._acquire()
+        try:
+            with self._connection() as connection:
+                yield connection
+        finally:
+            self._release()
+
+    async def transact(self, body: Callable[[Any], None]) -> None:
+        """Run ``body(cursor)`` in one gated transaction, off the event loop.
+
+        Five stores had this exact function copied into them, all calling the
+        ungated ``transaction()``: catalog, domains, grants, instructions and
+        pending writes. Each was a connection the semaphore did not know it had
+        lent out. One implementation here means the next store cannot reintroduce
+        that by copying its neighbour.
+
+        One transaction per call so a reader never sees half the work -- a catalog
+        with new tables and old columns describes a schema that never existed.
+        """
+        async with self.transaction_async() as connection:
+
+            def run() -> None:
+                with connection.cursor() as cursor:
+                    body(cursor)
+
+            await asyncio.to_thread(run)
 
     def health(self) -> bool:
         """Whether the control plane answers. Used by the readiness probe."""
@@ -268,6 +375,7 @@ def build_app_database(settings: Any) -> Optional[AppDatabase]:
             minconn=settings.app_pool_min,
             maxconn=settings.app_pool_max,
             wait_seconds=settings.app_pool_wait_seconds,
+            statement_timeout_ms=settings.app_statement_timeout_ms,
         )
     except Exception as exc:
         raise ControlPlaneUnavailable(

@@ -27,6 +27,7 @@ import {
   until as sharedUntil,
 } from './shared/core.js';
 import { confirmSheet, promptSheet } from './shared/dialogs.js';
+import { tileFigure } from './shared/tile-figure.js';
 
 
 // ---------------------------------------------------------------- state ---
@@ -2308,45 +2309,24 @@ async function openDashboard(summary) {
       `<div class="small" style="color:var(--warn);margin-top:6px">${esc(w)}</div>`
     ).join('');
 
-    if (tile.kind === 'metric') {
-      // One number, large. Read far more often than any chart, so it gets its
-      // own rendering rather than a one-row table.
-      const value = rows.length && rows[0].length ? rows[0][rows[0].length - 1] : '--';
-      return `
-        <div class="card tile" ${span}>
-          <div class="muted small">${esc(tile.title || '')}</div>
-          <div style="font-size:2.1rem;font-weight:650;margin-top:4px">${esc(value)}</div>
-          ${caveats}
-        </div>`;
-    }
-
-    if (tile.kind === 'chart') {
-      // Rendered after insertion: <plotly-chart> takes its data as properties,
-      // which cannot be expressed in an HTML string.
-      const height = Math.max(180, (tile.grid?.height || 5) * 52);
-      return `
-        <div class="card tile" ${span}>
-          <strong>${esc(tile.title || 'Untitled')}</strong>
-          ${caveats}
-          <div class="tile-chart" data-tile="${esc(tile.id)}"
-               style="height:${height}px;margin-top:10px"></div>
-        </div>`;
-    }
-
+    // Every tile that has data is a Plotly figure -- a chart, an `indicator` for
+    // a metric, a `table` trace for rows. One renderer rather than three, and the
+    // same one the export uses, so a tile looks the same wherever it is read.
+    //
+    // Mounted after insertion, because <plotly-chart> takes its data as element
+    // properties and those cannot be expressed in an HTML string.
+    const rowsHigh = tile.grid?.height || (tile.kind === 'metric' ? 3 : 5);
+    const height = Math.max(tile.kind === 'metric' ? 120 : 180, rowsHigh * 52);
+    const heading = tile.kind === 'metric'
+      ? ''  // the indicator carries its own title, and two would be a repetition
+      : `<strong>${esc(tile.title || 'Untitled')}</strong>`;
     return `
       <div class="card tile" ${span}>
-        <strong>${esc(tile.title || 'Untitled')}</strong>
+        ${heading}
         ${caveats}
-        <div class="scroll-x" style="margin-top:10px">
-          <table class="data">
-            <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
-            <tbody>${rows.slice(0, 20).map((row) =>
-              `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join('')}</tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-        <div class="muted small" style="margin-top:8px">${result.row_count || 0} rows${
-          result.truncated ? ' (capped)' : ''}</div>
+        <div class="tile-chart" data-tile="${esc(tile.id)}"
+             style="height:${height}px;margin-top:${heading ? 10 : 0}px"></div>
+        <div class="tile-note muted small" data-note="${esc(tile.id)}"></div>
       </div>`;
   }).join('');
 
@@ -2393,11 +2373,17 @@ async function openDashboard(summary) {
     }
   };
 
-  // Charts are mounted after the sheet exists, because <plotly-chart> receives
-  // its series as element properties rather than attributes.
-  laidOut.filter((tile) => tile.kind === 'chart').forEach((tile) => {
-    const mount = $('sheet').querySelector(`.tile-chart[data-tile="${CSS.escape(tile.id)}"]`);
-    if (mount) mountChart(mount, tile, byId[tile.id] || {});
+  // Mounted after the sheet exists, because <plotly-chart> receives its series as
+  // element properties rather than attributes. Text tiles are prose and metric,
+  // table and chart tiles are all figures.
+  laidOut.filter((tile) => tile.kind !== 'text').forEach((tile) => {
+    const sheet = $('sheet');
+    const mount = sheet.querySelector(`.tile-chart[data-tile="${CSS.escape(tile.id)}"]`);
+    if (mount) {
+      const note = mountChart(mount, tile, byId[tile.id] || {});
+      const line = sheet.querySelector(`.tile-note[data-note="${CSS.escape(tile.id)}"]`);
+      if (line && note) line.textContent = note;
+    }
   });
 }
 
@@ -2421,146 +2407,37 @@ function headings(text) {
   }).join('');
 }
 
-/** Turn a tile's rows into a Plotly chart, honouring its ChartSpec.
+/**
+ * Draw one tile into `mount`, and return the note to print under it (if any).
  *
- *  The spec is what the agent chose; the fallbacks below only apply where it
- *  said nothing, which mirrors how the backend treats it. */
+ * The figure itself comes from `shared/tile-figure.js`, which the exported HTML
+ * inlines and calls too. That sharing is the point: the export used to draw its
+ * own SVG approximations with their own axis-picking rules, so the file somebody
+ * circulated showed a different chart than the screen it came from.
+ */
 function mountChart(mount, tile, result) {
-  const columns = result.columns || [];
-  let rows = result.rows || [];
-  if (!columns.length || !rows.length) {
-    mount.innerHTML = `<div class="empty small">${t('dash.noData')}</div>`;
-    return;
-  }
-
-  const spec = tile.chart || {};
-  const column = (name) => columns.indexOf(name);
-
-  const xName = spec.x && column(spec.x) >= 0 ? spec.x : columns[0];
-  const yNames = (spec.y || []).filter((name) => column(name) >= 0);
-  const colourName = spec.color_by && column(spec.color_by) >= 0 ? spec.color_by : null;
-  const series = yNames.length
-    ? yNames
-    : columns.filter((c) => c !== xName && c !== colourName);
-
-  // `sort_by`, `descending` and `limit` were declared on ChartSpec from the start
-  // and read by nothing, so a tile asking for the top ten by revenue got every row
-  // in whatever order the warehouse returned -- the same failure the heatmap branch
-  // below was added to fix: a chart that looks like an answer.
-  let ordered = rows;
-  const sortName = spec.sort_by && column(spec.sort_by) >= 0 ? spec.sort_by : null;
-  if (sortName) {
-    const at = column(sortName);
-    ordered = rows.slice().sort((left, right) => {
-      const a = left[at], b = right[at];
-      const numeric = Number(a), other = Number(b);
-      const cmp = Number.isFinite(numeric) && Number.isFinite(other)
-        ? numeric - other
-        : String(a ?? '').localeCompare(String(b ?? ''));
-      return spec.descending ? -cmp : cmp;
-    });
-  }
-
-  // Top-N. Whether the remainder is gathered or dropped depends on what the chart
-  // claims: a pie asserts that its slices are the whole, so dropping the tail there
-  // makes the parts stop summing to it. A ranked bar chart claims no such thing --
-  // and gathering the tail into one bar is actively wrong when the measure is not
-  // additive. Summing the minutes of 3,488 remaining tracks produced an "Other" bar
-  // of 3,000 next to fifteen bars of nine, which is a chart that answers a question
-  // nobody asked.
-  const wholeOfParts = (spec.type || 'bar') === 'pie';
-  if (spec.limit && spec.limit > 0 && ordered.length > spec.limit && !colourName) {
-    const kept = ordered.slice(0, spec.limit);
-    const rest = ordered.slice(spec.limit);
-    if (rest.length && wholeOfParts) {
-      const merged = columns.map((name, index) => {
-        if (index === column(xName)) return t('dash.otherSlice');
-        const total = rest.reduce((sum, row) => {
-          const value = Number(row[index]);
-          return Number.isFinite(value) ? sum + value : sum;
-        }, 0);
-        return total || null;
-      });
-      kept.push(merged);
-    }
-    ordered = kept;
-  }
-  rows = ordered;
-
-  const x = rows.map((row) => row[column(xName)]);
-  const type = spec.type || 'bar';
-
-  // `heatmap` has been in `ChartType` since the spec was written and had no
-  // branch here, so a tile asking for one silently got a bar chart -- the one
-  // failure mode a chart must not have, because it looks like an answer.
-  if (type === 'heatmap') {
-    const yName = series[0];
-    const valueName = series[1] || series[0];
-    const xs = [...new Set(rows.map((row) => row[column(xName)]))];
-    const ys = [...new Set(rows.map((row) => row[column(yName)]))];
-    const grid = ys.map((yValue) => xs.map((xValue) => {
-      const hit = rows.find(
-        (row) => row[column(xName)] === xValue && row[column(yName)] === yValue
-      );
-      return hit ? Number(hit[column(valueName)]) : null;
-    }));
-    return plot(mount, [{ type: 'heatmap', x: xs, y: ys, z: grid, colorscale: 'Blues' }],
-                { xName, yName: spec.y_label || yName, spec, series: [] });
-  }
-
-  const shape = (name, xs, ys) => {
-    if (type === 'pie') return { type: 'pie', labels: xs, values: ys, name };
-    if (type === 'scatter') return { type: 'scatter', mode: 'markers', x: xs, y: ys, name };
-    if (type === 'line' || type === 'area') {
-      return { type: 'scatter', mode: 'lines+markers', x: xs, y: ys, name,
-               fill: type === 'area' ? 'tozeroy' : undefined };
-    }
-    return { type: 'bar', x: xs, y: ys, name };
-  };
-
-  // `color_by` splits one measure into a trace per distinct value -- which is what
-  // a legend *is*. Without it a "revenue by month, by country" tile drew a single
-  // line and the country column was silently ignored.
-  if (colourName) {
-    const at = column(colourName);
-    const measure = series[0];
-    const groups = new Map();
-    rows.forEach((row) => {
-      const key = String(row[at] ?? '');
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(row);
-    });
-    let entries = [...groups.entries()];
-    if (spec.limit && spec.limit > 0 && entries.length > spec.limit) {
-      entries = entries.slice(0, spec.limit);  // too many series is unreadable, not wrong
-    }
-    const traces = entries.map(([key, group]) => shape(
-      key,
-      group.map((row) => row[column(xName)]),
-      group.map((row) => row[column(measure)]),
-    ));
-    return plot(mount, traces, { xName, yName: spec.y_label || measure, spec,
-                                 series: traces });
-  }
-
-  const traces = series.map((name) => shape(
-    name, x, rows.map((row) => row[column(name)]),
-  ));
-
-  return plot(mount, traces, { xName, yName: series.length === 1 ? series[0] : '',
-                              spec, series });
-}
-
-/** Hand a set of traces to `<plotly-chart>`, themed like the rest of the page. */
-function plot(mount, traces, { xName, yName, spec, series }) {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   // `<plotly-chart>` sizes to `layout.height` and falls back to 400px, with a
   // `min-height: 400px` under it -- so a chart in a tile shorter than that grew
-  // out of its card and drew over the tile beneath. The tile owns the height
-  // here, so the tile passes it in.
+  // out of its card and drew over the tile beneath. The tile owns the height.
   const boxed = Math.round(mount.getBoundingClientRect().height) || 300;
-  // A pie carries its own labels; axis titles on one are noise.
-  const circular = traces.some((trace) => trace.type === 'pie');
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+  let figure = null;
+  try {
+    figure = tileFigure(tile, result,
+                        { height: boxed, dark, otherLabel: t('dash.otherSlice') });
+  } catch (error) {
+    // A tile whose data the builder cannot make sense of says so, in its own
+    // card, rather than taking the rest of the dashboard down with it.
+    mount.innerHTML = `<div class="small" style="color:var(--bad)">${esc(error.message)}</div>`;
+    return '';
+  }
+
+  if (!figure) {
+    mount.innerHTML = `<div class="empty small">${t('dash.noData')}</div>`;
+    return '';
+  }
+
   const element = document.createElement('plotly-chart');
   // `<plotly-chart>` defaults its `theme` property to 'dark' and nothing here was
   // setting it, so every tile on a light page got the dark-theme modebar: a near
@@ -2568,50 +2445,13 @@ function plot(mount, traces, { xName, yName, spec, series }) {
   // its tick label. The traces were right and the numbers were right, which is why
   // it survived -- it reads as a styling quirk rather than the wrong theme.
   element.theme = dark ? 'dark' : 'light';
-  element.data = traces;
-  const layout = {
-    height: boxed,
-    // Top margin leaves the modebar somewhere to sit. At t:10 it had to overlay the
-    // plot, so hovering a tile hid the top of the very series being inspected.
-    margin: { t: 28, r: 10, b: 40, l: 56 },
-    // Stacked vertically against the corner and with no background of its own.
-    // The component's default is a horizontal bar with an opaque fill, which spans
-    // the full width of the plot and sits on top of the tallest bar in the chart --
-    // exactly the one being looked at.
-    modebar: { orientation: 'v', bgcolor: 'rgba(0,0,0,0)',
-               color: dark ? '#9aa4b2' : '#6b7280',
-               activecolor: dark ? '#e5e7eb' : '#111827' },
-    barmode: spec.stacked ? 'stack' : 'group',
-    showlegend: series.length > 1 || circular,
-    paper_bgcolor: 'rgba(0,0,0,0)',
-    plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: dark ? '#e5e7eb' : '#0f172a' },
-  };
-  // Omitted, not set to `undefined`: Plotly's `cleanLayout` walks whatever axis
-  // keys are present and dereferences them, so an explicit `xaxis: undefined`
-  // throws before anything is drawn -- every pie tile rendered as an empty box
-  // with a console error behind it.
-  if (!circular) {
-    layout.xaxis = { title: spec.x_label || xName };
-    layout.yaxis = { title: spec.y_label || yName };
-  }
-  element.layout = layout;
-  // `<plotly-chart>` defaults to `displayModeBar: false`, which is right for the chat
-  // -- an answer with a toolbar on it looks like a control panel. A dashboard tile is
-  // the opposite case: the whole point of looking at it is to zoom into a spike and
-  // read the numbers off, so the tile turns the toolbar back on for itself rather
-  // than the component changing its default for everybody.
-  element.config = {
-    displayModeBar: 'hover',
-    displaylogo: false,
-    scrollZoom: true,
-    // The buttons that only make sense in a notebook, and the lasso nobody uses.
-    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
-    toImageButtonOptions: { format: 'png', scale: 2 },
-  };
+  element.data = figure.traces;
+  element.layout = figure.layout;
+  element.config = figure.config;
   element.style.height = '100%';
   mount.innerHTML = '';
   mount.appendChild(element);
+  return figure.note || '';
 }
 
 // ----------------------------------------------------------- run result ---

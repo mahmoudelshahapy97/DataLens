@@ -6,23 +6,34 @@ people in the workspace and useless for the person who asked them for the number
 An export is the answer: one file, openable from a `file://` path, on a laptop
 with no network and no account.
 
-Three decisions follow from that and are worth stating, because each rules out
-something that would otherwise seem obvious.
+Four decisions follow from that, and each rules out something that would
+otherwise seem obvious.
 
 **It is a snapshot, not a live view.** No connection string, no API base URL, no
 credentials -- there is nothing in the file that could be used to reach the
 warehouse, because the data is already in it. The cost is that it goes stale, so
-the header says who exported it and when in plain words. An undated number is
-how a stale figure ends up in a board pack.
+the header says who exported it and when in plain words. An undated number is how
+a stale figure ends up in a board pack.
 
-**Charts are drawn as inline SVG rather than by a charting library.** Inlining
-Plotly turns an 80 KB report into something over 3 MB, and a file that cannot be
-emailed fails at the one job it has. Bar, line and pie cover what dashboard
-tiles actually use.
+**Charts are real Plotly, drawn by the same code as the screen.** This used to be
+a set of hand-written SVG renderers living here -- and they were a *second*
+implementation of "draw this tile", with their own axis-picking rules. They
+ignored `sort_by`, `limit` and `color_by`, and drew a bar chart when the tile
+asked for a heatmap. So the file somebody circulated showed a different chart than
+the screen it was taken from, which is the one thing a snapshot must never do.
+The figure now comes from `assets/shared/tile-figure.js`, inlined, which is the
+module the dashboard page itself imports.
+
+**Plotly is inlined, not fetched.** A `<script src="https://cdn.plot.ly/...">`
+would keep this file at 15 KB and make it blank on a plane, which defeats the
+purpose. The bundle in `vendor/` is a custom build carrying only the six trace
+types a tile can produce -- 1.2 MB rather than the 4.9 MB full distribution. See
+`tools/plotly_export_bundle/entry.js`.
 
 **Everything is escaped.** Column names, cell values, titles and warnings all
 come from a database or an LLM, and the output is HTML opened by someone who
-trusts the sender.
+trusts the sender. Row data goes into a JSON island with `<` escaped, so no cell
+value can close the script that carries it.
 """
 
 from __future__ import annotations
@@ -30,16 +41,27 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from .models import ChartType, Dashboard, Tile, TileKind, TileResult
+from .models import Dashboard, Tile, TileKind, TileResult
 
-#: Categorical palette. Colour-blind-safe ordering (blue/orange first), because
-#: the two most common series in any chart should never be red/green.
-PALETTE = (
-    "#4f46e5", "#ea7317", "#059669", "#dc2626",
-    "#0891b2", "#7c3aed", "#a16207", "#db2777",
-)
+#: The vendored browser code. Committed rather than built here: the backend image
+#: has no Node in it, and an export must not depend on a build step happening
+#: somewhere else. `make plotly-bundle` regenerates both.
+VENDOR = Path(__file__).resolve().parent / "vendor"
+PLOTLY_JS = VENDOR / "plotly-export.min.js"
+PLOTLY_CSS = VENDOR / "plotly-export.min.css"
+TILE_FIGURE_JS = VENDOR / "tile-figure.js"
+
+
+class ExportAssetsMissing(RuntimeError):
+    """The vendored browser assets are not in the image.
+
+    Raised rather than degraded. An export that silently omits its charts is a
+    document that looks complete and is not, and it would be discovered by
+    whoever received it rather than by whoever built the image.
+    """
 
 
 def _esc(value: Any) -> str:
@@ -47,337 +69,45 @@ def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def _number(value: Any) -> Optional[float]:
-    """Coerce a cell to a float, or None if it is not numeric.
+def _json_island(payload: Any) -> str:
+    """JSON that cannot escape the ``<script>`` element carrying it.
 
-    Dates, labels and NULLs all land here; returning None rather than raising
-    lets a chart skip a bad point instead of failing the whole tile.
+    Escaping ``<`` is what does it: a cell containing ``</script>`` would
+    otherwise end the element and put the rest of the row into the document as
+    markup. Escaping the quote characters instead would not help -- the parser
+    looks for the literal string, not for balanced quotes.
     """
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value).replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
+    return json.dumps(payload, default=str).replace("<", "\\u003c")
 
 
-# ----------------------------------------------------------------------
-# Charts
-# ----------------------------------------------------------------------
+def _assets() -> Dict[str, str]:
+    """The vendored JS and CSS, read once per export.
 
-
-def _axis_pick(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> tuple:
-    """Decide which column is the label and which are the values.
-
-    Honours an explicit ChartSpec when the dashboard supplies one, and falls
-    back to "first column labels, first numeric column values" -- the shape
-    almost every ``GROUP BY`` produces.
+    ``tile-figure.js`` is an ES module, and a module script cannot load from a
+    ``file://`` URL -- the browser refuses it as a cross-origin request, which
+    would make every chart in a downloaded file silently absent. So the ``export``
+    keywords are stripped and it is inlined as a classic script. The stripping is
+    asserted in the tests, because a module that quietly failed to define
+    ``tileFigure`` would produce an export with empty boxes.
     """
-    if not columns:
-        return None, []
-
-    label_col = None
-    if chart is not None and getattr(chart, "x", None) in columns:
-        label_col = columns.index(chart.x)
-
-    value_cols: List[int] = []
-    if chart is not None and getattr(chart, "y", None):
-        value_cols = [columns.index(c) for c in chart.y if c in columns]
-
-    if label_col is None:
-        label_col = 0
-    if not value_cols:
-        for index, _ in enumerate(columns):
-            if index == label_col:
-                continue
-            if any(_number(row[index]) is not None for row in rows[:20] if len(row) > index):
-                value_cols.append(index)
-        value_cols = value_cols[:4]   # more than four series is unreadable anyway
-
-    return label_col, value_cols
-
-
-def _svg_bar_or_line(
-    columns: Sequence[str],
-    rows: Sequence[Sequence[Any]],
-    chart,
-    *,
-    line: bool,
-) -> str:
-    label_col, value_cols = _axis_pick(columns, rows, chart)
-    if label_col is None or not value_cols:
-        return '<p class="muted">Nothing numeric to plot.</p>'
-
-    # Cap the points drawn. A 5,000-row series is unreadable at any width, and
-    # the SVG for it is larger than the table it came from.
-    data = list(rows)[:60]
-    labels = [str(r[label_col]) if len(r) > label_col else "" for r in data]
-    series = [
-        [(_number(r[c]) if len(r) > c else None) or 0.0 for r in data]
-        for c in value_cols
-    ]
-    if not any(any(s) for s in series):
-        return '<p class="muted">All values are zero or empty.</p>'
-
-    width, height = 720, 260
-    pad_l, pad_b, pad_t, pad_r = 56, 46, 12, 12
-    plot_w = width - pad_l - pad_r
-    plot_h = height - pad_t - pad_b
-
-    high = max(max(s) for s in series)
-    low = min(min(s) for s in series)
-    low = min(0.0, low)
-    span = (high - low) or 1.0
-
-    def y_of(v: float) -> float:
-        return pad_t + plot_h - ((v - low) / span) * plot_h
-
-    parts: List[str] = [
-        f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" '
-        f'role="img" preserveAspectRatio="xMidYMid meet">'
-    ]
-
-    # Horizontal guides, with values, so the chart can be read without hovering.
-    for step in range(5):
-        v = low + span * step / 4
-        y = y_of(v)
-        parts.append(
-            f'<line x1="{pad_l}" y1="{y:.1f}" x2="{width - pad_r}" y2="{y:.1f}" '
-            f'class="grid" />'
-            f'<text x="{pad_l - 8}" y="{y + 4:.1f}" class="ax" text-anchor="end">'
-            f"{_esc(f'{v:,.4g}')}</text>"
+    missing = [p.name for p in (PLOTLY_JS, TILE_FIGURE_JS) if not p.is_file()]
+    if missing:
+        raise ExportAssetsMissing(
+            f"{', '.join(missing)} is not in {VENDOR}. Run `make plotly-bundle`; "
+            "without it an export would have no charts in it."
         )
 
-    slot = plot_w / max(1, len(data))
-
-    if line:
-        for si, values in enumerate(series):
-            points = " ".join(
-                f"{pad_l + slot * (i + 0.5):.1f},{y_of(v):.1f}"
-                for i, v in enumerate(values)
-            )
-            parts.append(
-                f'<polyline points="{points}" fill="none" '
-                f'stroke="{PALETTE[si % len(PALETTE)]}" stroke-width="2.5" '
-                f'stroke-linejoin="round" />'
-            )
-    else:
-        group = slot / (len(series) + 0.5)
-        for si, values in enumerate(series):
-            for i, v in enumerate(values):
-                x = pad_l + slot * i + group * si + group * 0.25
-                y = y_of(v)
-                bar_h = abs(y_of(0) - y)
-                parts.append(
-                    f'<rect x="{x:.1f}" y="{min(y, y_of(0)):.1f}" '
-                    f'width="{max(1.0, group * 0.8):.1f}" height="{max(1.0, bar_h):.1f}" '
-                    f'fill="{PALETTE[si % len(PALETTE)]}" rx="2" />'
-                )
-
-    # Label every nth point so they never overlap.
-    stride = max(1, len(labels) // 12)
-    for i, label in enumerate(labels):
-        if i % stride:
-            continue
-        x = pad_l + slot * (i + 0.5)
-        text = label if len(label) <= 14 else label[:13] + "…"
-        parts.append(
-            f'<text x="{x:.1f}" y="{height - pad_b + 18}" class="ax" '
-            f'text-anchor="middle">{_esc(text)}</text>'
-        )
-
-    parts.append(
-        f'<line x1="{pad_l}" y1="{y_of(0):.1f}" x2="{width - pad_r}" '
-        f'y2="{y_of(0):.1f}" class="axis" />'
+    figure_source = TILE_FIGURE_JS.read_text(encoding="utf-8")
+    figure_source = "\n".join(
+        line[len("export ") :] if line.startswith("export ") else line
+        for line in figure_source.splitlines()
     )
-    parts.append("</svg>")
 
-    if len(series) > 1:
-        legend = " ".join(
-            f'<span class="key"><i style="background:{PALETTE[i % len(PALETTE)]}"></i>'
-            f"{_esc(columns[c])}</span>"
-            for i, c in enumerate(value_cols)
-        )
-        parts.append(f'<div class="legend">{legend}</div>')
-
-    if len(rows) > len(data):
-        parts.append(
-            f'<p class="muted small">Showing the first {len(data)} of '
-            f"{len(rows):,} rows.</p>"
-        )
-    return "".join(parts)
-
-
-def _svg_pie(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> str:
-    label_col, value_cols = _axis_pick(columns, rows, chart)
-    if label_col is None or not value_cols:
-        return '<p class="muted">Nothing numeric to plot.</p>'
-
-    value_col = value_cols[0]
-    pairs = [
-        (str(r[label_col]), (_number(r[value_col]) or 0.0))
-        for r in rows[:10]
-        if len(r) > max(label_col, value_col)
-    ]
-    total = sum(v for _, v in pairs)
-    if total <= 0:
-        return '<p class="muted">All values are zero.</p>'
-
-    import math
-
-    cx, cy, radius = 130, 130, 110
-    parts = ['<svg viewBox="0 0 470 260" width="100%" height="260" role="img">']
-    angle = -math.pi / 2
-    legend: List[str] = []
-
-    for i, (label, value) in enumerate(pairs):
-        sweep = 2 * math.pi * (value / total)
-        x1, y1 = cx + radius * math.cos(angle), cy + radius * math.sin(angle)
-        angle += sweep
-        x2, y2 = cx + radius * math.cos(angle), cy + radius * math.sin(angle)
-        large = 1 if sweep > math.pi else 0
-        colour = PALETTE[i % len(PALETTE)]
-        parts.append(
-            f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} '
-            f'A {radius} {radius} 0 {large} 1 {x2:.1f} {y2:.1f} Z" fill="{colour}" />'
-        )
-        legend.append(
-            f'<span class="key"><i style="background:{colour}"></i>'
-            f"{_esc(label)} &middot; {value / total * 100:.1f}%</span>"
-        )
-
-    parts.append("</svg>")
-    parts.append(f'<div class="legend">{" ".join(legend)}</div>')
-    return "".join(parts)
-
-
-def _svg_scatter(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> str:
-    """Points, not bars.
-
-    Drawn rather than fudged into a bar chart: this file is what somebody keeps,
-    and a chart of a different kind than the one on screen is not a copy of the
-    dashboard, it is a different claim about the data.
-    """
-    label_col, value_cols = _axis_pick(columns, rows, chart)
-    if label_col is None or not value_cols:
-        return '<p class="muted">Nothing numeric to plot.</p>'
-
-    value_col = value_cols[0]
-    points = [
-        (_number(r[label_col]), _number(r[value_col]))
-        for r in rows[:400]
-        if len(r) > max(label_col, value_col)
-    ]
-    points = [(x, y) for x, y in points if x is not None and y is not None]
-    if not points:
-        # A categorical x has no position of its own; fall back to the ordering.
-        points = [
-            (float(i), _number(r[value_col]) or 0.0)
-            for i, r in enumerate(rows[:400])
-            if len(r) > value_col
-        ]
-    if not points:
-        return '<p class="muted">Nothing numeric to plot.</p>'
-
-    width, height, pad = 640, 260, 34
-    xs = [x for x, _ in points]
-    ys = [y for _, y in points]
-    x_lo, x_hi = min(xs), max(xs)
-    y_lo, y_hi = min(min(ys), 0.0), max(ys)
-    x_span = (x_hi - x_lo) or 1.0
-    y_span = (y_hi - y_lo) or 1.0
-
-    parts = [
-        f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img">',
-        f'<line x1="{pad}" y1="{height - pad}" x2="{width - pad}" y2="{height - pad}" '
-        f'stroke="#cbd5e1" />',
-    ]
-    for x, y in points:
-        cx = pad + (x - x_lo) / x_span * (width - 2 * pad)
-        cy = (height - pad) - (y - y_lo) / y_span * (height - 2 * pad)
-        parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3.5" fill="{PALETTE[0]}" '
-                     f'fill-opacity="0.75" />')
-    parts.append("</svg>")
-    if len(rows) > len(points):
-        parts.append(
-            f'<p class="muted small">Showing {len(points)} of {len(rows):,} rows.</p>'
-        )
-    return "".join(parts)
-
-
-def _svg_heatmap(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart) -> str:
-    """A grid of cells: x across, y down, colour by the third column."""
-    label_col, value_cols = _axis_pick(columns, rows, chart)
-    if label_col is None or not value_cols:
-        return '<p class="muted">Nothing numeric to plot.</p>'
-
-    # x, y, value. With only one non-numeric column there is no second axis, so
-    # this degrades to the bar chart rather than inventing one.
-    y_name = getattr(chart, "color_by", None)
-    y_col = columns.index(y_name) if y_name in columns else None
-    if y_col is None:
-        others = [i for i, _ in enumerate(columns) if i != label_col and i not in value_cols]
-        y_col = others[0] if others else None
-    if y_col is None:
-        return _svg_bar_or_line(columns, rows, chart, line=False)
-
-    value_col = value_cols[0]
-    xs, ys, cells = [], [], {}
-    for row in rows[:600]:
-        if len(row) <= max(label_col, y_col, value_col):
-            continue
-        x, y = str(row[label_col]), str(row[y_col])
-        if x not in xs:
-            xs.append(x)
-        if y not in ys:
-            ys.append(y)
-        cells[(x, y)] = _number(row[value_col]) or 0.0
-    if not cells:
-        return '<p class="muted">Nothing numeric to plot.</p>'
-
-    xs, ys = xs[:24], ys[:16]
-    top = max(cells.values()) or 1.0
-    cell_w, cell_h, left, top_pad = 26, 18, 120, 10
-    width = left + cell_w * len(xs) + 10
-    height = top_pad + cell_h * len(ys) + 26
-
-    parts = [f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img">']
-    for row_index, y in enumerate(ys):
-        parts.append(
-            f'<text x="{left - 6}" y="{top_pad + row_index * cell_h + 13}" '
-            f'text-anchor="end" font-size="11" fill="#64748b">{_esc(y[:18])}</text>'
-        )
-        for col_index, x in enumerate(xs):
-            value = cells.get((x, y))
-            shade = 0.08 + 0.92 * (value / top) if value else 0.06
-            parts.append(
-                f'<rect x="{left + col_index * cell_w}" '
-                f'y="{top_pad + row_index * cell_h}" width="{cell_w - 2}" '
-                f'height="{cell_h - 2}" rx="2" fill="{PALETTE[0]}" '
-                f'fill-opacity="{shade:.2f}" />'
-            )
-    for col_index, x in enumerate(xs):
-        parts.append(
-            f'<text x="{left + col_index * cell_w + cell_w / 2}" y="{height - 8}" '
-            f'text-anchor="middle" font-size="10" fill="#64748b">{_esc(x[:6])}</text>'
-        )
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def _render_chart(tile: Tile, result: TileResult) -> str:
-    chart = tile.chart
-    kind = getattr(chart, "type", None)
-    if kind == ChartType.PIE:
-        return _svg_pie(result.columns, result.rows, chart)
-    if kind == ChartType.SCATTER:
-        return _svg_scatter(result.columns, result.rows, chart)
-    if kind == ChartType.HEATMAP:
-        return _svg_heatmap(result.columns, result.rows, chart)
-    line = kind in (ChartType.LINE, ChartType.AREA)
-    return _svg_bar_or_line(result.columns, result.rows, chart, line=line)
+    return {
+        "plotly_js": PLOTLY_JS.read_text(encoding="utf-8"),
+        "plotly_css": PLOTLY_CSS.read_text(encoding="utf-8") if PLOTLY_CSS.is_file() else "",
+        "figure_js": figure_source,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -385,34 +115,33 @@ def _render_chart(tile: Tile, result: TileResult) -> str:
 # ----------------------------------------------------------------------
 
 
-def _render_table(result: TileResult, limit: int = 200) -> str:
-    if not result.columns:
-        return '<p class="muted">No columns.</p>'
-    head = "".join(f"<th>{_esc(c)}</th>" for c in result.columns)
-    body = "".join(
-        "<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in row) + "</tr>"
-        for row in result.rows[:limit]
-    )
-    more = (
-        f'<p class="muted small">Showing {limit:,} of {result.row_count:,} rows.</p>'
-        if result.row_count > limit
-        else ""
-    )
-    return (
-        f'<div class="scroll"><table><thead><tr>{head}</tr></thead>'
-        f"<tbody>{body}</tbody></table></div>{more}"
-    )
+def _tile_payload(tile: Tile, result: Optional[TileResult]) -> Optional[Dict[str, Any]]:
+    """What the browser code needs to draw this tile, or None if it draws nothing.
 
+    The tile is passed through in the shape ``tileFigure`` expects -- the same
+    shape the API hands the dashboard page -- so the two callers cannot drift
+    apart in what they supply either.
+    """
+    if tile.kind == TileKind.TEXT or result is None or result.error:
+        return None
+    if not result.columns or not result.rows:
+        return None
 
-def _render_metric(result: TileResult) -> str:
-    """One number, large. The most-read tile kind, so it gets the most room."""
-    if not result.rows or not result.rows[0]:
-        return '<p class="muted">No value.</p>'
-    value = result.rows[0][0]
-    numeric = _number(value)
-    shown = f"{numeric:,.10g}" if numeric is not None else str(value)
-    label = result.columns[0] if result.columns else ""
-    return f'<p class="metric">{_esc(shown)}</p><p class="muted">{_esc(label)}</p>'
+    chart: Optional[Dict[str, Any]] = None
+    if tile.chart is not None:
+        chart = tile.chart.model_dump(mode="json", exclude_none=True)
+
+    return {
+        "id": tile.id,
+        "tile": {"id": tile.id, "kind": tile.kind.value, "title": tile.title,
+                 "chart": chart, "grid": {"height": tile.grid.height}},
+        "result": {
+            "columns": list(result.columns),
+            "rows": [list(row) for row in result.rows],
+            "row_count": result.row_count,
+            "truncated": result.truncated,
+        },
+    }
 
 
 def _render_tile(tile: Tile, result: Optional[TileResult]) -> str:
@@ -428,17 +157,6 @@ def _render_tile(tile: Tile, result: Optional[TileResult]) -> str:
         body = f'<p class="text-tile">{_esc(tile.text or "")}</p>'
         return f'<section class="tile"><h2>{title}</h2>{description}{body}</section>'
 
-    if result is None:
-        body = '<p class="muted">This tile was not executed.</p>'
-    elif result.error:
-        body = f'<p class="error">{_esc(result.error)}</p>'
-    elif tile.kind == TileKind.METRIC:
-        body = _render_metric(result)
-    elif tile.kind == TileKind.CHART:
-        body = _render_chart(tile, result)
-    else:
-        body = _render_table(result)
-
     warnings = "".join(
         f'<p class="warn">{_esc(w)}</p>' for w in (result.warnings if result else [])
     )
@@ -448,8 +166,29 @@ def _render_tile(tile: Tile, result: Optional[TileResult]) -> str:
         if result is not None and result.truncated
         else ""
     )
+
+    if result is None:
+        body = '<p class="muted">This tile was not executed.</p>'
+    elif result.error:
+        body = f'<p class="error">{_esc(result.error)}</p>'
+    elif not result.columns or not result.rows:
+        body = '<p class="muted">No data.</p>'
+    else:
+        # A metric's indicator carries its own label, so a heading above it would
+        # say the same thing twice.
+        height = max(
+            120 if tile.kind == TileKind.METRIC else 220,
+            (tile.grid.height or 5) * 52,
+        )
+        body = (
+            f'<div class="figure" data-tile="{_esc(tile.id)}" '
+            f'style="height:{height}px"></div>'
+            f'<p class="muted small note" data-note="{_esc(tile.id)}"></p>'
+        )
+
+    heading = "" if tile.kind == TileKind.METRIC and result and not result.error else f"<h2>{title}</h2>"
     return (
-        f'<section class="tile"><h2>{title}</h2>{description}'
+        f'<section class="tile">{heading}{description}'
         f"{warnings}{truncated}{body}</section>"
     )
 
@@ -474,27 +213,43 @@ h2 { font-size:1rem; margin:0 0 10px; }
   padding-bottom:16px; border-bottom:1px solid var(--line); }
 .tile { background:var(--card); border:1px solid var(--line); border-radius:10px;
   padding:16px; margin-bottom:14px; }
-.metric { font-size:2.4rem; font-weight:650; margin:6px 0 0; }
 .muted { color:var(--muted); } .small { font-size:.8125rem; }
 .warn { color:var(--warn); font-size:.8125rem; margin:0 0 8px; }
 .error { color:var(--bad); font-size:.875rem; margin:0; }
 .text-tile { white-space:pre-wrap; margin:0; }
-.scroll { overflow-x:auto; }
-table { border-collapse:collapse; width:100%; font-size:.8125rem;
-  font-variant-numeric:tabular-nums; direction:ltr; }
-th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line);
-  white-space:nowrap; }
-th { color:var(--muted); font-weight:600; }
-tbody tr:last-child td { border-bottom:0; }
-.grid { stroke:var(--line); stroke-width:1; }
-.axis { stroke:var(--muted); stroke-width:1; }
-.ax { fill:var(--muted); font-size:11px; }
-.legend { margin-top:8px; font-size:.8125rem; color:var(--muted); }
-.key { margin-right:14px; white-space:nowrap; }
-.key i { display:inline-block; width:10px; height:10px; border-radius:2px;
-  margin-right:5px; vertical-align:baseline; }
+.figure { width:100%; }
+.note { margin:8px 0 0; }
 footer { color:var(--muted); font-size:.75rem; margin-top:26px;
   padding-top:14px; border-top:1px solid var(--line); }
+"""
+
+#: Drawn after the document exists, one figure per tile, so a single bad tile
+#: cannot stop the others. `matchMedia` rather than a stored flag: the file is
+#: read on somebody else's laptop, and the theme that matters is theirs.
+_DRAW_JS = """
+(function () {
+  var tiles = JSON.parse(document.getElementById('vanna-tiles').textContent);
+  var dark = window.matchMedia
+    && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  tiles.forEach(function (entry) {
+    var mount = document.querySelector('.figure[data-tile="' + entry.id + '"]');
+    if (!mount) return;
+    var note = document.querySelector('.note[data-note="' + entry.id + '"]');
+    try {
+      var box = Math.round(mount.getBoundingClientRect().height) || 300;
+      var figure = tileFigure(entry.tile, entry.result, { height: box, dark: dark });
+      if (!figure) {
+        mount.textContent = 'No data.';
+        return;
+      }
+      Plotly.newPlot(mount, figure.traces, figure.layout, figure.config);
+      if (note && figure.note) note.textContent = figure.note;
+    } catch (error) {
+      mount.textContent = 'This tile could not be drawn: ' + error.message;
+    }
+  });
+})();
 """
 
 
@@ -521,11 +276,21 @@ def export_html(
 
     Returns:
         A complete HTML document with no external references of any kind.
+
+    Raises:
+        ExportAssetsMissing: If the vendored Plotly bundle is not in the image.
     """
+    assets = _assets()
     by_id: Dict[str, TileResult] = {r.tile_id: r for r in results}
     when = (exported_at or datetime.now(timezone.utc)).strftime("%d %B %Y at %H:%M UTC")
 
     tiles = "".join(_render_tile(tile, by_id.get(tile.id)) for tile in dashboard.tiles)
+
+    payloads: List[Dict[str, Any]] = []
+    for tile in dashboard.tiles:
+        payload = _tile_payload(tile, by_id.get(tile.id))
+        if payload is not None:
+            payloads.append(payload)
 
     provenance_bits = [f"Snapshot taken {_esc(when)}"]
     if exported_by:
@@ -534,9 +299,7 @@ def export_html(
         provenance_bits.append(f"in {_esc(workspace)}")
     provenance = ", ".join(provenance_bits) + "."
 
-    source_line = (
-        f" Data source: {_esc(data_source)}." if data_source else ""
-    )
+    source_line = f" Data source: {_esc(data_source)}." if data_source else ""
 
     return f"""<!doctype html>
 <html lang="en">
@@ -544,6 +307,7 @@ def export_html(
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>{_esc(dashboard.title or 'Dashboard')}</title>
 <style>{_CSS}</style>
+<style>{assets['plotly_css']}</style>
 <main>
   <h1>{_esc(dashboard.title or 'Dashboard')}</h1>
   <p class="provenance">
@@ -557,6 +321,10 @@ def export_html(
     Exported from DataLens. No connection details are contained in this file.
   </footer>
 </main>
+<script id="vanna-tiles" type="application/json">{_json_island(payloads)}</script>
+<script>{assets['plotly_js']}</script>
+<script>{assets['figure_js']}
+{_DRAW_JS}</script>
 </html>
 """
 

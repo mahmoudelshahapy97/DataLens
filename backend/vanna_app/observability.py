@@ -206,6 +206,13 @@ class Metrics:
         self.login_failures = _NoopMetric()
         self.tenant_runtimes = _NoopMetric()
         self.pool_waiters = _NoopMetric()
+        self.pool_in_use = _NoopMetric()
+        self.pool_ceiling = _NoopMetric()
+        self.pool_wait_seconds = _NoopMetric()
+        self.pool_saturated = _NoopMetric()
+        self.warehouse_pool_in_use = _NoopMetric()
+        self.warehouse_pool_ceiling = _NoopMetric()
+        self.loop_lag_seconds = _NoopMetric()
 
         if not enabled:
             return
@@ -247,8 +254,54 @@ class Metrics:
         self.tenant_runtimes = Gauge(
             "vanna_tenant_runtimes", "Tenant runtimes currently cached"
         )
+        # Connection accounting.
+        #
+        # `pool_waiters` has existed since metrics were added and was never set by
+        # anything, so the one gauge that would have shown control-plane saturation
+        # read zero however saturated it was. It is wired in `db.py` now, alongside
+        # the four below.
+        #
+        # The distinction these keep separate is the whole point: `ceiling` is what
+        # the configuration permits, `in_use` is what is happening. Reporting only
+        # one of them is how a deployment ends up arguing about whether it is close
+        # to a limit.
         self.pool_waiters = Gauge(
             "vanna_control_plane_pool_waiters", "Requests waiting for a control-plane connection"
+        )
+        self.pool_in_use = Gauge(
+            "vanna_control_plane_pool_in_use", "Control-plane connections checked out"
+        )
+        self.pool_ceiling = Gauge(
+            "vanna_control_plane_pool_ceiling", "Control-plane connections this worker may open"
+        )
+        self.pool_wait_seconds = Histogram(
+            "vanna_control_plane_pool_wait_seconds",
+            "Time spent waiting for a control-plane connection",
+            # Deliberately fine at the short end: the interesting question is
+            # whether waiting has started at all, not how long a saturated pool
+            # keeps someone. Anything past a second is already a problem.
+            buckets=(0.001, 0.005, 0.02, 0.1, 0.5, 1, 5, 10),
+        )
+        self.pool_saturated = Counter(
+            "vanna_control_plane_pool_saturated_total",
+            "Requests that gave up waiting for a control-plane connection",
+        )
+        # Labelled by data source, which is bounded by what a deployment has
+        # registered -- unlike `tenant`, which the class docstring warns about.
+        self.warehouse_pool_in_use = Gauge(
+            "vanna_warehouse_pool_in_use", "Warehouse connections checked out", ["data_source"]
+        )
+        self.warehouse_pool_ceiling = Gauge(
+            "vanna_warehouse_pool_ceiling", "Warehouse connections a runtime may open",
+            ["data_source"],
+        )
+        # The number that says whether blocking work is starving other users. A
+        # p99 request latency can be bad for a dozen reasons; loop lag can only be
+        # one.
+        self.loop_lag_seconds = Histogram(
+            "vanna_event_loop_lag_seconds",
+            "How late the event loop ran a callback scheduled for now",
+            buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5),
         )
 
 

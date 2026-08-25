@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
+from ..datasources import UnknownDataSource
 from ..authz import (
     is_platform_admin,
     require_platform_admin,
@@ -854,6 +855,33 @@ def register(app: Any, deps: Deps) -> None:
         user = await deps.caller(request)
         require_platform_admin(user, settings)
         return {"data_sources": await _registry().list_sources(tenant_id)}
+
+    @app.get(
+        "/api/vanna/v2/admin/tenants/{tenant_id}/datasources/{data_source_id:path}/health"
+    )
+    async def check_workspace_datasource(
+        tenant_id: str, data_source_id: str, request: Request
+    ) -> Dict[str, Any]:
+        """Try to reach one database now, and remember the answer.
+
+        A source was probed once, when it was registered, and the result was
+        discarded with the request. So a rotated password or a moved host looked
+        exactly like a healthy source until somebody asked a question and got an
+        error they had no way to interpret.
+
+        A workspace admin may run this -- it is a fact about their own workspace,
+        it reveals nothing a member cannot already infer from a failing question,
+        and the person who needs it at 9am is not the platform administrator.
+        Registering a database stays platform-only; asking whether it answers does
+        not.
+        """
+        user = await deps.caller(request)
+        require_tenant_admin(user, tenant_id, settings)
+        try:
+            result = await _registry().check(tenant_id, data_source_id)
+        except UnknownDataSource as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"data_source_id": data_source_id, **result}
 
     @app.post("/api/vanna/v2/admin/tenants/{tenant_id}/datasources", status_code=201)
     async def add_workspace_datasource(

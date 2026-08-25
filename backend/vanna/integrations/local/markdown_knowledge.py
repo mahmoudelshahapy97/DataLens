@@ -43,11 +43,15 @@ the two drifting apart.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
+import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from vanna.capabilities.agent_memory import tenant_scope
 from vanna.capabilities.knowledge import (
@@ -116,8 +120,28 @@ def _render_frontmatter(data: Dict) -> str:
 class MarkdownExampleStore(ExampleStore):
     """An :class:`ExampleStore` backed by ``knowledge/sql/*.md``.
 
-    Files are the source of truth and are re-read from disk on demand, so an
+    Files are the source of truth and are re-read from disk when they change, so an
     example edited by hand (or pulled from git) takes effect without a restart.
+
+    **Why there is a cache in a store whose whole point is reading from disk.**
+    ``search`` used to glob the directory, parse every file, reconcile the entire
+    corpus with the vector index and then query it -- once per question, and all of
+    it synchronously on the event loop. In an app that streams answers that is one
+    user's retrieval blocking everybody else's tokens; the loop was measured
+    lagging 8-14ms at rest. The freshness guarantee is kept by fingerprinting the
+    directory rather than by re-reading it: a single ``scandir`` gives file count,
+    newest mtime and total size, which is enough to notice any edit, and cheap
+    enough to do on every call. Only a changed fingerprint re-parses, and only a
+    changed fingerprint re-syncs the index.
+
+    Size and count are in the fingerprint alongside the nanosecond mtime because no
+    one of them is sufficient: a same-length rewrite does not change size, an
+    in-place edit does not change count, and a filesystem with coarse timestamp
+    granularity (NTFS in a dev checkout, rather than the ext4/overlayfs this ships
+    on) can report the same mtime for two edits in quick succession. Together they
+    catch every case that matters in the containers this runs in; a content hash
+    would catch the last one too, at the cost of reading every file on every
+    question, which is the work this exists to avoid.
 
     Tenancy uses a directory per tenant rather than a metadata field, because
     the filesystem is the isolation boundary here -- and a directory that does
@@ -146,6 +170,14 @@ class MarkdownExampleStore(ExampleStore):
         # overlap below, which keeps this store dependency-free and keeps the
         # index a strict improvement rather than a requirement.
         self.index = index
+        # {directory: (fingerprint, [Example])}. Keyed by directory rather than by
+        # tenant so the single-tenant layout and a per-tenant one share it without
+        # either needing to know about the other.
+        self._corpus: Dict[Path, Tuple[Tuple[int, int, int], List[Example]]] = {}
+        # Guards the cache across the worker threads `search` now runs in.
+        self._corpus_lock = threading.Lock()
+        #: Fingerprints already reconciled with the index, per tenant.
+        self._synced: Dict[str, Tuple[int, int, int]] = {}
 
     # ------------------------------------------------------------------
     # Paths
@@ -216,17 +248,105 @@ class MarkdownExampleStore(ExampleStore):
             verified_by=front.get("verified_by"),
         )
 
-    def _load_all(self, context: "ToolContext") -> List[Example]:
-        directory = self._dir(context)
+    @staticmethod
+    def _write_atomic(path: Path, text: str) -> None:
+        """Write via a temporary file and one rename.
+
+        ``write_text`` truncates and then writes, so a reader that arrives between
+        the two sees an empty or half-written example -- and with four worker
+        processes sharing this directory, one of them reading while another writes
+        is ordinary rather than unlucky. ``os.replace`` is atomic within a
+        filesystem, so a reader sees either the old file or the new one.
+
+        The temporary file is created in the destination directory, not the system
+        temp: a rename across filesystems is not atomic and would fall back to a
+        copy.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=f".{path.stem}.", suffix=".tmp"
+        )
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _fingerprint(directory: Path) -> Tuple[int, int, int]:
+        """(files, newest mtime in ns, total bytes) for the markdown in *directory*.
+
+        One ``scandir`` and no file opened. Nanoseconds, not ``st_mtime``: seconds
+        cannot tell apart two edits within the same tick, and "same second, same
+        length, different SQL" is exactly the shape of a hand-edit -- `SELECT a`
+        becoming `SELECT b`. With float seconds that edit was invisible and the
+        corpus went quietly stale, which is the one failure a cache in front of a
+        file-is-truth store must not have.
+        """
         if not directory.is_dir():
-            return []
+            return (0, 0, 0)
+        count = 0
+        newest = 0
+        total = 0
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not entry.name.endswith(".md"):
+                    continue
+                try:
+                    info = entry.stat()
+                except OSError:  # pragma: no cover - vanished mid-scan
+                    continue
+                count += 1
+                total += info.st_size
+                newest = max(newest, info.st_mtime_ns)
+        return (count, newest, total)
+
+    def _load_all(self, context: "ToolContext") -> List[Example]:
+        """Every example in this tenant's directory, parsed at most once per edit.
+
+        Returns the cached list itself rather than a copy: callers filter it into a
+        new list and `set_status` mutates an object it then writes and re-reads, so
+        nothing here relies on the caller not touching it. Copying a corpus per
+        question is the cost this exists to avoid.
+        """
+        directory = self._dir(context)
+        fingerprint = self._fingerprint(directory)
+
+        with self._corpus_lock:
+            cached = self._corpus.get(directory)
+            if cached is not None and cached[0] == fingerprint:
+                return cached[1]
+
         tenant = tenant_scope(context)
         examples = []
-        for path in sorted(directory.glob("*.md")):
-            example = self._from_markdown(path, tenant)
-            if example is not None:
-                examples.append(example)
+        if directory.is_dir():
+            for path in sorted(directory.glob("*.md")):
+                example = self._from_markdown(path, tenant)
+                if example is not None:
+                    examples.append(example)
+
+        with self._corpus_lock:
+            # Fingerprinted before the read, so a write that landed *during* it is
+            # not recorded as matching what we just parsed -- the next call
+            # re-reads instead of trusting a corpus that may be half-new.
+            if self._fingerprint(directory) == fingerprint:
+                self._corpus[directory] = (fingerprint, examples)
         return examples
+
+    def _forget(self, context: "ToolContext") -> None:
+        """Drop the cached corpus for this tenant after our own write.
+
+        The fingerprint would notice anyway on the next call; doing it here means a
+        read immediately after a write does not depend on the filesystem's mtime
+        granularity to see it.
+        """
+        with self._corpus_lock:
+            self._corpus.pop(self._dir(context), None)
 
     def _path_for(self, context: "ToolContext", example: Example) -> Path:
         return self._dir(context) / f"{slugify(example.question)}.md"
@@ -261,9 +381,8 @@ class MarkdownExampleStore(ExampleStore):
             tags=tags or [],
             created_by=context.user.id,
         )
-        path = self._path_for(context, example)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self._to_markdown(example), encoding="utf-8")
+        self._write_atomic(self._path_for(context, example), self._to_markdown(example))
+        self._forget(context)
         self._index_one(context, example)
         return example
 
@@ -277,13 +396,38 @@ class MarkdownExampleStore(ExampleStore):
         verified_only: bool = False,
         data_source_id: Optional[str] = None,
     ) -> List[ExampleHit]:
-        """Lexical ranking over the files.
+        """Lexical ranking over the files, off the event loop.
 
-        Reads from disk each call. That is deliberate for a file-backed store:
-        an example edited in an editor or pulled from git is live immediately,
-        and correctness matters more here than shaving a few milliseconds off a
-        path already dominated by an LLM round trip.
+        Every part of the work below blocks: the directory scan, parsing markdown,
+        reconciling the vector index and querying it over the network. Doing that
+        on the loop meant one user's retrieval delayed every other user's streamed
+        tokens, which is the failure that looks like "the app is slow" and has no
+        slow query behind it.
+
+        ``to_thread`` moves the pressure to the default executor rather than
+        removing it -- see ``VANNA_THREAD_POOL_MAX`` in the deployment, which sizes
+        that executor deliberately instead of leaving it at the interpreter's
+        default.
         """
+        return await asyncio.to_thread(
+            self._search_sync,
+            context,
+            question,
+            limit,
+            min_score,
+            verified_only,
+            data_source_id,
+        )
+
+    def _search_sync(
+        self,
+        context: "ToolContext",
+        question: str,
+        limit: int,
+        min_score: float,
+        verified_only: bool,
+        data_source_id: Optional[str],
+    ) -> List[ExampleHit]:
         from .knowledge import _terms  # shared tokeniser
 
         candidates = [
@@ -349,15 +493,22 @@ class MarkdownExampleStore(ExampleStore):
             from vanna.capabilities.index import documents_for_examples, sync_documents
 
             tenant = tenant_scope(context)
-            sync_documents(
-                self.index,
-                documents_for_examples(candidates, tenant_id=tenant),
-                tenant_id=tenant,
-                # This store owns examples and nothing else. Claiming a wider
-                # scope would delete the catalog's table documents, which share
-                # the index.
-                kinds="example",
-            )
+            # Only when the corpus has actually changed. This ran on every
+            # question, and for a persistent vector backend "bring the index into
+            # step" means hashing every document to find the nothing that changed
+            # -- per question, per user.
+            fingerprint = self._fingerprint(self._dir(context))
+            if self._synced.get(tenant) != fingerprint:
+                sync_documents(
+                    self.index,
+                    documents_for_examples(candidates, tenant_id=tenant),
+                    tenant_id=tenant,
+                    # This store owns examples and nothing else. Claiming a
+                    # wider scope would delete the catalog's table documents,
+                    # which share the index.
+                    kinds="example",
+                )
+                self._synced[tenant] = fingerprint
 
             by_id = {f"example:{e.id}": e for e in candidates}
             hits = []
@@ -400,9 +551,10 @@ class MarkdownExampleStore(ExampleStore):
             example.status = status
             if status == ExampleStatus.VERIFIED:
                 example.verified_by = actor or context.user.id
-            self._path_for(context, example).write_text(
-                self._to_markdown(example), encoding="utf-8"
+            self._write_atomic(
+                self._path_for(context, example), self._to_markdown(example)
             )
+            self._forget(context)
             # Verifying an example raises its boost, so the stored entry is now
             # wrong even though its text is unchanged.
             self._index_one(context, example)
@@ -415,6 +567,7 @@ class MarkdownExampleStore(ExampleStore):
                 path = self._path_for(context, example)
                 if path.exists():
                     path.unlink()
+                    self._forget(context)
                     self._unindex_one(context, example)
                     return True
         return False
@@ -597,7 +750,7 @@ class MarkdownInstructionStore(InstructionStore):
             instruction.created_by = context.user.id
         path = self._path_for(context, instruction)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self._to_markdown(instruction), encoding="utf-8")
+        MarkdownExampleStore._write_atomic(path, self._to_markdown(instruction))
         return instruction
 
     async def resolve(
@@ -627,8 +780,9 @@ class MarkdownInstructionStore(InstructionStore):
         for instruction in self._load_all(context):
             if instruction.id == instruction_id:
                 instruction.enabled = enabled
-                self._path_for(context, instruction).write_text(
-                    self._to_markdown(instruction), encoding="utf-8"
+                MarkdownExampleStore._write_atomic(
+                    self._path_for(context, instruction),
+                    self._to_markdown(instruction),
                 )
                 return True
         return False
@@ -673,7 +827,7 @@ class MarkdownInstructionStore(InstructionStore):
             instruction.updated_at = datetime.now(timezone.utc)
 
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(self._to_markdown(instruction), encoding="utf-8")
+            MarkdownExampleStore._write_atomic(path, self._to_markdown(instruction))
             return instruction
         return None
 

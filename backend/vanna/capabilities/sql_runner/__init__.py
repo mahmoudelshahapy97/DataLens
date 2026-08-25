@@ -11,6 +11,7 @@ from .base_runner import (
     ResultTooLargeError,
 )
 from .models import RunSqlToolArgs
+from .pool import ConnectionPool, looks_dead
 from .policy import ExecutionPolicy, ExecutionResult
 from .write import (
     ConstraintViolated,
@@ -24,6 +25,8 @@ from .write import (
 
 __all__ = [
     "SqlRunner",
+    "ConnectionPool",
+    "looks_dead",
     "BaseSqlRunner",
     "RunSqlToolArgs",
     "ExecutionPolicy",

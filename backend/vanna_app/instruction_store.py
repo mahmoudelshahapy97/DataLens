@@ -19,7 +19,6 @@ anything went missing.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -397,12 +396,7 @@ class PostgresInstructionStore(InstructionStore):
     async def _transact(self, body: Callable[[Any], None]) -> None:
         """Run ``body(cursor)`` inside one transaction, off the event loop."""
 
-        def run() -> None:
-            with self.db.transaction() as connection:
-                with connection.cursor() as cursor:
-                    body(cursor)
-
-        await asyncio.to_thread(run)
+        await self.db.transact(body)
 
 
 async def claim_import(db: Any, tenant_id: str) -> bool:

@@ -218,6 +218,10 @@ appendonly.aof
 query_results_*.csv
 [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*/
 
+# Measurements from tools/load_probe.py. Useful while tuning the connection
+# budget, meaningless once the machine that produced them is gone.
+load_probe.jsonl
+
 # Coverage
 htmlcov/
 .coverage

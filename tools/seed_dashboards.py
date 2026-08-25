@@ -29,9 +29,11 @@ cosmetic: naming the physical table behind a model is refused by the SQL policy.
     python tools/seed_dashboards.py --url http://localhost:3000 \\
         --email demo@example.com --password ... [--tenant chinook] [--clean]
 
-Postgres SQL. Every workspace in this deployment is bound to Postgres; a MySQL or
-SQL Server workspace would need its own date-truncation and cast syntax, and this
-would need a dialect switch rather than a patch.
+Dialect-aware. ``/schema`` reports the engine, and the handful of expressions that
+differ between engines -- month truncation, rounding a sum, capping rows -- come
+from :mod:`vanna.core.datasource.dialects` rather than being written for Postgres
+and hoped over. That module explains why it is only a handful: sqlglot rewrites
+most of what varies, and the exceptions are the two it gets wrong.
 """
 
 from __future__ import annotations
@@ -44,6 +46,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
 from seed_demo_data import Client, _why  # noqa: E402 - sibling script, not a package
+
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1] / "backend"))
+
+from vanna.core.datasource.dialects import Dialect, dialect_for  # noqa: E402
 
 #: Plain lower-case identifiers only. Anything else would have to be quoted, and
 #: quoting interacts badly with the semantic compiler's name matching -- skipping
@@ -112,16 +118,18 @@ class Table:
         return self.name.replace("_", " ")
 
 
-def read_catalog(client: Client) -> List[Table]:
+def read_catalog(client: Client) -> Tuple[List[Table], Dialect]:
+    """The workspace's tables, and the dialect its SQL has to be written in."""
     status, payload = client.call("GET", "/api/vanna/v2/schema")
     if status != 200 or not isinstance(payload, dict):
-        return []
+        return [], dialect_for("postgres")
+    dialect = dialect_for(str(payload.get("dialect") or "postgres"))
     tables = [Table(t) for t in payload.get("tables") or []]
     usable = [t for t in tables if t.usable]
     # Biggest first: a dashboard about the largest tables is the one somebody
     # would have built, and a lookup table of four rows makes a dull chart.
     usable.sort(key=lambda t: (-(t.rows or 0), t.name))
-    return usable
+    return usable, dialect
 
 
 # ----------------------------------------------------------------------
@@ -140,7 +148,7 @@ class Candidate:
         self.width = width
 
 
-def measure(table: Table) -> Tuple[str, str]:
+def measure(table: Table, dialect: Dialect) -> Tuple[str, str]:
     """What to plot on the y axis, and what to call it.
 
     A real measurement if the table has one, otherwise the row count -- "how many"
@@ -148,14 +156,15 @@ def measure(table: Table) -> Tuple[str, str]:
     the common case for a join table.
     """
     for name in table.numbers:
-        return f"ROUND(SUM({name})::numeric, 2)", name
+        return dialect.money(name), name
     return "COUNT(*)", "rows"
 
 
-def candidates(table: Table) -> List[Candidate]:
+def candidates(table: Table, dialect: Dialect) -> List[Candidate]:
     out: List[Candidate] = []
     ref, label = table.ref, table.label
-    total, measure_name = measure(table)
+    total, measure_name = measure(table, dialect)
+    cap = dialect.limit
 
     out.append(Candidate(
         f"{label.title()}", f"SELECT COUNT(*) AS rows FROM {ref}",
@@ -167,9 +176,9 @@ def candidates(table: Table) -> List[Candidate]:
         by = split[0]
         out.append(Candidate(
             f"{measure_name.replace('_', ' ').title()} by {by.replace('_', ' ')}",
-            f"""SELECT {by} AS category, {total} AS {measure_name}
+            cap(f"""SELECT {by} AS category, {total} AS {measure_name}
                 FROM {ref} WHERE {by} IS NOT NULL
-                GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 12""",
+                GROUP BY 1 ORDER BY 2 DESC""", 12),
             kind="chart",
             chart={"type": "bar", "x": "category", "y": [measure_name]},
         ))
@@ -178,9 +187,9 @@ def candidates(table: Table) -> List[Candidate]:
             # scan's low-cardinality profile tells us.
             out.append(Candidate(
                 f"Share by {by.replace('_', ' ')}",
-                f"""SELECT {by} AS category, COUNT(*) AS rows
+                cap(f"""SELECT {by} AS category, COUNT(*) AS rows
                     FROM {ref} WHERE {by} IS NOT NULL
-                    GROUP BY 1 ORDER BY 2 DESC LIMIT 8""",
+                    GROUP BY 1 ORDER BY 2 DESC""", 8),
                 kind="chart",
                 chart={"type": "pie", "x": "category", "y": ["rows"]},
                 width=5,
@@ -190,20 +199,20 @@ def candidates(table: Table) -> List[Candidate]:
         when = table.times[0]
         out.append(Candidate(
             f"{label.title()} over time",
-            f"""SELECT TO_CHAR(DATE_TRUNC('month', {when}), 'YYYY-MM') AS month,
+            cap(f"""SELECT {dialect.month(when)} AS month,
                        {total} AS {measure_name}
                 FROM {ref} WHERE {when} IS NOT NULL
-                GROUP BY 1 ORDER BY 1 LIMIT 60""",
+                GROUP BY 1 ORDER BY 1""", 60),
             kind="chart",
             chart={"type": "line", "x": "month", "y": [measure_name]},
             width=7,
         ))
         out.append(Candidate(
             f"{label.title()} per month",
-            f"""SELECT TO_CHAR(DATE_TRUNC('month', {when}), 'YYYY-MM') AS month,
+            cap(f"""SELECT {dialect.month(when)} AS month,
                        COUNT(*) AS rows
                 FROM {ref} WHERE {when} IS NOT NULL
-                GROUP BY 1 ORDER BY 1 LIMIT 60""",
+                GROUP BY 1 ORDER BY 1""", 60),
             kind="chart",
             chart={"type": "area", "x": "month", "y": ["rows"]},
             width=5,
@@ -213,8 +222,8 @@ def candidates(table: Table) -> List[Candidate]:
         x, y = table.numbers[0], table.numbers[1]
         out.append(Candidate(
             f"{y.replace('_', ' ')} against {x.replace('_', ' ')}",
-            f"""SELECT {x} AS {x}, {y} AS {y} FROM {ref}
-                WHERE {x} IS NOT NULL AND {y} IS NOT NULL LIMIT 400""",
+            cap(f"""SELECT {x} AS {x}, {y} AS {y} FROM {ref}
+                WHERE {x} IS NOT NULL AND {y} IS NOT NULL""", 400),
             kind="chart",
             chart={"type": "scatter", "x": x, "y": [y]},
         ))
@@ -224,10 +233,10 @@ def candidates(table: Table) -> List[Candidate]:
         pair = table.numbers[:2]
         out.append(Candidate(
             f"{label.title()} measures by {by.replace('_', ' ')}",
-            f"""SELECT {by} AS category,
-                       {", ".join(f"ROUND(SUM({n})::numeric, 2) AS {n}" for n in pair)}
+            cap(f"""SELECT {by} AS category,
+                       {", ".join(f"{dialect.money(n)} AS {n}" for n in pair)}
                 FROM {ref} WHERE {by} IS NOT NULL
-                GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 10""",
+                GROUP BY 1 ORDER BY 2 DESC""", 10),
             kind="chart",
             chart={"type": "bar", "x": "category", "y": list(pair)},
         ))
@@ -235,7 +244,7 @@ def candidates(table: Table) -> List[Candidate]:
     shown = [c["name"] for c in table.columns][:6]
     out.append(Candidate(
         f"{label.title()} sample",
-        f"SELECT {', '.join(shown)} FROM {ref} LIMIT 25",
+        cap(f"SELECT {', '.join(shown)} FROM {ref}", 25),
         kind="table", width=12,
     ))
     return out
@@ -280,15 +289,16 @@ def lay_out(tiles: Sequence[Candidate]) -> List[Dict[str, Any]]:
 
 
 def build(client: Client, workspace: str, limit: int) -> List[Dict[str, Any]]:
-    tables = read_catalog(client)
+    tables, dialect = read_catalog(client)
     if not tables:
         return []
+    print(f"  dialect: {dialect.name}")
 
     overview: List[Candidate] = []
     per_table: Dict[str, List[Candidate]] = {}
 
     for table in tables[:limit]:
-        accepted = [c for c in candidates(table) if runs(client, c.sql)]
+        accepted = [c for c in candidates(table, dialect) if runs(client, c.sql)]
         if not accepted:
             continue
         per_table[table.name] = accepted

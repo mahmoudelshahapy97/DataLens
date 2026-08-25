@@ -13,7 +13,6 @@ second caller blocks until the first commits, then finds a settled row.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -213,12 +212,7 @@ class PostgresWriteApprovalStore(WriteApprovalStore):
     # -- plumbing ------------------------------------------------------
 
     async def _transact(self, body: Callable[[Any], None]) -> None:
-        def run() -> None:
-            with self.db.transaction() as connection:
-                with connection.cursor() as cursor:
-                    body(cursor)
-
-        await asyncio.to_thread(run)
+        await self.db.transact(body)
 
 
 def _named(cursor: Any, row: Any) -> dict:

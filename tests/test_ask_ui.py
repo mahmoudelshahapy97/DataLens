@@ -34,6 +34,10 @@ ROUTES = {
     "/assets/app.css": PUBLIC / "assets/app.css",
     "/assets/shared/core.js": PUBLIC / "assets/shared/core.js",
     "/assets/shared/dialogs.js": PUBLIC / "assets/shared/dialogs.js",
+    # app.js imports this for every dashboard tile. A 404 here does not fail
+    # visibly -- the module graph fails to load and *every* assertion in every UI
+    # test breaks at once, which reads as a broken page rather than a missing file.
+    "/assets/shared/tile-figure.js": PUBLIC / "assets/shared/tile-figure.js",
     "/locales/en.json": PUBLIC / "locales/en.json",
     "/locales/ar.json": PUBLIC / "locales/ar.json",
     "/favicon.svg": PUBLIC / "favicon.svg",
@@ -64,6 +68,21 @@ class VannaChat extends HTMLElement {
 }
 VannaChat.threads = 0;
 customElements.define('vanna-chat', VannaChat);
+
+// The chart element, recording what it was handed rather than drawing it.
+//
+// The real one lazy-loads 1.2 MB of Plotly, which these tests neither need nor
+// should download: what is worth asserting is the *figure the page built* -- that
+// a metric tile produced an `indicator` and a table tile a `table` trace. Whether
+// Plotly can draw an indicator is Plotly's business, and is checked for real in
+// test_dashboard_export_ui.py.
+class PlotlyChartStub extends HTMLElement {
+  connectedCallback() {
+    this.classList.add('js-plotly-plot');
+    this.textContent = (this.data || []).map((t) => t.type).join(',');
+  }
+}
+customElements.define('plotly-chart', PlotlyChartStub);
 """
 
 ME = {

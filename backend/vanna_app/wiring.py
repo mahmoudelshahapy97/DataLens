@@ -21,7 +21,9 @@ Startup order matters and is deliberate:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -47,6 +49,14 @@ def create_app(settings: Optional[Any] = None) -> Any:
     configure_logging(settings.log_level, settings.log_format)
     configure_metrics(settings.metrics_enabled)
     configure_sentry(settings.sentry_dsn, settings.mode)
+
+    # Said here, not in `load_and_validate`, because that runs *inside*
+    # `get_settings()` on the line above -- before logging is configured. Anything
+    # it logged went to a root logger with no handlers and a default level of
+    # WARNING, so the deployment mode, the demo-mode warning and the connection
+    # ceiling were all computed and then dropped. This is the first point in the
+    # process where a log line can actually be seen.
+    _log_startup_summary(settings)
 
     services = _build_services(settings)
 
@@ -133,8 +143,8 @@ def _build_services(settings: Any) -> Dict[str, Any]:
     from .catalog_store import PostgresSchemaCatalog
     from .datasources import DataSourceRegistry
     from .domain_store import DomainStore
+    from .config_store import PostgresConfigStore
     from .grants_store import PostgresGrantStore
-    from .instruction_library import InstructionLibrary
     from .instruction_store import PostgresInstructionStore
     from .stores import (
         PostgresConversationStore,
@@ -183,10 +193,15 @@ def _build_services(settings: Any) -> Dict[str, Any]:
     write_approvals = PostgresWriteApprovalStore(app_db) if app_db else None
     instructions = PostgresInstructionStore(app_db) if app_db else None
     grant_policies = GrantPolicyStore(app_db) if app_db else None
+    # Semantic projects, instruction packs and domain definitions. None without a
+    # control plane, in which case `VANNA_CONFIG_SOURCE=database` is refused by
+    # `config.validate` and everything reads the YAML tree as before.
+    config_store = PostgresConfigStore(app_db) if app_db else None
+    _bootstrap_configuration(settings, app_db, config_store)
     # Loaded once, at boot, and validated strictly: malformed baseline content
     # that starts the process and quietly applies nothing is the failure the
     # baseline exists to prevent.
-    instruction_library = InstructionLibrary.load()
+    instruction_library = _load_instruction_library(settings, config_store)
     dashboards = PostgresDashboardStore(directory) if directory else None
     agent_audit = PostgresAuditLogger(app_db) if app_db else None
     admin_audit = AdminAudit(app_db) if app_db else NullAdminAudit()
@@ -214,6 +229,7 @@ def _build_services(settings: Any) -> Dict[str, Any]:
         catalog_factory=catalog_factory,
         domain_store=domain_store,
         datasource_registry=datasources,
+        config_store=config_store,
     )
     # The agents are built lazily and each needs the resolver, so it is attached to
     # the platform rather than threaded through every call site.
@@ -504,6 +520,108 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
 # ----------------------------------------------------------------------
 
 
+def _bootstrap_configuration(settings: Any, app_db: Any, store: Any) -> None:
+    """Import the shipped configuration files, on a fresh volume only.
+
+    Under an advisory lock, because four uvicorn workers boot at once and all
+    four would otherwise find the catalog empty and import it -- which is not
+    merely wasteful: two concurrent writers to the same path both compute
+    `version + 1` from the same row and one loses its history insert.
+
+    Runs here rather than in the lifespan because the instruction library is
+    loaded a few lines below and refuses to start with an empty baseline. A
+    bootstrap that happened later would fail the boot it exists to make possible.
+    """
+    if store is None or settings.config_source != "database":
+        return
+    if not settings.config_bootstrap:
+        return
+
+    from .config_import import bootstrap_if_empty
+    from .locks import KEY_CONFIG, advisory_lock
+
+    with advisory_lock(app_db, KEY_CONFIG):
+        report = bootstrap_if_empty(store)
+    if report is not None and not report.ok:
+        raise RuntimeError(
+            "The configuration bootstrap did not complete: "
+            f"{report.summary()}. Run `python tools/import_config_files.py` and "
+            "read what it reports before starting again."
+        )
+
+
+def _load_instruction_library(settings: Any, store: Any) -> Any:
+    """The baseline and the packs, from wherever this deployment keeps them."""
+    from .instruction_library import InstructionLibrary
+
+    if settings.config_source != "database":
+        return InstructionLibrary.load()
+
+    from .config_store import KIND_BASELINE, KIND_PACK
+
+    if store is None:  # pragma: no cover - `config.validate` rejects this first
+        raise RuntimeError(
+            "VANNA_CONFIG_SOURCE=database needs a control plane to read the "
+            "instruction library from."
+        )
+    return InstructionLibrary.from_records(
+        store.list_sync(kinds=(KIND_BASELINE, KIND_PACK))
+    )
+
+
+def _log_startup_summary(settings: Any) -> None:
+    """What this process is and what it may consume, once logging works."""
+    from .config import DEMO, connection_ceiling, warn_about_connections
+
+    if settings.mode == DEMO:
+        logger.warning(
+            "Running in DEMO mode: anonymous access is permitted and configuration "
+            "checks are relaxed. Set VANNA_DEPLOYMENT_MODE=multi-tenant before "
+            "exposing this."
+        )
+    else:
+        logger.info(
+            "Deployment mode: %s (control plane: %s, auth: %s)",
+            settings.mode,
+            "yes" if settings.has_control_plane else "no",
+            ", ".join(settings.auth_methods),
+        )
+
+    if settings.config_source == "database":
+        # One line, including the note about the project directories. They are set
+        # in the shipped compose file for `disk` mode, so warning about them here
+        # would fire on every boot of the default configuration -- and a warning
+        # that is always there teaches people to stop reading warnings.
+        logger.info(
+            "Configuration: the config_files catalog, re-checked every %ds "
+            "(bootstrap=%s).%s",
+            settings.config_refresh_seconds,
+            "on" if settings.config_bootstrap else "off",
+            " VANNA_PROJECT(S)_DIR is set but not read in this mode; import the "
+            "tree instead." if (settings.project_dir or settings.projects_dir) else "",
+        )
+    else:
+        logger.info(
+            "Configuration: the YAML tree on disk. Set "
+            "VANNA_CONFIG_SOURCE=database to read it from the control plane."
+        )
+
+    complaint = warn_about_connections(settings)
+    if complaint:
+        logger.warning("%s", complaint)
+    else:
+        logger.info(
+            "Connection ceiling: %d of a %d budget -- %d workers x (pool %d + "
+            "%d runtimes x %d)",
+            connection_ceiling(settings),
+            settings.connection_budget,
+            settings.web_concurrency,
+            settings.app_pool_max,
+            settings.max_tenant_runtimes,
+            settings.warehouse_pool_max,
+        )
+
+
 def _register_probes(app: Any, settings: Any, services: Dict[str, Any]) -> None:
     # JSONResponse rather than a `response: Response` parameter.
     #
@@ -550,6 +668,33 @@ def _register_probes(app: Any, settings: Any, services: Dict[str, Any]) -> None:
                 except Exception:
                     checks["migrations"] = False
 
+        # Warehouse health is *reported*, never fatal.
+        #
+        # The two questions are different and an orchestrator can only act on the
+        # first. "Can this process authenticate anybody?" is about the control
+        # plane, and a no means take the pod out of rotation. "Can workspace
+        # `acme` reach its warehouse?" is about one customer's database, and
+        # answering 503 to it would stop this pod serving the other eight
+        # workspaces that are fine -- turning one customer's outage into
+        # everybody's.
+        #
+        # Read from what the last check recorded rather than probed here: a
+        # readiness endpoint that opens connections to every registered warehouse
+        # is a denial-of-service aimed at yourself, once per second, per replica.
+        degraded = []
+        registry = getattr(services["platform"], "datasources", None)
+        directory = services.get("directory")
+        if registry is not None and directory is not None:
+            try:
+                for tenant in await directory.list_tenants():
+                    for source in await registry.list_sources(tenant["id"]):
+                        if source.get("last_ok") is False:
+                            degraded.append(
+                                f"{tenant['id']}/{source['data_source_id']}"
+                            )
+            except Exception as exc:  # pragma: no cover - informational only
+                logger.debug("Could not summarise warehouse health: %s", exc)
+
         ok = all(checks.values())
         return JSONResponse(
             status_code=200 if ok else 503,
@@ -557,6 +702,10 @@ def _register_probes(app: Any, settings: Any, services: Dict[str, Any]) -> None:
                 "status": "ready" if ok else "not-ready",
                 "checks": checks,
                 "tenants_loaded": services["platform"].cached_tenants(),
+                # Named so an operator can see which workspace is affected without
+                # reading logs, and so a dashboard can alert on it separately from
+                # readiness.
+                "degraded_data_sources": sorted(degraded),
             },
         )
 
@@ -585,13 +734,33 @@ def _lifespan(settings: Any, services: Dict[str, Any]) -> Any:
         # before anybody read them, and which survived depended on write ordering.
         await once(services["db"], KEY_SEED, lambda: _seed(settings, services))
 
+        # Size the executor before anything uses it.
+        #
+        # Python's default is `min(32, cpu_count + 4)`, which on a small container
+        # is a number nobody chose and which has no relation to the connection
+        # budget it feeds. Every blocking call in this application goes through
+        # here -- control-plane queries, warehouse queries, example searches -- so
+        # if it is smaller than the pools, threads become the bottleneck instead,
+        # and there was no gauge on it to notice.
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=settings.thread_pool_max,
+                thread_name_prefix="vanna-blocking",
+            )
+        )
+        logger.info(
+            "Thread pool: %d workers for blocking work", settings.thread_pool_max
+        )
+
         housekeeping = asyncio.create_task(_housekeeping(settings, services))
         warm = asyncio.create_task(_warm_default(settings, platform))
+        lag = asyncio.create_task(_sample_loop_lag())
 
         try:
             yield
         finally:
-            for task in (housekeeping, warm):
+            for task in (housekeeping, warm, lag):
                 task.cancel()
             platform.shutdown()
             if services["db"] is not None:
@@ -599,6 +768,31 @@ def _lifespan(settings: Any, services: Dict[str, Any]) -> Any:
             logger.info("Shutdown complete.")
 
     return lifespan
+
+
+async def _sample_loop_lag(interval: float = 1.0) -> None:
+    """Measure how late the loop is, forever.
+
+    Sleep for a known interval and record the overshoot. Everything else in this
+    application is either request latency -- which is slow for a dozen reasons,
+    most of them the database's -- or a counter. This is the only number that says
+    "somebody is doing blocking work on the event loop", which is the failure that
+    makes one user's question slow down everybody else's.
+
+    Cheap enough to leave on: one wakeup a second, and the histogram is a no-op
+    when metrics are disabled.
+    """
+    from .observability import get_metrics
+
+    while True:
+        started = time.monotonic()
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            return
+        get_metrics().loop_lag_seconds.observe(
+            max(0.0, time.monotonic() - started - interval)
+        )
 
 
 async def _seed(settings: Any, services: Dict[str, Any]) -> None:

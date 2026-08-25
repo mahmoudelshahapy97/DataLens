@@ -79,7 +79,50 @@ services:
       # `python -m vanna_app.migrate upgrade` as a deploy job once more than one
       # replica starts at a time.
       VANNA_AUTO_MIGRATE: ${VANNA_AUTO_MIGRATE:-true}
+      # -- The connection budget.
+      #
+      #    Every pool below is PER WORKER PROCESS, and this image runs four. The
+      #    ceiling is therefore
+      #
+      #        workers x (APP_POOL_MAX + MAX_TENANT_RUNTIMES x WAREHOUSE_POOL_MAX)
+      #        4       x (16           + 2                   x 2                ) = 80
+      #
+      #    against a server whose max_connections is typically 100 -- and in this
+      #    compose file the control plane and every warehouse are the SAME server,
+      #    so they share that number. Exhaust it and the error is
+      #    `FATAL: sorry, too many clients already`, which takes sign-in down with
+      #    it, because authentication needs the control plane.
+      #
+      #    Every default here was measured with tools/load_probe.py, 27 concurrent
+      #    users over nine workspaces:
+      #
+      #      APP_POOL_MAX 16 -> 8      mean wait per acquisition 0.09ms -> 164ms.
+      #                                Halving this pool was the whole of a p95
+      #                                regression from 1.9s to 4.0s. Put back.
+      #      WAREHOUSE_POOL_MAX 5 -> 2 each cached runtime sat on ~4.7 idle
+      #                                connections it never gave back; capping cost
+      #                                nothing measurable.
+      #      WEB_CONCURRENCY 4         two workers tripled median latency (123ms ->
+      #                                616ms) and saved no connections.
+      #      MAX_TENANT_RUNTIMES 2     what is left once the ceiling has to fit 80.
+      #
+      #    Observed usage is far below the ceiling in all of them -- 24 to 32
+      #    connections, because pools are lazy and the cache is an LRU. The ceiling
+      #    is the worst case, and the worst case is what takes sign-in down.
+      #
+      #    WEB_CONCURRENCY must match `--workers` in backend/Dockerfile; the
+      #    application cannot read it, and it multiplies every term.
       VANNA_APP_POOL_MAX: ${VANNA_APP_POOL_MAX:-16}
+      VANNA_APP_STATEMENT_TIMEOUT_MS: ${VANNA_APP_STATEMENT_TIMEOUT_MS:-15000}
+      VANNA_WAREHOUSE_POOL_MAX: ${VANNA_WAREHOUSE_POOL_MAX:-2}
+      VANNA_WAREHOUSE_POOL_MIN: ${VANNA_WAREHOUSE_POOL_MIN:-0}
+      VANNA_WEB_CONCURRENCY: ${VANNA_WEB_CONCURRENCY:-4}
+      VANNA_CONNECTION_BUDGET: ${VANNA_CONNECTION_BUDGET:-80}
+      # Threads for blocking work. Every control-plane query, warehouse query
+      # and example search runs here, so it should comfortably exceed the pool
+      # sizes above or threads become the bottleneck the pools were sized to
+      # avoid. Python's default is cpu_count+4, which relates to nothing here.
+      VANNA_THREAD_POOL_MAX: ${VANNA_THREAD_POOL_MAX:-32}
 
       # -- Access. Platform admins create and delete workspaces and administer any of
       #    them. Workspace-level admins are rows in the directory instead.
@@ -111,7 +154,17 @@ services:
       VANNA_DAILY_QUOTA: ${VANNA_DAILY_QUOTA:-200}
       VANNA_RATE_LIMIT_PER_MIN: ${VANNA_RATE_LIMIT_PER_MIN:-20}
       VANNA_GENERATION_RETENTION_DAYS: ${VANNA_GENERATION_RETENTION_DAYS:-365}
-      VANNA_MAX_TENANT_RUNTIMES: ${VANNA_MAX_TENANT_RUNTIMES:-32}
+      # Was 32, chosen before a runtime held a connection pool of its own. Each
+      # one now costs up to VANNA_WAREHOUSE_POOL_MAX connections per worker, so it
+      # is a term in the budget above rather than a free cache size.
+      #
+      # Two is small for a deployment with nine workspaces -- it means most
+      # requests rebuild a runtime, which showed up as a p99 of 5.0s against 3.5s
+      # with a large cache. It is what fits an 80 budget at four workers. If your
+      # server has room, raise THIS AND THE BUDGET TOGETHER after checking
+      # `SHOW max_connections` and measuring with tools/load_probe.py; raising it
+      # alone just moves the ceiling above the budget and earns a warning.
+      VANNA_MAX_TENANT_RUNTIMES: ${VANNA_MAX_TENANT_RUNTIMES:-2}
 
       # -- Semantic layer. A manifest describes ONE database, so it is bound to the
       #    workspace whose database it describes:
@@ -122,6 +175,26 @@ services:
       #                          than one workspace.
       VANNA_PROJECT_DIR: ${VANNA_PROJECT_DIR:-/project}
       VANNA_PROJECTS_DIR: ${VANNA_PROJECTS_DIR:-/projects}
+
+      # -- Where configuration is read from.
+      #
+      #      disk      the YAML tree in the image. What this stack did before the
+      #                catalog existed.
+      #      database  the `config_files` table. Disk is never consulted, so an
+      #                administrator editing a cube in the console changes what
+      #                runs -- and a failed import fails loudly instead of quietly
+      #                serving whatever the image shipped with.
+      #
+      #    `database` here with BOOTSTRAP on: the first boot on a fresh volume
+      #    imports the files under /app, once, under an advisory lock, and says so
+      #    in the log. After that the catalog is authoritative and a restart does
+      #    not reinstate the files -- the bootstrap only ever fills an EMPTY
+      #    catalog. Re-import deliberately with tools/import_config_files.py.
+      VANNA_CONFIG_SOURCE: ${VANNA_CONFIG_SOURCE:-database}
+      VANNA_CONFIG_BOOTSTRAP: ${VANNA_CONFIG_BOOTSTRAP:-true}
+      # Four workers, four caches. This bounds how long an edit takes to reach the
+      # three that did not take the write.
+      VANNA_CONFIG_REFRESH_SECONDS: ${VANNA_CONFIG_REFRESH_SECONDS:-5}
 
       # Retrieval ranking. `qdrant` fuses semantic search into BM25 by reciprocal
       # rank fusion; `lexical` is keyword-only and needs neither a vector store nor

@@ -86,6 +86,15 @@ COPY backend/vanna_app/ /app/vanna_app/
 COPY backend/instructions/ /app/instructions/
 COPY backend/domains/      /app/domains/
 
+# The semantic projects, for the same reason and in the same place.
+#
+# Compose also bind-mounts these at /projects for VANNA_CONFIG_SOURCE=disk. They
+# are copied in as well because the boot-time configuration import reads the tree
+# under /app, and without them a `database`-mode first boot would import the
+# instruction packs, find no projects, and leave every semantic workspace quietly
+# answering from its physical catalog instead.
+COPY backend/projects/     /app/projects/
+
 # The schema. Applied at boot when VANNA_AUTO_MIGRATE is true, and by
 # `python -m vanna_app.migrate upgrade` as a deploy job when it is not. Landed at
 # the same relative position it has in the repository, so the resolver in
@@ -111,16 +120,26 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-# Four workers. Possible only because quota, rate limiting and login throttling now
-# live in the control plane rather than in per-process dictionaries -- with those,
-# every worker enforced its own copy of each limit and the effective limit was the
-# stated one times the worker count.
+# Multiple workers are possible only because quota, rate limiting and login
+# throttling live in the control plane rather than in per-process dictionaries --
+# with those, every worker enforced its own copy of each limit and the effective
+# limit was the stated one times the worker count.
+#
+# The count comes from VANNA_WEB_CONCURRENCY, which the application also reads to
+# compute its connection ceiling. It used to be a literal 4 here and a separate
+# setting there: two copies of one number, free to disagree, and when they did the
+# ceiling was quietly wrong in the unsafe direction -- the app reported a budget
+# for two workers while four were running, so the real ceiling was double what the
+# log said. Every pool is per process, so this number multiplies all of them.
+#
+# `sh -c` so the variable expands; `exec` so uvicorn keeps PID 1 and still
+# receives signals.
 #
 # --forwarded-allow-ips is uvicorn's own trust boundary and is deliberately narrow;
 # the application applies VANNA_TRUSTED_PROXIES on top when it works out a client
 # address, so an X-Forwarded-For from outside the proxy network is ignored.
-CMD ["uvicorn", "vanna_app.wiring:application", "--factory", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "4", \
-     "--proxy-headers", "--forwarded-allow-ips", "*", \
-     "--no-server-header"]
+CMD ["sh", "-c", "exec uvicorn vanna_app.wiring:application --factory \
+     --host 0.0.0.0 --port 8000 \
+     --workers ${VANNA_WEB_CONCURRENCY:-2} \
+     --proxy-headers --forwarded-allow-ips '*' \
+     --no-server-header"]

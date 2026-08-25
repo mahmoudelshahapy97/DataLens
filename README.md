@@ -228,11 +228,88 @@ Every variable, its default, and what it does. Anything not listed here is not r
 |---|---|---|
 | `VANNA_LLM_PROVIDER` | `auto` | `auto` · `anthropic` · `openai` · `mock`. |
 | `VANNA_INDEX_BACKEND` | `lexical` | Dependency-free BM25, or a vector integration fused in via RRF. |
-| `VANNA_PROJECT_DIR` / `VANNA_PROJECTS_DIR` | | Semantic manifests. One manifest describes one database, so it binds to one workspace. |
+| `VANNA_PROJECT_DIR` / `VANNA_PROJECTS_DIR` | | Semantic manifests on disk. One manifest describes one database, so it binds to one workspace. Not read when `VANNA_CONFIG_SOURCE=database`. |
+| `VANNA_CONFIG_SOURCE` | `disk` | `disk` reads the YAML tree; `database` reads the `config_files` catalog. See below. |
+| `VANNA_CONFIG_REFRESH_SECONDS` | `5` | How long a worker may serve cached configuration. Each of the four workers has its own cache. |
+| `VANNA_CONFIG_BOOTSTRAP` | `false` | Import the shipped files at boot, into an **empty** catalog only. |
 | `VANNA_CORS_ORIGINS` | `http://localhost:3000` | Explicit list; `*` is refused. |
 | `LOG_LEVEL` / `VANNA_LOG_FORMAT` | `INFO` / `text` | `json` for a log shipper. |
 | `VANNA_METRICS_ENABLED` | `true` | Prometheus at `/metrics`, blocked at the edge. |
 | `VANNA_SENTRY_DSN` | — | Optional error reporting. |
+
+### Where configuration lives
+
+Semantic projects, the instruction library and the domain definitions are YAML and
+JSON files in this repository. They can also live in the control plane, in
+`config_files` — which is what lets an administrator change a cube from the console
+instead of rebuilding an image. `docker-compose.yml` runs that way by default.
+
+```
+files ──import──▶ config_files ──▶ ConfigStore + cache ──▶ runtime
+                       ▲
+        console / API ─┘
+```
+
+With `VANNA_CONFIG_SOURCE=database`, **disk is never consulted** — not as a
+fallback, not when a row is missing. A workspace whose project is in the catalog
+but whose manifest is not is an error, not a quiet reversion to whatever the image
+shipped with. Switching back is one variable.
+
+```bash
+python tools/seed_database.py                       # migrate, import, regenerate database/
+python tools/import_config_files.py --dry-run       # what would change
+python tools/export_sql_schema.py                   # sql_schema.sql + seed/
+```
+
+An edit through `PUT /api/vanna/v2/admin/config/file` (platform admin) is validated
+with the runtime's own types, versioned in `config_versions` with who changed it,
+and recompiles `target/mdl.json` in the same transaction — because the runtime
+reads the compiled manifest, not the cubes. `database/README.md` has the rest,
+including why a full data export refuses to write inside the repository.
+
+---
+
+### Charts
+
+Every tile is a Plotly figure, and there is one piece of code that decides what a
+tile looks like: `frontend/public/assets/shared/tile-figure.js`. It turns a tile
+and its result into `{ traces, layout, config }` — a chart for a chart tile, an
+`indicator` for a metric, a `table` trace for rows. Text tiles are the exception;
+prose is markup.
+
+The dashboard page imports that module. An **exported** dashboard *inlines* it,
+along with Plotly itself, so the file works from a `file://` path with no network:
+
+```
+export.html   ~1.3 MB
+├── plotly-export.min.js   1.2 MB, six trace types (bar, pie, scatter,
+│                          heatmap, indicator, table) rather than the 4.9 MB
+│                          full distribution
+├── tile-figure.js         the page's own figure builder
+└── <script type="application/json">   the rows
+```
+
+Sharing the builder is the point. The export used to draw its own SVG
+approximations with their own axis-picking rules — it ignored `sort_by`, `limit`
+and `color_by`, and drew a bar chart when the tile asked for a heatmap — so the
+file somebody circulated showed a different chart than the screen it came from.
+
+**Interactivity needs Plotly's own stylesheet inside the shadow root.**
+`<plotly-chart>` renders into a shadow root, Plotly injects its CSS into
+`document.head`, and a shadow root does not inherit document styles — so the rule
+`.main-svg { pointer-events: none }` is missing and the topmost overlay swallows
+every pointer event. The chart draws correctly and the modebar buttons still work,
+so it reads as a styling quirk rather than a dead plot. `_adoptPlotlyStyles` copies
+the rules in, and it has to read them from `sheet.cssRules`: Plotly builds the
+sheet with `insertRule`, so the `<style>` element's `textContent` is empty and
+cloning the node copies nothing.
+
+Rebuild the bundle with `make plotly-bundle` (needs Docker; the backend image has
+no Node in it, so the output is committed). `tests/test_dashboard_export.py`
+fails if the vendored copy drifts from the frontend one, and
+`tests/test_dashboard_export_ui.py` opens a real export in a real browser with
+the network switched off. `tests/e2e/test_charts_in_browser.py` hovers a bar and
+drags to zoom on the running stack — the only place a dead plot shows up.
 
 ---
 
@@ -445,6 +522,7 @@ tests/                unit (no database) and integration (marked). Spans both
     test_screenshots.py    photographs every screen into artifacts/
 
 tools/                standalone scripts. Not imported by anything.
+  plotly_export_bundle/ the Plotly build embedded in exported dashboards
   seed_demo_data.py     fills a workspace with content, over the app's own API
   ask_demo_questions.py asks real questions through the chat, for real history
   export_qa.py          question/answer/query/database, as qa.json
