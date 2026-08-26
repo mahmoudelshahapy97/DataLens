@@ -251,7 +251,10 @@ def register(app: Any, deps: Deps) -> None:
         from vanna.capabilities.schema_catalog import SchemaScanner
 
         runtime = await deps.runtime_for_request(user, request)
-        context = await deps.tool_context(user)
+        # Naming the source matters: without it the scan files every table under
+        # "default" and the annotation routes, which resolve the real id, cannot
+        # find any of them.
+        context = await deps.tool_context(user, data_source=runtime.data_source)
         try:
             report = await SchemaScanner(runtime.runner, dialect=runtime.dialect).scan(
                 context, runtime.catalog

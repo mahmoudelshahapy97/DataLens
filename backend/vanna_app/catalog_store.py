@@ -78,6 +78,21 @@ class PostgresSchemaCatalog(SchemaCatalog):
     def _source(data_source_id: Optional[str]) -> str:
         return data_source_id or "default"
 
+    @staticmethod
+    def _source_of(context: Any, data_source_id: Optional[str]) -> str:
+        """The data source to file a record under.
+
+        The record's own value wins; otherwise the one the caller was operating
+        against, carried in ``ToolContext.metadata``. ``"default"`` is the last
+        resort and is now genuinely a last resort -- it used to be the *only*
+        answer for a scan, because the scanner does not stamp its tables, and
+        that put every scanned row under a key no reader ever looks up.
+        """
+        if data_source_id:
+            return data_source_id
+        metadata = getattr(context, "metadata", None) or {}
+        return str(metadata.get("data_source_id") or "") or "default"
+
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
@@ -326,12 +341,12 @@ class PostgresSchemaCatalog(SchemaCatalog):
             # Stamp the caller's tenant rather than trusting the record: a
             # scanner or an import could otherwise write into another tenant.
             table.tenant_id = tenant
-            source = self._source(table.data_source_id)
+            source = self._source_of(context, table.data_source_id)
             seen.setdefault(source, []).append(normalize_table(table.qualified_name))
 
         def run(cursor: Any) -> None:
             for table in tables:
-                source = self._source(table.data_source_id)
+                source = self._source_of(context, table.data_source_id)
                 table_key = normalize_table(table.qualified_name)
                 cursor.execute(
                     f"""

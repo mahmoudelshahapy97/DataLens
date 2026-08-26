@@ -176,8 +176,19 @@ class Deps:
             require_full_session(user)
         return user
 
-    async def tool_context(self, user: Any, *, conversation_id: str = "portal") -> Any:
-        """A ``ToolContext`` for the caller, for catalog and runner calls."""
+    async def tool_context(
+        self, user: Any, *, conversation_id: str = "portal", data_source: str = ""
+    ) -> Any:
+        """A ``ToolContext`` for the caller, for catalog and runner calls.
+
+        ``data_source`` travels in ``metadata`` because ``ToolContext`` has no
+        field for it. The catalog store reads it there when a record does not
+        name its own: a scan whose tables carry no data source was previously
+        written under the literal string ``"default"``, while every reader
+        resolves the workspace's real source id -- so the rows existed and
+        nothing could find them. Annotating a table answered "not in this
+        workspace's catalog" for a table plainly listed on the screen.
+        """
         from vanna.core.tool import ToolContext
 
         return ToolContext(
@@ -186,6 +197,7 @@ class Deps:
             request_id=str(uuid.uuid4()),
             tenant_id=user.tenant_id,
             agent_memory=self.agent_memory,
+            metadata={"data_source_id": data_source} if data_source else {},
         )
 
     def client_ip(self, request: Request) -> str:

@@ -39,7 +39,56 @@ import { ScopePicker, useConcreteScope } from './scope';
  * an auditor actually asks.
  */
 
-type Access = 'none' | 'read';
+/**
+ * Three states, not two.
+ *
+ * A table grant carries four flags, and collapsing them to "granted / not"
+ * threw away the distinction that matters most: a role that may *read* a table
+ * and a role that may *change* it are not the same role. This screen offered
+ * only the first, so the write half of the grant model was unreachable from the
+ * interface -- exactly what the vanilla console's three-way control did offer.
+ *
+ * `write` implies `read`: there is no state where a role may update rows it
+ * cannot see, and offering one would produce a grant the SQL layer treats as
+ * incoherent.
+ */
+type Access = 'none' | 'read' | 'write';
+
+const FLAGS: Record<Access, {
+  can_read: boolean;
+  can_insert: boolean;
+  can_update: boolean;
+  can_delete: boolean;
+}> = {
+  none: { can_read: false, can_insert: false, can_update: false, can_delete: false },
+  read: { can_read: true, can_insert: false, can_update: false, can_delete: false },
+  write: { can_read: true, can_insert: true, can_update: true, can_delete: true },
+};
+
+/** Colour per level. `write` is the one worth a warning colour. */
+const TONE: Record<Access, 'neutral' | 'ok' | 'err'> = {
+  none: 'neutral',
+  read: 'ok',
+  write: 'err',
+};
+
+/** The order the levels are offered in, least to most. */
+const CYCLE: Access[] = ['none', 'read', 'write'];
+
+interface TableGrantRow {
+  role: string;
+  table: string;
+  can_read?: boolean;
+  can_insert?: boolean;
+  can_update?: boolean;
+  can_delete?: boolean;
+}
+
+/** Read straight off the grant, the same derivation the vanilla console used. */
+function accessOf(grant: TableGrantRow | undefined): Access {
+  if (!grant || !grant.can_read) return 'none';
+  return grant.can_insert || grant.can_update || grant.can_delete ? 'write' : 'read';
+}
 
 interface Column {
   name: string;
@@ -58,12 +107,23 @@ interface Grants {
   version: number;
   roles: Role[];
   resources: Resource[];
-  tables: Array<{ role: string; table: string; can_read: boolean }>;
+  tables: TableGrantRow[];
   columns: Array<{ role: string; table: string; column: string; can_read: boolean }>;
 }
 
-const key = (resource: Resource) =>
-  resource.schema ? `${resource.schema}.${resource.table}` : resource.table;
+/**
+ * The key the catalog and the grant tables both use.
+ *
+ * Guarded against double-prefixing: some sources report `schema: "ecommerce"`
+ * with `table: "ecommerce.addresses"` -- already qualified -- and joining them
+ * blindly produced `ecommerce.ecommerce.addresses`, which matched no grant and
+ * read as a nonsense table name on screen.
+ */
+const key = (resource: Resource) => {
+  const table = resource.table;
+  if (!resource.schema) return table;
+  return table.startsWith(`${resource.schema}.`) ? table : `${resource.schema}.${table}`;
+};
 
 export default function PermissionsPage() {
   const { t } = useLocale();
@@ -97,21 +157,34 @@ export default function PermissionsPage() {
     void load();
   }, [load]);
 
-  const granted = React.useMemo(() => {
-    const set = new Set<string>();
-    for (const row of data?.tables ?? []) if (row.can_read) set.add(row.table);
-    return set;
+  // The access *level* per table, not merely whether a grant exists.
+  const access = React.useMemo(() => {
+    const map = new Map<string, Access>();
+    for (const row of data?.tables ?? []) map.set(row.table, accessOf(row));
+    return map;
   }, [data]);
 
-  const setAccess = async (table: string, access: Access) => {
+  const setAccess = async (table: string, next: Access) => {
     setBusy(table);
     try {
-      if (access === 'none') {
-        await del(`${base}/table?role=${encodeURIComponent(role)}&table=${encodeURIComponent(table)}`);
+      if (next === 'none') {
+        await del(
+          `${base}/table?role=${encodeURIComponent(role)}&table=${encodeURIComponent(table)}`,
+        );
       } else {
-        await put(`${base}/table`, { role, table, can_read: true });
+        // `autofill_columns` fills in the table's column grants so granting a
+        // wide table does not mean ticking ninety of them by hand; it never
+        // overwrites a column already decided. It defaults to true server-side
+        // and is passed explicitly so the behaviour is visible here rather than
+        // inherited silently.
+        await put(`${base}/table`, {
+          role,
+          table,
+          ...FLAGS[next],
+          autofill_columns: true,
+        });
       }
-      toastSuccess(t('common.saved'));
+      toastSuccess(t('perm.setTo', { state: t(`perm.access.${next}`) }));
       await load();
     } catch (caught) {
       toastError((caught as Error).message);
@@ -159,7 +232,11 @@ export default function PermissionsPage() {
 
         {data ? (
           <span className="text-[0.8125rem] text-muted-foreground">
-            {t('perm.grantedOf', { n: granted.size, total: data.resources.length })}
+            {t('perm.summary', {
+              read: [...access.values()].filter((a) => a === 'read').length,
+              write: [...access.values()].filter((a) => a === 'write').length,
+              total: data.resources.length,
+            })}
           </span>
         ) : null}
       </Toolbar>
@@ -185,7 +262,7 @@ export default function PermissionsPage() {
             <Tbody>
               {visible.map((resource) => {
                 const name = key(resource);
-                const allowed = granted.has(name);
+                const current = access.get(name) ?? 'none';
                 return (
                   <Tr key={name}>
                     <Td className="font-mono text-[0.78rem]">{name}</Td>
@@ -193,21 +270,36 @@ export default function PermissionsPage() {
                       {t('perm.columnCount', { n: resource.columns.length })}
                     </Td>
                     <Td>
-                      {allowed ? (
-                        <Badge tone="ok">{t('perm.access.read')}</Badge>
-                      ) : (
-                        <Badge tone="neutral">{t('perm.access.none')}</Badge>
-                      )}
+                      <Badge tone={TONE[current]}>{t(`perm.access.${current}`)}</Badge>
                     </Td>
                     <Td>
-                      <Button
-                        size="sm"
-                        variant={allowed ? 'danger' : 'primary'}
-                        disabled={busy === name}
-                        onClick={() => void setAccess(name, allowed ? 'none' : 'read')}
-                      >
-                        {allowed ? t('perm.revoke') : t('perm.grant')}
-                      </Button>
+                      {/* Three explicit buttons rather than one cycling toggle.
+                          A control that steps none -> read -> write is two
+                          clicks away from what you meant and gives no way to
+                          see the third state without entering it; granting
+                          write access by accident is not a mistake worth
+                          designing in. `aria-pressed` so the current state is
+                          announced, not just coloured. */}
+                      <div className="flex gap-1" role="group" aria-label={name}>
+                        {CYCLE.map((level) => (
+                          <Button
+                            key={level}
+                            size="sm"
+                            aria-pressed={current === level}
+                            variant={
+                              current === level
+                                ? level === 'write'
+                                  ? 'danger'
+                                  : 'primary'
+                                : 'outline'
+                            }
+                            disabled={busy === name || current === level}
+                            onClick={() => void setAccess(name, level)}
+                          >
+                            {t(`perm.access.${level}`)}
+                          </Button>
+                        ))}
+                      </div>
                     </Td>
                   </Tr>
                 );

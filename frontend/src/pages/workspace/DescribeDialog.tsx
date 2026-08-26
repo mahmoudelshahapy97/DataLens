@@ -128,7 +128,16 @@ export function DescribeDialog({
       onSaved();
       onClose();
     } catch (caught) {
-      toastError((caught as Error).message);
+      const failure = caught as { status?: number; message: string };
+      // 404 here does not mean "no such route". It means the catalog has no row
+      // for this table, which happens when the schema list and the catalog
+      // disagree about names -- a workspace whose semantic project describes a
+      // different shape than the database it is bound to lists `albums` while
+      // the scan recorded `chinook.album`. The bare API message ("Not in this
+      // workspace's catalog") is accurate and tells nobody what to do.
+      toastError(
+        failure.status === 404 ? t('schema.describeNotInCatalog') : failure.message,
+      );
     } finally {
       setBusy(false);
     }
