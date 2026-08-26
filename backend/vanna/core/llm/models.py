@@ -58,4 +58,14 @@ class LlmStreamChunk(BaseModel):
     content: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
     finish_reason: Optional[str] = None
+    #: Token counts, on the terminal chunk only.
+    #:
+    #: Streaming used to drop this on the floor: providers report usage once, at
+    #: the end, and neither this model nor the agent's reassembly carried it. So
+    #: every streamed answer -- which is every answer the chat produces -- was
+    #: recorded with no model and no cost, and the spend figure read $0.00 while
+    #: the bill did not.
+    usage: Optional[Dict[str, int]] = None
+    #: Which model actually served the request, on the terminal chunk.
+    model: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)

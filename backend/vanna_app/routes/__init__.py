@@ -62,6 +62,13 @@ class Deps:
     mailer: Any = None
     login_throttle: Any = None
     oidc: Any = None
+    #: ReportStore. Absent when there is no control plane (demo mode), which is
+    #: why `routes/reports.py` answers 404 rather than 500 when it is None.
+    reports: Any = None
+    #: Lineage is derived from rows the system already keeps -- see
+    #: `vanna_app/lineage.py` -- so this is a service, not a store.
+    lineage: Any = None
+    compliance: Any = None
 
     @property
     def runtime_for(self) -> RuntimeProvider:
@@ -197,8 +204,11 @@ def register_all(app: Any, deps: Deps) -> None:
         dashboards,
         data,
         domains,
+        governance,
         grants,
         instructions,
+        overview,
+        reports,
         workspace,
         writes,
     )
@@ -207,10 +217,16 @@ def register_all(app: Any, deps: Deps) -> None:
     workspace.register(app, deps)
     data.register(app, deps)
     dashboards.register(app, deps)
+    # After dashboards: a report is a schedule over a dashboard, and reading this
+    # file top to bottom should introduce the thing before the thing that points
+    # at it.
+    reports.register(app, deps)
+    governance.register(app, deps)
     writes.register(app, deps)
     grants.register(app, deps)
     domains.register(app, deps)
     catalog.register(app, deps)
     instructions.register(app, deps)
     admin.register(app, deps)
+    overview.register(app, deps)
     config.register(app, deps)

@@ -501,16 +501,27 @@ def register(app: Any, deps: Deps) -> None:
 
     @app.get("/api/vanna/v2/admin/access-log")
     async def admin_access_log(
-        request: Request, denied_only: bool = False, limit: int = 100
+        request: Request,
+        tenant_id: str = "",
+        denied_only: bool = False,
+        limit: int = 100,
     ) -> Dict[str, Any]:
-        """Agent-level tool invocations and access decisions, for one workspace."""
+        """Agent-level tool invocations and access decisions, for one workspace.
+
+        ``tenant_id`` is resolved the same way ``/admin/audit`` resolves it, and
+        defaults to the caller's own workspace. It used to be unconditionally
+        ``user.tenant_id``: a platform admin administering somebody else's
+        workspace was shown *their own* access log under that workspace's heading,
+        with nothing on the screen to say so.
+        """
         user = await deps.caller(request)
-        require_tenant_admin(user, user.tenant_id, settings)
+        scope = visible_tenant(user, tenant_id or None, settings)
+        require_tenant_admin(user, scope, settings)
         if deps.agent_audit is None:
             return {"events": []}
         return {
             "events": await deps.agent_audit.recent(
-                user.tenant_id, limit=limit, denied_only=denied_only
+                scope, limit=limit, denied_only=denied_only
             )
         }
 

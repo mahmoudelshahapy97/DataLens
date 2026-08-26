@@ -130,6 +130,45 @@ class DataSourceRegistry:
             out.append(item)
         return out
 
+    async def unhealthy_sources(self, *, limit: int = 50) -> List[Dict[str, Any]]:
+        """Registered sources that are not known to be working, across every
+        workspace. Credential-free, like :meth:`list_sources`.
+
+        The platform-wide overview needs one answer to "is anything broken right
+        now", and asking per workspace is a query per workspace to render a panel
+        that is usually empty.
+
+        ``last_ok IS NOT TRUE`` deliberately catches NULL as well as false: a
+        source nobody has ever checked is *unknown*, and the two are reported
+        apart so "unknown" never renders as "fine".
+        """
+        rows = await self.db.fetch_all(
+            f"""
+            SELECT tenant_id, data_source_id, label, last_ok, last_checked_at,
+                   last_error
+              FROM {SCHEMA}.tenant_datasources
+             WHERE is_active AND last_ok IS NOT TRUE
+             ORDER BY last_ok NULLS LAST, tenant_id, data_source_id
+             LIMIT %s
+            """,
+            (min(max(limit, 1), 200),),
+        )
+        return [
+            {
+                "tenant_id": row["tenant_id"],
+                "data_source_id": row["data_source_id"],
+                "label": row["label"] or row["data_source_id"],
+                "last_ok": row["last_ok"],
+                "last_checked_at": (
+                    row["last_checked_at"].isoformat()
+                    if row["last_checked_at"]
+                    else None
+                ),
+                "last_error": row["last_error"],
+            }
+            for row in rows
+        ]
+
     async def record_health(
         self,
         tenant_id: str,

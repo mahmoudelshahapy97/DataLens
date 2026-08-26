@@ -1,16 +1,15 @@
 """
-Server implementations for the Vanna Agents framework.
+Server building blocks for the Vanna Agents framework.
 
-This module provides Flask and FastAPI server factories for serving
-Vanna agents over HTTP with SSE, WebSocket, and polling endpoints.
+The FastAPI chat and admin route registrars, plus the transport models they share.
+These are mounted onto an application the caller already owns -- see
+`vanna_app.wiring` -- rather than exposing a server factory of their own.
 """
 
 from .base import ChatHandler, ChatRequest, ChatStreamChunk
-from .cli.server_runner import ExampleAgentLoader
 
 __all__ = [
     "ChatHandler",
     "ChatRequest",
     "ChatStreamChunk",
-    "ExampleAgentLoader",
 ]

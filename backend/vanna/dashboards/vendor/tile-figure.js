@@ -22,6 +22,17 @@
  *   table   a `table` trace
  *
  * `text` is the exception and has no figure; it is prose, and prose is markup.
+ *
+ * TWO COPIES, DELIBERATELY, AND THEY MUST MATCH BYTE FOR BYTE:
+ *
+ *   frontend/public/assets/shared/tile-figure.js   the original, loaded by app.js
+ *   backend/vanna/dashboards/vendor/tile-figure.js the copy the export inlines
+ *
+ * The backend image carries no Node, so it cannot build this; it reads the copy at
+ * `dashboards/export.py`. `backend/tests/test_dashboard_export.py` asserts the two
+ * are identical, so editing one and not the other fails the suite rather than
+ * shipping an export that draws a different chart than the screen. To resync after
+ * editing the original:  make plotly-bundle
  */
 
 /** Plotly's own palette is fine, but the first two colours must not be red/green. */

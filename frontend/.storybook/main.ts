@@ -1,15 +1,21 @@
-import type { StorybookConfig } from '@storybook/web-components-vite';
+import type { StorybookConfig } from '@storybook/react-vite';
 
+/**
+ * Storybook, on the React framework.
+ *
+ * This pointed at `@storybook/web-components-vite` when the only components were
+ * Lit elements. The design system is React now, and the one surviving Lit element
+ * -- <plotly-chart> -- has a React wrapper, so it renders here through that.
+ *
+ * Storybook 9 rather than 8.6: 8.6 peers `vite@^4 || ^5 || ^6` and will not
+ * install alongside Vite 7. It also folds addon-essentials, addon-actions and
+ * addon-controls into the core package, which is why the addon list is one entry.
+ */
 const config: StorybookConfig = {
   stories: ['../src/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
-  addons: [
-    '@storybook/addon-essentials',
-    '@storybook/addon-actions',
-    '@storybook/addon-controls',
-    '@storybook/addon-docs',
-  ],
+  addons: ['@storybook/addon-docs'],
   framework: {
-    name: '@storybook/web-components-vite',
+    name: '@storybook/react-vite',
     options: {},
   },
   typescript: {

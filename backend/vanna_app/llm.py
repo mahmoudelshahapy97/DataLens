@@ -18,6 +18,7 @@ visibly incomplete instead of silently wrong.
 from __future__ import annotations
 
 import logging
+import contextvars
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -101,7 +102,47 @@ PRICES: Dict[str, Tuple[float, float]] = {
     "gpt-4.1": (2.00, 8.00),
     "o3-mini": (1.10, 4.40),
     "o3": (2.00, 8.00),
+    # Added because this deployment answers with gpt-5 and the column stayed
+    # NULL: the table is matched by longest prefix, so the dated snapshot
+    # `gpt-5-2025-08-07` resolves through `gpt-5`.
+    #
+    # These are list prices. A contracted rate is different, and a cost figure
+    # that is quietly wrong is worse than one that is quietly absent -- so
+    # override them rather than trusting them (see `_prices_from_env`).
+    "gpt-5-mini": (0.25, 2.00),
+    "gpt-5-nano": (0.05, 0.40),
+    "gpt-5": (1.25, 10.00),
 }
+
+
+def _prices_from_env() -> None:
+    """Merge ``VANNA_LLM_PRICES`` over the table above.
+
+    A JSON object of ``{"model-prefix": [input, output]}`` in USD per million
+    tokens. Exists because the numbers above are list prices and the figure this
+    feeds -- the spend shown to an operator -- has to match the actual bill. A
+    deployment on negotiated rates can correct it without a code change, and a
+    new model can be priced without waiting for one.
+
+    Malformed input is logged and ignored: a bad price should not stop the
+    process from answering questions.
+    """
+    import json
+    import os
+
+    raw = os.environ.get("VANNA_LLM_PRICES", "").strip()
+    if not raw:
+        return
+    try:
+        for prefix, pair in json.loads(raw).items():
+            PRICES[str(prefix).lower()] = (float(pair[0]), float(pair[1]))
+    except Exception as exc:  # noqa: BLE001 - a price list must not break startup
+        logger.error("Ignoring VANNA_LLM_PRICES (%s): %s", type(exc).__name__, exc)
+        return
+    logger.info("LLM prices overridden from VANNA_LLM_PRICES")
+
+
+_prices_from_env()
 
 
 def price_of(model: Optional[str], prompt_tokens: int, completion_tokens: int) -> Optional[float]:
@@ -117,6 +158,68 @@ def price_of(model: Optional[str], prompt_tokens: int, completion_tokens: int) -
         return None
     prompt_price, completion_price = PRICES[match]
     return (prompt_tokens * prompt_price + completion_tokens * completion_price) / 1_000_000
+
+
+#: Usage for the request currently being served, accumulated across LLM turns.
+#:
+#: The middleware cannot write it to the generation row itself, for two reasons
+#: that only show up in production:
+#:
+#: * **Order.** The LLM answers *before* the agent calls ``run_sql``, and the row
+#:   is written by that tool. An UPDATE from here runs against a row that does
+#:   not exist yet and reports zero rows changed.
+#: * **Key.** The row is keyed by ``ToolContext.request_id`` -- a per-agent-run
+#:   UUID -- while this layer only knows the ASGI request id from
+#:   ``observability``. They are different values, so even a well-timed UPDATE
+#:   matched nothing.
+#:
+#: Hence the same primitive ``_CURRENT_QUESTION`` uses in ``platform``: one task
+#: per request, so the value this sets is visible to that request's tools and to
+#: no other. Accumulated rather than replaced, because one question is several
+#: LLM turns and the cost is their sum.
+_CURRENT_USAGE: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "vanna_current_llm_usage", default=None
+)
+
+
+def note_usage(model: str, prompt_tokens: int, completion_tokens: int) -> None:
+    """Add one LLM turn to this request's running total."""
+    total = _CURRENT_USAGE.get() or {
+        "model": "",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    # Last model wins: a request that escalated mid-flight is attributed to the
+    # model that actually produced the answer.
+    total = {
+        "model": model or total["model"],
+        "prompt_tokens": total["prompt_tokens"] + max(prompt_tokens, 0),
+        "completion_tokens": total["completion_tokens"] + max(completion_tokens, 0),
+    }
+    _CURRENT_USAGE.set(total)
+
+
+def consume_usage() -> Optional[Dict[str, Any]]:
+    """This request's total so far, with its cost, or None if nothing was metered.
+
+    Left in place rather than cleared: one question can write more than one
+    generation row (a repair attempt, a follow-up query in the same turn), and
+    each should carry the cost of the request it belongs to.
+    """
+    total = _CURRENT_USAGE.get()
+    if not total:
+        return None
+    return {
+        **total,
+        "cost_usd": price_of(
+            total["model"], total["prompt_tokens"], total["completion_tokens"]
+        ),
+    }
+
+
+def reset_usage() -> None:
+    """Start a fresh total. Called when a new question begins."""
+    _CURRENT_USAGE.set(None)
 
 
 class UsageMeteringMiddleware(LlmMiddleware):
@@ -150,7 +253,13 @@ class UsageMeteringMiddleware(LlmMiddleware):
         return response
 
     async def _meter(self, response: Any) -> None:
+        # Streamed responses are reassembled by the agent, which has no `model`
+        # field to put it in -- so it travels in `metadata`. Checked here rather
+        # than assumed, because the non-streaming path does set the attribute.
         model = _first(response, ("model", "model_name")) or ""
+        if not model:
+            metadata = getattr(response, "metadata", None) or {}
+            model = str(metadata.get("model") or "")
         usage = _first(response, ("usage", "token_usage", "_usage")) or {}
 
         prompt = int(_usage_field(usage, ("prompt_tokens", "input_tokens")) or 0)
@@ -174,6 +283,11 @@ class UsageMeteringMiddleware(LlmMiddleware):
         if cost is not None:
             metrics.llm_cost.labels(tenant, model or "unknown").inc(cost)
 
+        # The primary path: hand the numbers to the tool that writes the row.
+        note_usage(model, prompt, completion)
+
+        # And still try the UPDATE, for a row that already exists -- a follow-up
+        # turn in a conversation whose generation was recorded a moment ago.
         if self.generation_store is not None and request_id:
             await self.generation_store.attach_usage(
                 request_id,

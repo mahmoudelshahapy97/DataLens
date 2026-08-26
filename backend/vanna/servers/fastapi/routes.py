@@ -7,10 +7,9 @@ import traceback
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse
 
 from ..base import ChatHandler, ChatRequest, ChatResponse
-from ..base.templates import get_index_html
 from ...core.user.request_context import RequestContext
 
 
@@ -25,17 +24,6 @@ def register_chat_routes(
         config: Server configuration
     """
     config = config or {}
-
-    @app.get("/", response_class=HTMLResponse)
-    async def index() -> str:
-        """Serve the main chat interface."""
-        dev_mode = config.get("dev_mode", False)
-        cdn_url = config.get("cdn_url", "https://img.vanna.ai/vanna-components.js")
-        api_base_url = config.get("api_base_url", "")
-
-        return get_index_html(
-            dev_mode=dev_mode, cdn_url=cdn_url, api_base_url=api_base_url
-        )
 
     @app.post("/api/vanna/v2/chat_sse")
     async def chat_sse(

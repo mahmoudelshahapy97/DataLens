@@ -203,4 +203,4 @@ The files worth reading, in order:
 2. `backend/vanna_app/authz.py` — every authorisation predicate.
 3. `backend/vanna_app/identity.py` — how a request becomes a `User`.
 4. `backend/vanna_app/routes/admin.py` — every privileged operation, in one file.
-5. `tests/test_tenant_isolation.py` — the isolation matrix, run in CI.
+5. `backend/tests/test_tenant_isolation.py` — the isolation matrix, run in CI.

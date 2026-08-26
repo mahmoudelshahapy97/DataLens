@@ -243,11 +243,31 @@ def _build_services(settings: Any) -> Dict[str, Any]:
 
     platform.usage_middleware = UsageMeteringMiddleware(generations)
 
+    # Reports. Constructed here rather than lazily in the route module so the
+    # background loop and the HTTP handlers share one instance and one connection
+    # pool -- two stores would mean the scheduler and the API disagreeing about a
+    # run's status under load.
+    from .compliance import Compliance
+    from .lineage import Lineage
+    from .report_store import ReportStore
+
+    reports = ReportStore(app_db) if app_db is not None else None
+    # Lineage holds no state of its own -- it derives the graph from saved
+    # queries, dashboards and schedules on each request, which is what makes it
+    # impossible for it to go stale. See the header of vanna_app/lineage.py.
+    lineage = Lineage(app_db, directory) if app_db is not None else None
+    compliance = (
+        Compliance(app_db, directory, admin_audit) if app_db is not None else None
+    )
+
     return {
         "db": app_db,
         "settings": settings,
         "directory": directory,
         "accounts": accounts,
+        "reports": reports,
+        "lineage": lineage,
+        "compliance": compliance,
         "billing": billing,
         "counters": counters,
         "generations": generations,
@@ -327,6 +347,9 @@ def _register_routes(app: Any, settings: Any, services: Dict[str, Any]) -> None:
         mailer=services["mailer"],
         login_throttle=services["throttle"],
         oidc=services["oidc"],
+        reports=services["reports"],
+        lineage=services["lineage"],
+        compliance=services["compliance"],
     )
     register_all(app, deps)
 
@@ -545,7 +568,7 @@ def _bootstrap_configuration(settings: Any, app_db: Any, store: Any) -> None:
     if report is not None and not report.ok:
         raise RuntimeError(
             "The configuration bootstrap did not complete: "
-            f"{report.summary()}. Run `python tools/import_config_files.py` and "
+            f"{report.summary()}. Run `python backend/tools/import_config_files.py` and "
             "read what it reports before starting again."
         )
 
@@ -756,11 +779,12 @@ def _lifespan(settings: Any, services: Dict[str, Any]) -> Any:
         housekeeping = asyncio.create_task(_housekeeping(settings, services))
         warm = asyncio.create_task(_warm_default(settings, platform))
         lag = asyncio.create_task(_sample_loop_lag())
+        scheduler = asyncio.create_task(_report_scheduler(settings, services))
 
         try:
             yield
         finally:
-            for task in (housekeeping, warm, lag):
+            for task in (housekeeping, warm, lag, scheduler):
                 task.cancel()
             platform.shutdown()
             if services["db"] is not None:
@@ -861,6 +885,54 @@ async def _warm_default(settings: Any, platform: Any) -> None:
         await platform.runtime_for(settings.default_tenant)
     except Exception as exc:
         logger.error("Could not warm the default workspace: %s", exc)
+
+
+async def _report_scheduler(settings: Any, services: Dict[str, Any]) -> None:
+    """The report queue: materialise what is due, execute what we can claim.
+
+    A second in-process loop beside ``_housekeeping``, and worth reading the
+    difference. Housekeeping's comment says every replica running it is harmless
+    "because each is idempotent and bounded". Reports are the opposite: a
+    duplicated run is a duplicated email, and there is no way to un-send one.
+
+    So the two halves are separated. ``materialise`` -- find due schedules, queue a
+    run, advance the clock -- is check-then-act and runs under
+    ``locks.KEY_REPORTS``, so exactly one worker does it per tick. ``drain`` claims
+    queued runs with ``FOR UPDATE SKIP LOCKED``, which every worker does at once;
+    that is what shares the load without any of them taking a row twice.
+
+    Off entirely when there is no control plane. Reports live in tables the demo
+    mode does not have.
+    """
+    db = services.get("db")
+    store = services.get("reports")
+    if db is None or store is None:
+        logger.info("Reports: no control plane; scheduler not started.")
+        return
+
+    from .report_delivery import Delivery
+    from .report_runner import ReportRunner
+
+    runner = ReportRunner(
+        store=store,
+        directory=services["directory"],
+        platform=services["platform"],
+        deliver=Delivery(
+            mailer=services["mailer"],
+            store=store,
+            directory=services["directory"],
+            settings=settings,
+        ),
+        settings=settings,
+        generation_store=services["generations"],
+        admin_audit=services["admin_audit"],
+        # The same memory the HTTP render path passes, so a tile that reads it
+        # behaves identically whether a person or the scheduler asked.
+        agent_memory=getattr(services["platform"], "agent_memory", None),
+    )
+
+    logger.info("Reports: scheduler started.")
+    await runner.loop(db)
 
 
 async def _housekeeping(settings: Any, services: Dict[str, Any]) -> None:

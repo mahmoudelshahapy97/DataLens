@@ -17,7 +17,7 @@
 #   [tool.flit.*]                      -> nothing; there is no build backend
 #
 # This file stays at the repository root rather than moving into backend/, because
-# pytest and ruff run across the whole tree: the suite in tests/ reads the frontend's
+# pytest and ruff run across the whole tree: the suite in backend/tests/ reads the frontend's
 # pages as well as the backend's modules.
 
 [tool.pytest.ini_options]
@@ -26,7 +26,7 @@ asyncio_mode = "auto"
 # A fixture loop that silently changes scope between versions is a source of test
 # flakiness that looks like an application bug.
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests"]
+testpaths = ["backend/tests"]
 # One entry now: `backend/` holds both the library and the application package side
 # by side, so a fresh checkout can run the suite with nothing but `pytest` -- no
 # editable install, no PYTHONPATH in a shell profile somebody forgot to mention. It

@@ -70,6 +70,11 @@
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<!-- The chart component the overview draws with, the same bundle the workspace
+     page loads. It is the one built asset on either page: Vite emits it into
+     dist/assets/ and serves it from src/index.ts in dev, so unlike everything
+     else under /assets/ there is no file for it in public/. -->
+<script type="module" src="/assets/vanna-components.js"></script>
 <script type="module" src="/assets/console.js"></script>
 </body>
 </html>

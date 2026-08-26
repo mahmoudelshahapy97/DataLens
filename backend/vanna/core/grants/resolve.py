@@ -8,7 +8,10 @@ The rules, in the order they bite:
 
 1. **Union across roles.** Each flag is OR-ed over every role the caller holds.
 2. **Columns fail closed.** No grant row, or ``can_read=False``, and the column
-   is dropped. Not masked -- dropped, so it cannot be named at all.
+   is dropped. Not masked -- dropped, so it cannot be named at all. A *mask* is a
+   separate, weaker thing that applies only to a column that survives this step;
+   see ``_MASK_REVEALS`` for why it unions by taking the most revealing rather
+   than by OR-ing.
 3. **Tables fail closed.** No ``can_select``, or no surviving columns, and the
    table is dropped.
 4. **Write verbs need a target.** ``can_insert``/``can_update`` survive only if
@@ -160,10 +163,27 @@ class _TableAccumulator:
         self.can_delete |= grant.can_delete
 
 
+#: How much plaintext each mask reveals. Higher is more revealing.
+#:
+#: A total order is needed because of rule 1 -- adding a role can only ever widen
+#: -- and masks are the one flag that is not a boolean to OR. A caller holding
+#: `analyst` (email hashed) and `support` (email in the clear) must see it in the
+#: clear: the alternative is that *gaining* a role takes something away, which is
+#: not a permission model anybody can reason about.
+#:
+#: `hash` below `partial` is a judgement, and it is the conservative one. They leak
+#: different things -- `hash` gives a stable pseudonym and no characters, `partial`
+#: gives two characters and a weaker pseudonym -- so they are not comparable on one
+#: axis. Ranking by *characters of plaintext revealed* is the reading that never
+#: silently widens: choosing the other order would let a `partial` role be masked
+#: down to `hash`, which is a narrowing, which rule 1 forbids.
+_MASK_REVEALS = {"null": 0, "hash": 1, "partial": 2, "none": 3}
+
+
 class _ColumnAccumulator:
     """OR-accumulator for one column across the caller's roles."""
 
-    __slots__ = ("name", "can_read", "can_filter", "can_aggregate", "can_write")
+    __slots__ = ("name", "can_read", "can_filter", "can_aggregate", "can_write", "_reveals")
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -171,6 +191,9 @@ class _ColumnAccumulator:
         self.can_filter = False
         self.can_aggregate = False
         self.can_write = False
+        # Starts fully masked. A column nobody granted read on never reaches
+        # `build`, so this only matters as the floor a first grant raises.
+        self._reveals = _MASK_REVEALS["null"]
 
     def merge_column(self, grant: ColumnGrant) -> None:
         self.can_read |= grant.can_read
@@ -178,12 +201,29 @@ class _ColumnAccumulator:
         self.can_aggregate |= grant.can_aggregate
         self.can_write |= grant.can_write
 
+        # Only a role that actually grants read gets a say in the mask. A role
+        # with can_read=False and mask="none" is not saying "show it in the
+        # clear"; it is saying nothing, and letting it vote would unmask a column
+        # for everybody who happens to also hold it.
+        if grant.can_read:
+            self._reveals = max(
+                self._reveals, _MASK_REVEALS.get(grant.mask, _MASK_REVEALS["null"])
+            )
+
+    @property
+    def mask(self) -> str:
+        for name, rank in _MASK_REVEALS.items():
+            if rank == self._reveals:
+                return name
+        return "null"
+
     def build(self, *, assignable: bool) -> EffectiveColumn:
         return EffectiveColumn(
             name=self.name,
             can_read=self.can_read,
             can_filter=self.can_filter,
             can_aggregate=self.can_aggregate,
+            mask=self.mask,
             # A generated column is never assignable however it was granted:
             # the database refuses the assignment, so offering it produces a
             # plan that can only fail at execution.

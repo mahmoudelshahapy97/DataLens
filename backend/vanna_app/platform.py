@@ -50,6 +50,26 @@ def current_question() -> str:
     return _CURRENT_QUESTION.get("")
 
 
+def _usage_fields() -> Dict[str, Any]:
+    """Model, tokens and cost for the request being recorded, or nothing.
+
+    Empty when the provider reported no usage (the mock service, or a model
+    whose response carries none) -- the columns then stay NULL, which is
+    honest, rather than becoming a confident zero.
+    """
+    from .llm import consume_usage
+
+    usage = consume_usage()
+    if not usage:
+        return {}
+    return {
+        "model": usage["model"] or None,
+        "prompt_tokens": usage["prompt_tokens"] or None,
+        "completion_tokens": usage["completion_tokens"] or None,
+        "cost_usd": usage["cost_usd"],
+    }
+
+
 def question_capture_hook() -> Any:
     """Lifecycle hook that remembers the question being answered."""
     from vanna.core.lifecycle import LifecycleHook
@@ -57,6 +77,11 @@ def question_capture_hook() -> Any:
     class QuestionCaptureHook(LifecycleHook):
         async def before_message(self, user: Any, message: str) -> Optional[str]:
             _CURRENT_QUESTION.set(message or "")
+            # Zero the usage total too: without this, a second question in the
+            # same task would be charged the first one's tokens as well.
+            from .llm import reset_usage
+
+            reset_usage()
             return None  # never modifies the message
 
     return QuestionCaptureHook()
@@ -144,6 +169,17 @@ def recording_run_sql_tool(
                     row_count=row_count,
                     truncated=bool(meta.get("truncated")),
                     execution_ms=meta.get("execution_ms"),
+                    # What answering this cost. The tool knows the SQL and its
+                    # outcome but not the model's price, so the metering
+                    # middleware leaves its running total on a ContextVar and
+                    # this reads it -- exactly how `current_question()` gets
+                    # here from the lifecycle hook.
+                    #
+                    # It has to be pulled in at *write* time rather than pushed
+                    # from the middleware: the LLM answers before the agent
+                    # calls this tool, so an UPDATE from there would run against
+                    # a row that does not exist yet.
+                    **_usage_fields(),
                 ),
             )
 

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/favicon.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DataLens — Ask your data</title>
+
+<!--
+  The DataLens shell.
+
+  One page for the whole product: the workspace screens and the console the
+  vanilla build served separately at /admin/. They were two applications with two
+  stylesheets, two dictionaries and two copies of the API client, which is how the
+  console's Permissions screen and the workspace's Schema screen ended up
+  disagreeing about what a table row looks like.
+
+  Markup only, and no inline script element -- written out in words rather than
+  as a tag because a literal one inside a comment trips every naive CSP scanner
+  that greps the built HTML. That absence is what allows a Content Security
+  Policy without 'unsafe-inline' -- see frontend/nginx.conf. It is also why this is
+  a Vite build rather than Next: Next injects its bootstrap inline in every mode
+  it has, so adopting it would have meant weakening the CSP to accommodate the
+  build tool.
+
+  Identity is an httpOnly session cookie this page cannot read. Only the
+  *workspace* travels as a header, and the server checks membership before
+  honouring it: a header that selects a workspace is a preference, not a
+  credential.
+-->
+</head>
+<body>
+
+<!--
+  Skip link. The first thing in the document and visible only on focus, so a
+  keyboard user can reach the content without tabbing through the whole
+  navigation on every page load.
+
+  Outside the React root deliberately: it must work before hydration, and it must
+  survive an error boundary that has replaced the whole tree.
+-->
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<!--
+  Live regions. Answers stream in by mutating the DOM, which assistive technology
+  does not report unless a region says it should -- without these a screen-reader
+  user gets silence for however long the model takes and no signal that it
+  finished.
+
+  Two, because the priorities differ: `status` waits for a pause in speech,
+  `alert` interrupts, and interrupting is right only for errors.
+
+  Also outside the React root: an announcement raised while an error boundary is
+  rendering its fallback still needs somewhere to land.
+-->
+<div id="a11y-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="a11y-alerts" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></div>
+
+<div id="root"></div>
+
+<script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

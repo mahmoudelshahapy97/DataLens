@@ -4,6 +4,13 @@ import { vannaDesignTokens } from '../styles/vanna-design-tokens.js';
 import { VannaApiClient, ChatStreamChunk } from '../services/api-client.js';
 import { ComponentManager, RichComponent } from './rich-component-system.js';
 import { isRtl, translate } from '../locales/index.js';
+// Defines <vanna-message>, which both message renderers in
+// rich-component-system.ts create. Without this import the element is never
+// upgraded: it lands in the DOM as an unknown tag with no shadow root, renders
+// nothing and collapses to zero height -- so the user's own question silently
+// vanished from the transcript and only the assistant's reply (which takes a
+// different, plain-div path) was visible.
+import './vanna-message.js';
 import './vanna-status-bar.js';
 import './vanna-progress-tracker.js';
 import './rich-card.js';

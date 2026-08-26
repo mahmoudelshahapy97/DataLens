@@ -23,10 +23,25 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Tuple
 from urllib.parse import quote
 
 logger = logging.getLogger("vanna.mail")
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """A file to send with a message.
+
+    ``content_type`` is split rather than stored as "text/html" so the caller
+    cannot hand ``set_content`` a maintype containing a slash, which raises a
+    ValueError several frames away from the mistake.
+    """
+
+    filename: str
+    content: bytes
+    maintype: str = "application"
+    subtype: str = "octet-stream"
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,10 @@ class Message:
     subject: str
     text: str
     html: str = ""
+    #: Scheduled reports attach their rendered artifact. A tuple rather than a
+    #: list because the dataclass is frozen and a mutable default in a frozen
+    #: object is a promise the type system does not keep.
+    attachments: Tuple["Attachment", ...] = ()
 
 
 class Mailer:
@@ -90,6 +109,17 @@ class SmtpMailer(Mailer):
         payload.set_content(message.text)
         if message.html:
             payload.add_alternative(message.html, subtype="html")
+
+        # After add_alternative, so the text/html alternative pair stays intact:
+        # attaching first turns the message into a mixed part and the HTML
+        # alternative is then shown as a second attachment rather than rendered.
+        for attachment in message.attachments:
+            payload.add_attachment(
+                attachment.content,
+                maintype=attachment.maintype,
+                subtype=attachment.subtype,
+                filename=attachment.filename,
+            )
 
         try:
             import aiosmtplib

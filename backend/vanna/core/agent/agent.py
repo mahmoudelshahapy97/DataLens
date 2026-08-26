@@ -1468,6 +1468,11 @@ You can:
 
         accumulated_content = ""
         accumulated_tool_calls = []
+        # Carried through so the reassembled response below is not missing what
+        # the provider reported: usage arrives once, on the terminal chunk, and
+        # dropping it meant no streamed answer could ever be costed.
+        accumulated_usage = None
+        accumulated_model = None
 
         # Create span for streaming
         stream_span = None
@@ -1485,6 +1490,11 @@ You can:
             if chunk.tool_calls:
                 accumulated_tool_calls.extend(chunk.tool_calls)
 
+            if getattr(chunk, "usage", None):
+                accumulated_usage = chunk.usage
+            if getattr(chunk, "model", None):
+                accumulated_model = chunk.model
+
         # End streaming span
         if self.observability_provider and stream_span:
             stream_span.set_attribute("content_length", len(accumulated_content))
@@ -1498,8 +1508,11 @@ You can:
         response = LlmResponse(
             content=accumulated_content if accumulated_content else None,
             tool_calls=accumulated_tool_calls if accumulated_tool_calls else None,
+            usage=accumulated_usage,
+            # `model` is not a field on LlmResponse, so it rides in metadata;
+            # the metering middleware looks there too.
+            metadata={"model": accumulated_model} if accumulated_model else {},
         )
-
         # Apply after_llm_response middlewares with observability
         for middleware in self.llm_middlewares:
             mw_span = None

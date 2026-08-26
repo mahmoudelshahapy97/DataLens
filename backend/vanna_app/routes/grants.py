@@ -75,6 +75,10 @@ class ColumnGrantPayload(BaseModel):
     can_filter: Optional[bool] = None
     can_aggregate: Optional[bool] = None
     can_write: bool = False
+    #: How a readable value is obscured. See MASK_STRATEGIES in
+    #: vanna/core/grants/models.py -- and note that masking is *weaker* than
+    #: withholding the column, which stays the default and the recommendation.
+    mask: Optional[str] = None
 
 
 def register(app: Any, deps: Deps) -> None:
@@ -188,6 +192,7 @@ def register(app: Any, deps: Deps) -> None:
                     "role": g.role, "table": g.table, "column": g.column,
                     "can_read": g.can_read, "can_filter": g.can_filter,
                     "can_aggregate": g.can_aggregate, "can_write": g.can_write,
+                    "mask": g.mask,
                 }
                 for g in columns
             ],
@@ -285,6 +290,11 @@ def register(app: Any, deps: Deps) -> None:
                 if payload.can_aggregate is None
                 else payload.can_aggregate,
                 can_write=payload.can_write,
+                # Absent means unchanged-from-default rather than "clear it":
+                # a PUT that omits the mask is setting the read flags, and
+                # silently unmasking a column as a side effect of that is the
+                # kind of widening nobody would look for.
+                mask=(payload.mask or "none") if payload.can_read else "none",
                 # Naming the person takes this column out of autofill's hands:
                 # a deliberate choice must survive the table's access level
                 # being changed afterwards.

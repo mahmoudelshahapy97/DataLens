@@ -64,11 +64,45 @@ def register(app: Any, deps: Deps) -> None:
             )
         return store
 
-    async def _data_source(tenant_id: str) -> str:
-        runtime = await deps.runtime_for(tenant_id)
-        return runtime.data_source
+    async def _runtime(tenant_id: str, request: Request) -> Any:
+        """The runtime for the database this request is about.
 
-    async def _known_tables(tenant_id: str, user: Any) -> set:
+        Domains are keyed ``(tenant_id, data_source_id)``, and this used to
+        resolve the workspace *default* unconditionally -- so a workspace whose
+        session was pinned to its second database was shown the first one's
+        domains, and the screen looked empty while the rows existed. Worse, the
+        "default" is ``ORDER BY is_default DESC, data_source_id``: with no
+        ``is_default`` row it is whichever id sorts first, so registering a
+        database could silently move every existing domain out of view.
+
+        Not ``deps.runtime_for_request``, which resolves ``user.tenant_id`` --
+        the *session* workspace. This route administers the workspace in the
+        path, which for a platform admin is frequently somebody else's, and
+        using the session's would read the wrong customer's domains.
+
+        So: honour ``X-Data-Source-Id`` only when the caller is administering
+        their own workspace, where the header can actually name one of its
+        databases. Administering another workspace falls back to that
+        workspace's default, because the session's data source is not a
+        meaningful id over there.
+        """
+        from ..datasources import UnknownDataSource
+
+        requested = request.headers.get("x-data-source-id")
+        user = await deps.caller(request)
+        if requested and getattr(user, "tenant_id", None) == tenant_id:
+            try:
+                return await deps.runtime_for(tenant_id, data_source_id=requested)
+            except UnknownDataSource:
+                # The header names a database this workspace no longer has.
+                # Falling back beats a 404 on a read-only listing screen.
+                pass
+        return await deps.runtime_for(tenant_id)
+
+    async def _data_source(tenant_id: str, request: Request) -> str:
+        return (await _runtime(tenant_id, request)).data_source
+
+    async def _known_tables(tenant_id: str, user: Any, request: Request) -> set:
         """Every table in the workspace's catalog, normalized.
 
         Unfiltered on purpose, exactly as the permission matrix is: an
@@ -79,7 +113,7 @@ def register(app: Any, deps: Deps) -> None:
 
         from ..read_guard import unfiltered
 
-        runtime = await deps.runtime_for(tenant_id)
+        runtime = await _runtime(tenant_id, request)
         try:
             tables = await unfiltered(runtime.catalog).get_tables(
                 await deps.tool_context(user, conversation_id="domains"),
@@ -96,18 +130,24 @@ def register(app: Any, deps: Deps) -> None:
             known.add(normalize_table(f"{schema}.{name}" if schema else name))
         return known
 
-    async def _validate_tables(tenant_id: str, user: Any, tables: List[str]) -> List[str]:
+    async def _validate_tables(
+        tenant_id: str, user: Any, tables: List[str], request: Request
+    ) -> List[str]:
         """Reject a table that is not in the catalog.
 
         A typo would otherwise be stored happily, match nothing, and look exactly
         like a domain that works -- the same failure mode ``_role`` guards against
         in the grants routes.
+
+        Takes the request so the catalog it checks against is the *same* database
+        the domain is being written to. Validating against the default while
+        writing against another would reject a table that genuinely exists.
         """
         from vanna.core.grants import normalize_table
 
         if not tables:
             return []
-        known = await _known_tables(tenant_id, user)
+        known = await _known_tables(tenant_id, user, request)
         unknown = [t for t in tables if normalize_table(t) not in known]
         if unknown:
             raise HTTPException(
@@ -121,7 +161,7 @@ def register(app: Any, deps: Deps) -> None:
     @app.get(BASE)
     async def list_domains(tenant_id: str, request: Request) -> Dict[str, Any]:
         await _admin(request, tenant_id)
-        data_source = await _data_source(tenant_id)
+        data_source = await _data_source(tenant_id, request)
         return {
             "data_source": data_source,
             "domains": await _store().list_domains(tenant_id, data_source_id=data_source),
@@ -132,8 +172,8 @@ def register(app: Any, deps: Deps) -> None:
         tenant_id: str, payload: DomainPayload, request: Request
     ) -> Dict[str, Any]:
         user = await _admin(request, tenant_id)
-        data_source = await _data_source(tenant_id)
-        await _validate_tables(tenant_id, user, payload.tables)
+        data_source = await _data_source(tenant_id, request)
+        await _validate_tables(tenant_id, user, payload.tables, request)
 
         store = _store()
         try:
@@ -196,7 +236,7 @@ def register(app: Any, deps: Deps) -> None:
         if await store.get_domain(tenant_id, domain_id) is None:
             raise HTTPException(status_code=404, detail="No such domain.")
 
-        await _validate_tables(tenant_id, user, payload.tables)
+        await _validate_tables(tenant_id, user, payload.tables, request)
         await store.replace_tables(
             tenant_id, domain_id, payload.tables, added_by=getattr(user, "id", None)
         )

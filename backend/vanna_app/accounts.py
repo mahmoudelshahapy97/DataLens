@@ -315,7 +315,16 @@ class Accounts:
         )
         return row
 
-    async def delete_session(self, token: str) -> bool:
+    async def end_session_by_token(self, token: str) -> bool:
+        """End the session this cookie names. What signing out does.
+
+        Named apart from :meth:`delete_session` below, which ends *another*
+        session by the short id the account screen lists. Both were called
+        ``delete_session``: same class, same name, different signatures -- so the
+        second definition simply replaced the first, and every sign-out raised
+        ``TypeError: missing 1 required positional argument: 'session_id'``.
+        The 500 was swallowed by the caller, and the session stayed live.
+        """
         from vanna.core.auth import hash_token
 
         return bool(

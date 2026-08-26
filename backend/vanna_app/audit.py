@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from vanna.core.audit import AuditLogger
 
 from .db import SCHEMA
-from .observability import current_request_id
+from .observability import current_request_id, current_tenant_id
 from .secrets import Secret
 from .tenancy import _iso
 
@@ -86,7 +86,17 @@ class PostgresAuditLogger(AuditLogger):
 
         # Lift the columns worth indexing out of the document; the rest stays in
         # jsonb, so a new event type needs no migration.
-        tenant_id = str(payload.pop("tenant_id", "") or "")
+        # The library's `AuditEvent` has no tenant field -- it is a
+        # single-tenant model -- so this pop always yielded "". Every row landed
+        # with an empty tenant_id, and `recent()` filters `WHERE tenant_id = %s`
+        # with a real one: twenty thousand events were written and none of them
+        # were readable. The access-log screen looked like a workspace nobody had
+        # used.
+        #
+        # The request-scoped tenant is the answer: `identity.py` binds it for
+        # every authenticated request, and these events are only ever produced
+        # inside one.
+        tenant_id = str(payload.pop("tenant_id", "") or "") or current_tenant_id()
         conversation_id = str(payload.pop("conversation_id", "") or "")
         request_id = str(payload.pop("request_id", "") or "") or current_request_id()
         tool_name = payload.pop("tool_name", None)

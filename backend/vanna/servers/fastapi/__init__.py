@@ -1,5 +1,9 @@
 """
-FastAPI server implementation for Vanna Agents.
+FastAPI route registrars for Vanna Agents.
+
+Routes only: they are registered onto an application built elsewhere. There is no
+server factory here -- `vanna_app.wiring` owns application construction, and a
+second one that built its own app from the environment was never used.
 """
 
 from .admin_routes import (
@@ -8,10 +12,8 @@ from .admin_routes import (
     InstructionPayload,
     register_admin_routes,
 )
-from .app import VannaFastAPIServer
 
 __all__ = [
-    "VannaFastAPIServer",
     "register_admin_routes",
     "FeedbackPayload",
     "InstructionPayload",

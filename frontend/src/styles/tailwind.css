@@ -1,0 +1,363 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Dark mode keys off an attribute, not a class.
+
+   `data-theme` on <html> is what the vanilla pages used and what
+   localStorage['vanna.theme'] still stores, so a browser that has been using
+   DataLens keeps its choice across the rewrite. Redefining the variant here is
+   cheaper than migrating every user's stored preference, and it means
+   `applyTheme()` did not have to change at all.
+--------------------------------------------------------------------------- */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ---------------------------------------------------------------------------
+   Tokens.
+
+   The palette is carried over value-for-value from public/assets/app.css so the
+   product does not change colour in a release that was supposed to be about
+   structure. What is *new* is the second half of each block: an elevation scale,
+   a third surface for nested panels, and a focus-ring token -- the three things
+   every screen was previously improvising per-component.
+--------------------------------------------------------------------------- */
+:root {
+  --bg:         #f1f5f9;
+  --surface:    #ffffff;
+  --surface-2:  #f8fafc;
+  /* New. A panel inside a card: the parameter bar on a dashboard, a tile editor
+     section, the expanded row of a permissions matrix. Every one of those was
+     previously either --surface (invisible against its parent) or --bg (too dark,
+     and wrong in dark mode where the relationship inverts). */
+  --surface-3:  #eef2f7;
+  --border:     #e2e8f0;
+  /* New. A divider *inside* a surface, where a full-strength border reads as a
+     seam between two components rather than a rule between two rows. */
+  --border-soft:#eef2f6;
+  --text:       #0f172a;
+  --muted:      #64748b;
+  --primary:    #4f46e5;
+  --primary-fg: #ffffff;
+  /* New. Tinted primary for selected rows, active nav and chip backgrounds --
+     each of those used a different hand-mixed rgba() before. */
+  --primary-soft: color-mix(in srgb, var(--primary) 10%, transparent);
+  --good:       #059669;
+  --bad:        #dc2626;
+  --warn:       #d97706;
+  --radius:     10px;
+  --sidebar:    262px;
+
+  /* The rail is a *panel*, not part of the page: tinted a step away from the
+     content it sits beside, the way every chat product does it, so the eye
+     reads two surfaces rather than one white sheet with a line down it. */
+  --rail:        #f7f8fa;
+  --rail-hover:  #eceef2;
+  --rail-active: #e4e7ec;
+
+  /* New: one elevation scale. Previously the only shadow in the product was a
+     hand-written `0 24px 60px rgba(2,6,23,.28)` on .sheet, so nothing else could
+     be raised without inventing a value. */
+  --shadow-sm: 0 1px 2px rgb(2 6 23 / 0.04), 0 1px 3px rgb(2 6 23 / 0.06);
+  --shadow-md: 0 4px 12px rgb(2 6 23 / 0.07), 0 2px 4px rgb(2 6 23 / 0.04);
+  --shadow-lg: 0 24px 60px rgb(2 6 23 / 0.28);
+
+  --ring: var(--primary);
+
+  /* The categorical series palette, kept byte-identical to the one exported by
+     assets/shared/tile-figure.js. Charts and the interface around them have to
+     agree, and tile-figure.js is the copy that is mirrored into the backend for
+     offline exports -- so it is the source and this follows it, never the
+     reverse. Red and green are deliberately not first. */
+  --chart-1: #4f46e5;
+  --chart-2: #ea7317;
+  --chart-3: #059669;
+  --chart-4: #dc2626;
+  --chart-5: #0891b2;
+  --chart-6: #7c3aed;
+  --chart-7: #a16207;
+  --chart-8: #db2777;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg:         #0b1120;
+  --surface:    #111827;
+  --surface-2:  #0f172a;
+  --surface-3:  #172033;
+  --border:     #1f2937;
+  --border-soft:#161f2e;
+  --text:       #e5e7eb;
+  --muted:      #94a3b8;
+  --primary:    #6366f1;
+  --primary-fg: #ffffff;
+  --primary-soft: color-mix(in srgb, var(--primary) 18%, transparent);
+
+  /* Dark mode inverts the relationship -- the rail sits *under* the content,
+     not over it -- so it darkens instead of lightening. */
+  --rail:        #0d1424;
+  --rail-hover:  #182236;
+  --rail-active: #1e293b;
+
+  /* Shadow does almost nothing on a dark ground; the elevation cue has to come
+     from the border instead, so these are deliberately near-flat rather than
+     the light values with more opacity. */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 14px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 24px 60px rgb(0 0 0 / 0.6);
+
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------
+   Utilities.
+
+   `inline` so a utility compiles to `var(--bg)` rather than to the *value* of
+   --bg at build time. Without it, `bg-background` would freeze the light palette
+   into the stylesheet and the dark theme would change nothing.
+
+   Note --color-muted vs --color-muted-foreground. shadcn/ui uses `muted` for a
+   background and `muted-foreground` for text; DataLens's --muted has always been
+   the *text* colour. Rather than rename a token that appears throughout the
+   ported CSS, the two meanings are separated here -- shadcn components only ever
+   reach these through utility classes, so this is the single place they meet.
+--------------------------------------------------------------------------- */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+
+  --color-surface:   var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-card:            var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover:            var(--surface);
+  --color-popover-foreground: var(--text);
+
+  --color-primary:            var(--primary);
+  --color-primary-foreground: var(--primary-fg);
+  --color-primary-soft:       var(--primary-soft);
+
+  --color-secondary:            var(--surface-2);
+  --color-secondary-foreground: var(--text);
+
+  --color-muted:            var(--surface-2);
+  --color-muted-foreground: var(--muted);
+
+  --color-accent:            var(--rail-hover);
+  --color-accent-foreground: var(--text);
+
+  --color-destructive:            var(--bad);
+  --color-destructive-foreground: #ffffff;
+
+  --color-good: var(--good);
+  --color-bad:  var(--bad);
+  --color-warn: var(--warn);
+
+  --color-border:      var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-input:       var(--border);
+  --color-ring:        var(--ring);
+
+  --color-rail:        var(--rail);
+  --color-rail-hover:  var(--rail-hover);
+  --color-rail-active: var(--rail-active);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+
+  --radius-md: var(--radius);
+  --radius-lg: 14px;
+
+  --shadow-card:  var(--shadow-sm);
+  --shadow-raise: var(--shadow-md);
+  --shadow-sheet: var(--shadow-lg);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --spacing-sidebar: var(--sidebar);
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+--------------------------------------------------------------------------- */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    /* 15px/1.55 rather than Tailwind's 16px/1.5. The product is dense -- tables,
+       SQL, result grids -- and a result row at 16px wraps where it did not
+       before, which is a regression dressed up as a default. */
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  a {
+    color: var(--primary);
+  }
+
+  /* One visible focus ring for everything that can hold focus. :focus-visible so
+     a mouse click does not leave a ring behind, which is the reason people remove
+     outlines in the first place. */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* `hidden` must actually hide, even against a flex or grid parent whose
+     `display` would otherwise win. */
+  [hidden] {
+    display: none !important;
+  }
+
+  /* Plotly measures its container. A container with no intrinsic width measures
+     zero inside a grid track and the chart never appears. */
+  plotly-chart {
+    display: block;
+    min-width: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Right-to-left.
+
+   The interface mirrors; the *content* does not. SQL, result grids, charts and
+   identifiers read left-to-right in every language -- a mirrored SELECT is not
+   Arabic, it is unreadable. So these opt back out, and `unicode-bidi: plaintext`
+   lets a mixed cell (Arabic label, Latin id) lay out per its own direction rather
+   than inheriting the page's.
+
+   Carried over from app.css unchanged apart from the class names, because every
+   entry here is a bug somebody found by reading the Arabic build.
+--------------------------------------------------------------------------- */
+@layer base {
+  [dir="rtl"] pre,
+  [dir="rtl"] code,
+  [dir="rtl"] .sql,
+  [dir="rtl"] .mono,
+  [dir="rtl"] .data-table,
+  [dir="rtl"] .chart,
+  [dir="rtl"] plotly-chart,
+  [dir="rtl"] input[type="password"],
+  [dir="rtl"] input[type="email"],
+  [dir="rtl"] input[type="url"] {
+    direction: ltr;
+    text-align: start;
+  }
+
+  [dir="rtl"] .data-table td,
+  [dir="rtl"] .data-table th {
+    unicode-bidi: plaintext;
+  }
+
+  /* A directional arrow means "onward", which is leftward in Arabic. Flipped
+     rather than swapped for a different glyph, so there is one arrow to maintain. */
+  [dir="rtl"] .arrow {
+    transform: scaleX(-1);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Accessibility primitives that live outside the React tree.
+--------------------------------------------------------------------------- */
+@layer components {
+  /* Visible only to assistive technology. Used by the two live regions in
+     index.html and by labels whose visual equivalent is an icon. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* First thing in the tab order, invisible until focused. Without it a keyboard
+     user tabs through the whole navigation on every page load to reach content. */
+  .skip-link {
+    position: absolute;
+    inset-inline-start: -9999px;
+    top: 0;
+    z-index: 100;
+    background: var(--primary);
+    color: var(--primary-fg);
+    padding: 10px 16px;
+    border-radius: 0 0 var(--radius) 0;
+    text-decoration: none;
+  }
+
+  .skip-link:focus {
+    inset-inline-start: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Print.
+
+   This is the PDF path. A server-side renderer would mean weasyprint or a
+   headless browser in the API image, and the product already has a *better*
+   artifact for sharing -- the self-contained HTML export, which stays
+   interactive and is generated with the reader's own permissions. Print is for
+   the person who wants a page, and it costs one block.
+--------------------------------------------------------------------------- */
+@media print {
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #ffffff;
+    --surface-3: #ffffff;
+  }
+
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  /* A tile split across a page break loses the half of the chart that explains
+     the other half. */
+  [data-print="tile"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  body {
+    background: #ffffff;
+  }
+}

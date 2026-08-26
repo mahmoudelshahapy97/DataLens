@@ -1,0 +1,198 @@
+[
+  {
+    "route": "/ask",
+    "label": "Ask",
+    "state": "PLACEHOLDER",
+    "chars": 90,
+    "errors": []
+  },
+  {
+    "route": "/schema",
+    "label": "Schema",
+    "state": "PLACEHOLDER",
+    "chars": 93,
+    "errors": []
+  },
+  {
+    "route": "/history",
+    "label": "History",
+    "state": "PLACEHOLDER",
+    "chars": 94,
+    "errors": []
+  },
+  {
+    "route": "/saved",
+    "label": "Saved queries",
+    "state": "PLACEHOLDER",
+    "chars": 100,
+    "errors": []
+  },
+  {
+    "route": "/dashboards",
+    "label": "Dashboards",
+    "state": "PLACEHOLDER",
+    "chars": 97,
+    "errors": []
+  },
+  {
+    "route": "/reports",
+    "label": "Reports",
+    "state": "PLACEHOLDER",
+    "chars": 94,
+    "errors": []
+  },
+  {
+    "route": "/cubes",
+    "label": "Metrics",
+    "state": "PLACEHOLDER",
+    "chars": 94,
+    "errors": []
+  },
+  {
+    "route": "/console/overview",
+    "label": "Overview",
+    "state": "content",
+    "chars": 2081,
+    "errors": []
+  },
+  {
+    "route": "/console/permissions",
+    "label": "Permissions",
+    "state": "content",
+    "chars": 572,
+    "errors": []
+  },
+  {
+    "route": "/console/masking",
+    "label": "Masking",
+    "state": "PLACEHOLDER",
+    "chars": 94,
+    "errors": []
+  },
+  {
+    "route": "/console/audit",
+    "label": "Audit",
+    "state": "content",
+    "chars": 6697,
+    "errors": []
+  },
+  {
+    "route": "/console/access-log",
+    "label": "Access log",
+    "state": "content",
+    "chars": 203,
+    "errors": []
+  },
+  {
+    "route": "/console/approvals",
+    "label": "Approvals",
+    "state": "content",
+    "chars": 213,
+    "errors": []
+  },
+  {
+    "route": "/console/lineage",
+    "label": "Lineage",
+    "state": "PLACEHOLDER",
+    "chars": 94,
+    "errors": []
+  },
+  {
+    "route": "/console/compliance",
+    "label": "Compliance",
+    "state": "PLACEHOLDER",
+    "chars": 97,
+    "errors": []
+  },
+  {
+    "route": "/console/workspaces",
+    "label": "Workspaces",
+    "state": "content",
+    "chars": 999,
+    "errors": []
+  },
+  {
+    "route": "/console/accounts",
+    "label": "Accounts",
+    "state": "content",
+    "chars": 409,
+    "errors": []
+  },
+  {
+    "route": "/console/members",
+    "label": "Members",
+    "state": "content",
+    "chars": 151,
+    "errors": []
+  },
+  {
+    "route": "/console/billing",
+    "label": "Billing",
+    "state": "content",
+    "chars": 684,
+    "errors": []
+  },
+  {
+    "route": "/console/usage",
+    "label": "Usage",
+    "state": "content",
+    "chars": 403,
+    "errors": []
+  },
+  {
+    "route": "/console/review",
+    "label": "Review queue",
+    "state": "content",
+    "chars": 3224,
+    "errors": []
+  },
+  {
+    "route": "/console/verified",
+    "label": "Verified examples",
+    "state": "content",
+    "chars": 204,
+    "errors": []
+  },
+  {
+    "route": "/console/domains",
+    "label": "Business domains",
+    "state": "content",
+    "chars": 254,
+    "errors": []
+  },
+  {
+    "route": "/console/rules",
+    "label": "Instructions",
+    "state": "content",
+    "chars": 1354,
+    "errors": []
+  },
+  {
+    "route": "/console/library",
+    "label": "Starter library",
+    "state": "content",
+    "chars": 8996,
+    "errors": []
+  },
+  {
+    "route": "/console/starters",
+    "label": "Starter questions",
+    "state": "content",
+    "chars": 284,
+    "errors": []
+  },
+  {
+    "route": "/console/datasources",
+    "label": "Databases",
+    "state": "content",
+    "chars": 234,
+    "errors": []
+  },
+  {
+    "route": "/console/configuration",
+    "label": "Configuration",
+    "state": "content",
+    "chars": 4966,
+    "errors": []
+  }
+]

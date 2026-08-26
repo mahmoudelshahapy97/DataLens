@@ -225,9 +225,9 @@ class PostgresGrantStore(GrantStore):
                 f"INSERT INTO {SCHEMA}.column_grants "
                 "(tenant_id, data_source_id, role, table_key, column_key, "
                 " table_name, column_name, "
-                " can_read, can_filter, can_aggregate, can_write, granted_by, "
-                " source, updated_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'explicit', now()) "
+                " can_read, can_filter, can_aggregate, can_write, mask_strategy, "
+                " granted_by, source, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'explicit', now()) "
                 "ON CONFLICT (tenant_id, data_source_id, role, table_key, column_key) "
                 "DO UPDATE SET "
                 "  table_name    = EXCLUDED.table_name, "
@@ -236,6 +236,7 @@ class PostgresGrantStore(GrantStore):
                 "  can_filter    = EXCLUDED.can_filter, "
                 "  can_aggregate = EXCLUDED.can_aggregate, "
                 "  can_write     = EXCLUDED.can_write, "
+                "  mask_strategy = EXCLUDED.mask_strategy, "
                 "  granted_by    = EXCLUDED.granted_by, "
                 "  source        = 'explicit', "
                 "  updated_at    = now()",
@@ -243,7 +244,13 @@ class PostgresGrantStore(GrantStore):
                     tenant, grant.data_source_id, grant.role,
                     grant.table_key, grant.key, grant.table, grant.column,
                     grant.can_read, grant.can_filter, grant.can_aggregate,
-                    grant.can_write, grant.granted_by,
+                    # A mask on an unreadable column is a rule that never fires
+                    # and reads in an admin screen as protection that is not
+                    # there. The CHECK constraint refuses it; this keeps the API
+                    # from ever presenting one.
+                    grant.can_write,
+                    grant.mask if grant.can_read else "none",
+                    grant.granted_by,
                 ),
             )
             _bump(cursor, tenant, grant.data_source_id)
@@ -582,5 +589,6 @@ def _column_grant(row: Dict[str, Any]) -> ColumnGrant:
         can_filter=bool(row.get("can_filter")),
         can_aggregate=bool(row.get("can_aggregate")),
         can_write=bool(row.get("can_write")),
+        mask=row.get("mask_strategy") or "none",
         granted_by=row.get("granted_by"),
     )

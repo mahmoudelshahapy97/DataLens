@@ -121,7 +121,7 @@ async def read_definitions(
     if not rows:
         raise FileNotFoundError(
             "VANNA_CONFIG_SOURCE=database, but the catalog holds no domain "
-            "definitions. Import them with `python tools/import_config_files.py`."
+            "definitions. Import them with `python backend/tools/import_config_files.py`."
         )
     if rows[0].parsed is None:
         raise ValueError(
