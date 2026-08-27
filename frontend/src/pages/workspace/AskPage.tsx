@@ -30,6 +30,8 @@ type ChatElement = HTMLElement & {
   loadConversation?: (id: string, messages: unknown[]) => void;
   /** Mint a fresh conversation id and return it. */
   newConversation?: () => string;
+  /** Whether to offer the admin-only slash commands. See below. */
+  isAdmin?: boolean;
 };
 
 declare module 'react' {
@@ -60,7 +62,14 @@ interface Starter {
  */
 export default function AskPage() {
   const { t, locale } = useLocale();
-  const { identity } = useSession();
+  const { identity, role, isPlatformAdmin } = useSession();
+
+  // `/memories` and `/delete` are gated server-side on `"admin" in
+  // group_memberships`, which `_groups_for` produces from the workspace role.
+  // Mirroring the same condition here means the menu offers what the server
+  // will actually answer, rather than listing a command that replies "Access
+  // Denied" -- the flag is a display decision, not the access control.
+  const isAdmin = role === 'admin' || isPlatformAdmin;
   const chatRef = React.useRef<ChatElement | null>(null);
 
   const [starters, setStarters] = React.useState<Starter[]>([]);
@@ -134,9 +143,10 @@ export default function AskPage() {
     if (!element) return;
     element.theme = theme;
     element.locale = locale;
+    element.isAdmin = isAdmin;
     // Re-applied on a workspace switch, which happens long after vanna-ready.
     element.setCustomHeaders?.(headers());
-  }, [theme, locale, headers]);
+  }, [theme, locale, headers, isAdmin]);
 
   /**
    * Put a starter question into the conversation.

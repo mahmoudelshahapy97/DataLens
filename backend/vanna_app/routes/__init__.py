@@ -219,6 +219,7 @@ def register_all(app: Any, deps: Deps) -> None:
         governance,
         grants,
         instructions,
+        memories,
         overview,
         reports,
         workspace,
@@ -240,5 +241,6 @@ def register_all(app: Any, deps: Deps) -> None:
     catalog.register(app, deps)
     instructions.register(app, deps)
     admin.register(app, deps)
+    memories.register(app, deps)
     overview.register(app, deps)
     config.register(app, deps)

@@ -32,6 +32,20 @@ export function announce(message: string, priority: 'polite' | 'assertive' = 'po
   region.textContent = '';
   window.setTimeout(() => {
     region.textContent = message;
+    // And cleared again once it has been read.
+    //
+    // The text used to stay in the region for the life of the page. A live
+    // region is `sr-only`, so nobody *saw* it -- but it is still part of the
+    // document's text content, so the last error announced trailed along behind
+    // every subsequent screen: select-all, copy, or read the page with any tool
+    // and a stale "Field required; Field required" sat above the heading of a
+    // page that had nothing wrong with it.
+    //
+    // Long enough for the announcement to be picked up, short enough that it is
+    // gone before the next navigation.
+    window.setTimeout(() => {
+      if (region.textContent === message) region.textContent = '';
+    }, 3000);
   }, 50);
 }
 

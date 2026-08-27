@@ -214,6 +214,9 @@ def _build_services(settings: Any) -> Dict[str, Any]:
     platform = Platform(
         settings,
         directory=directory,
+        # Agent memory is built from this, so what the agent learns is stored
+        # rather than discarded when the request ends.
+        app_db=app_db,
         generation_store=generations,
         conversation_store=conversations,
         dashboard_store=dashboards,

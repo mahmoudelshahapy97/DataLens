@@ -50,6 +50,36 @@ def current_question() -> str:
     return _CURRENT_QUESTION.get("")
 
 
+def _question_for(context: Any) -> str:
+    """What to record as the question behind this SQL.
+
+    A chat turn has one, captured by the lifecycle hook. Everything else that
+    runs SQL through this tool does not -- a dashboard tile, a scheduled report,
+    a cube drill -- and those were stored with an empty question. They are the
+    *majority*: of 6,340 rows in one workspace, 6,075 had none, so the History
+    screen ("every question asked in this workspace") was mostly page after page
+    of "(no question recorded)" and the real questions were buried in it.
+
+    So label them by where they came from. The conversation id already says:
+    ``dashboard:<id>`` for a tile, ``export`` for a download. This follows the
+    convention the export path set with ``[export] <title>`` rather than
+    inventing a second one, and it keeps them in the record -- they cost tokens
+    and touch data, so dropping them would be worse than labelling them.
+    """
+    question = current_question()
+    if question:
+        return question
+
+    conversation = str(getattr(context, "conversation_id", "") or "")
+    if conversation.startswith("dashboard:"):
+        return f"[dashboard] {conversation.split(':', 1)[1]}"
+    if conversation.startswith("report:"):
+        return f"[report] {conversation.split(':', 1)[1]}"
+    if conversation in ("export", "domains", "portal"):
+        return f"[{conversation}]"
+    return ""
+
+
 def _usage_fields() -> Dict[str, Any]:
     """Model, tokens and cost for the request being recorded, or nothing.
 
@@ -162,7 +192,7 @@ def recording_run_sql_tool(
                     user_id=getattr(context.user, "id", ""),
                     conversation_id=context.conversation_id,
                     request_id=context.request_id,
-                    question=current_question(),
+                    question=_question_for(context),
                     sql=getattr(args, "sql", "") or "",
                     status=status,
                     error=(result.error or None),
@@ -412,6 +442,9 @@ class Platform:
         domain_store: Any = None,
         datasource_registry: Any = None,
         config_store: Any = None,
+        #: The control plane itself, for the stores this builds rather than
+        #: receives. Agent memory is the only one so far.
+        app_db: Any = None,
     ) -> None:
         from vanna.core.generation import LocalGenerationStore
         from vanna.core.llm import DelegatingLlmService
@@ -505,7 +538,11 @@ class Platform:
         )
         self.conversations = conversation_store
         self.dashboards = dashboard_store
-        self.memory = _build_memory()
+        # Persistent when there is a control plane to persist into, which is
+        # every real deployment. It used to be an in-process stub unconditionally
+        # -- `Memory ✗` in the chat's own status line, and `/memories` empty
+        # however much the agent had been used.
+        self.memory = _build_memory(app_db)
         self.session_properties: Dict[str, str] = {}
 
         # Records model, tokens and cost for every LLM call. Set by `wiring` after
@@ -913,6 +950,11 @@ class Platform:
             VisualizeDataTool,
             create_schema_tools,
         )
+        from vanna.tools.agent_memory import (
+            SaveQuestionToolArgsTool,
+            SaveTextMemoryTool,
+            SearchSavedCorrectToolUsesTool,
+        )
 
         from .limits import build_limit_hooks
 
@@ -1008,6 +1050,19 @@ class Platform:
         registry.register_local_tool(CheckColumnValuesTool(runner), [])
         registry.register_local_tool(SystemTimeTool(), [])
         registry.register_local_tool(VisualizeDataTool(), [])
+
+        # Memory. Registered only now that there is somewhere for it to go:
+        # these were absent, so the agent could neither look up how a similar
+        # question was answered before nor record how this one was -- and the
+        # chat's own status line said `Memory ✗`, because `has_memory` is
+        # computed from whether these two tools exist rather than from the
+        # store.
+        #
+        # They read `ToolContext.agent_memory`, which is the per-workspace store
+        # `_build_memory` provides, so there is nothing to pass here.
+        registry.register_local_tool(SearchSavedCorrectToolUsesTool(), [])
+        registry.register_local_tool(SaveQuestionToolArgsTool(), [])
+        registry.register_local_tool(SaveTextMemoryTool(), [])
 
         write_service = None
         if write_runner is not None and self.grants is not None:
@@ -1498,13 +1553,29 @@ class Platform:
         self._runtimes.clear()
 
 
-def _build_memory() -> Any:
-    """In-memory agent memory, partitioned per tenant.
+def _build_memory(app_db: Any = None) -> Any:
+    """Agent memory, partitioned per tenant.
+
+    Backed by the control plane when there is one, so what the agent learns
+    outlives the request that taught it. Without a database -- the demo and the
+    tests -- it falls back to the in-process stub below, which is honest about
+    being empty rather than pretending to remember.
 
     The partition wrapper is what keeps one workspace's saved patterns out of
     another's retrieval, independent of whether the backing store filters.
     """
     from vanna.capabilities.agent_memory import AgentMemory, TenantPartitionedAgentMemory
+
+    if app_db is not None:
+        from .memory_store import PostgresAgentMemory
+
+        # A factory, not an instance: the wrapper calls it once per workspace and
+        # requires each result to be independent. Pinning the tenant at
+        # construction is what makes that true here -- the rows live in shared
+        # tables, but a store built for one workspace cannot query another's.
+        return TenantPartitionedAgentMemory(
+            lambda tenant: PostgresAgentMemory(app_db, tenant_id=tenant)
+        )
 
     class EphemeralMemory(AgentMemory):
         """Non-persistent memory, so a restart starts clean."""

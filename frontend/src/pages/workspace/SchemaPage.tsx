@@ -91,8 +91,19 @@ export default function SchemaPage() {
   async function rescan() {
     setScanning(true);
     try {
-      await post('/api/vanna/v2/schema/rescan', {});
-      toast(t('schema.scanned'));
+      // `schema.scanned` is "Scanned {tables} tables, {columns} columns" -- the
+      // numbers are in the response and were being dropped, so the toast read
+      // with the placeholders still in it.
+      const report = await post<{ tables_scanned?: number; columns_profiled?: number }>(
+        '/api/vanna/v2/schema/rescan',
+        {},
+      );
+      toast(
+        t('schema.scanned', {
+          tables: report?.tables_scanned ?? 0,
+          columns: report?.columns_profiled ?? 0,
+        }),
+      );
       await load();
     } catch (caught) {
       toastError((caught as Error).message);

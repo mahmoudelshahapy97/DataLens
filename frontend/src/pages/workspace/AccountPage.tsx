@@ -1,4 +1,4 @@
-import { KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Brain, KeyRound, Plus, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { useSession } from '@/app/session';
@@ -11,10 +11,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useLocale } from '@/i18n';
 import { api, del, post } from '@/lib/api';
 import { relative, until } from '@/lib/time';
-import { toast, toastError } from '@/lib/toast';
+import { toast, toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * This account: its plan, its password, its tokens and its sessions.
@@ -24,6 +25,12 @@ import { toast, toastError } from '@/lib/toast';
  * is no second chance to read it and no "show again" to build. The dialog says
  * so before the value appears rather than after it has scrolled away.
  */
+
+interface Memory {
+  memory_id: string;
+  content: string;
+  created_at: string;
+}
 
 interface Usage {
   enabled: boolean;
@@ -68,12 +75,15 @@ export default function AccountPage() {
   const [next, setNext] = React.useState('');
   const [again, setAgain] = React.useState('');
   const [tokenName, setTokenName] = React.useState('');
+  const [memories, setMemories] = React.useState<Memory[]>([]);
+  const [remembering, setRemembering] = React.useState('');
 
   const load = React.useCallback(async () => {
     const results = await Promise.allSettled([
       api<Usage>('/api/vanna/v2/usage'),
       api<{ tokens: Token[] }>('/api/vanna/v2/auth/tokens'),
       api<{ sessions: Session[] }>('/api/vanna/v2/auth/sessions'),
+      api<{ memories: Memory[] }>('/api/vanna/v2/memories'),
     ]);
     // allSettled, not all: this page is four independent panels and one that
     // 404s -- tokens are unavailable without a control plane -- must not blank
@@ -81,11 +91,45 @@ export default function AccountPage() {
     if (results[0].status === 'fulfilled') setUsage(results[0].value);
     if (results[1].status === 'fulfilled') setTokens(results[1].value.tokens ?? []);
     if (results[2].status === 'fulfilled') setSessions(results[2].value.sessions ?? []);
+    if (results[3].status === 'fulfilled') setMemories(results[3].value.memories ?? []);
   }, []);
 
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  async function remember(event: React.FormEvent) {
+    event.preventDefault();
+    const content = remembering.trim();
+    if (!content) return;
+    try {
+      await post('/api/vanna/v2/memories', { content });
+      setRemembering('');
+      toastSuccess(t('recall.saved'));
+      await load();
+    } catch (caught) {
+      toastError((caught as Error).message);
+    }
+  }
+
+  async function forget(memory: Memory) {
+    // Confirmed, like every other destructive action here: there is no undo,
+    // and the agent may have been relying on this to answer correctly.
+    const ok = await confirm.ask({
+      title: t('recall.forgetTitle'),
+      body: memory.content,
+      confirmLabel: t('recall.forget'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await del(`/api/vanna/v2/memories/${encodeURIComponent(memory.memory_id)}`);
+      toast(t('recall.forgotten'));
+      await load();
+    } catch (caught) {
+      toastError((caught as Error).message);
+    }
+  }
 
   async function changePassword(event: React.FormEvent) {
     event.preventDefault();
@@ -142,7 +186,7 @@ export default function AccountPage() {
   async function endSession(session: Session) {
     if (session.current) {
       const ok = await confirm.ask({
-        title: t('account.signOutThisOne'),
+        title: t('account.signOutThisOne', { device: session.user_agent || '' }),
         body: t('account.signOutOneConfirm'),
         danger: true,
       });
@@ -329,7 +373,73 @@ export default function AccountPage() {
                       </Td>
                       <Td>
                         <Button size="sm" variant="ghost" onClick={() => void endSession(session)}>
-                          {session.current ? t('account.signOutThisOne') : t('account.revoke')}
+                          {session.current
+                            ? t('account.signOutHere')
+                            : t('account.revoke')}
+                        </Button>
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </DataTable>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* What the assistant knows about you.
+
+            The store behind this is the same one the agent writes to when a
+            conversation produces a fact worth keeping, and the same one
+            `/memories` lists in the chat. It is surfaced here because a store
+            somebody cannot read is one they cannot correct, and because "what
+            does it know about me" is an account question, not a chat question. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="size-4" />
+              {t('recall.title')}
+            </CardTitle>
+            <CardDescription>{t('recall.blurb')}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <form className="flex flex-col gap-2" onSubmit={(event) => void remember(event)}>
+              <Label htmlFor="acct-memory">{t('recall.add')}</Label>
+              <Textarea
+                id="acct-memory"
+                rows={2}
+                dir="auto"
+                maxLength={2000}
+                placeholder={t('recall.hint')}
+                value={remembering}
+                onChange={(event) => setRemembering(event.target.value)}
+              />
+              <div>
+                <Button type="submit" variant="primary" disabled={!remembering.trim()}>
+                  <Plus className="size-4" />
+                  {t('recall.remember')}
+                </Button>
+              </div>
+            </form>
+
+            {memories.length === 0 ? (
+              <p className="text-[0.8125rem] text-muted-foreground">{t('recall.none')}</p>
+            ) : (
+              <DataTable>
+                <Tbody>
+                  {memories.map((memory) => (
+                    <Tr key={memory.memory_id}>
+                      <Td dir="auto">{memory.content}</Td>
+                      <Td className="whitespace-nowrap text-muted-foreground">
+                        {relative(memory.created_at, t, locale)}
+                      </Td>
+                      <Td>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={t('recall.forget')}
+                          onClick={() => void forget(memory)}
+                        >
+                          <Trash2 className="size-4" />
                         </Button>
                       </Td>
                     </Tr>

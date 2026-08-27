@@ -10,7 +10,6 @@
   "chat.helpful": "مفيدة",
   "chat.notHelpful": "غير مفيدة",
   "chat.thanks": "شكرًا على ملاحظتك",
-
   "status.sending": "جارٍ الإرسال...",
   "status.working": "جارٍ إعداد الإجابة",
   "status.sent": "أُرسل السؤال، جارٍ إعداد الإجابة",
@@ -23,5 +22,10 @@
   "status.unreachable": "تعذّر الوصول إلى الخادم",
   "status.sendFailed": "تعذّر إرسال الرسالة",
   "status.unknownError": "خطأ غير معروف",
-  "status.seeResponse": "انظر منطقة الإجابة."
+  "status.seeResponse": "انظر منطقة الإجابة.",
+  "cmd.title": "الأوامر",
+  "cmd.help": "ما الذي يستطيع هذا المساعد فعله",
+  "cmd.status": "حالة الاتصال والأدوات والذاكرة",
+  "cmd.memories": "أحدث ما تم تذكّره",
+  "cmd.delete": "نسيان ذكرى واحدة بالمعرّف"
 }

@@ -1,10 +1,12 @@
-import { Download, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react';
+import { BookmarkPlus, Download, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { DataTable, ScrollX, Tbody, Td, Th, Tr } from '@/components/primitives/data-table';
 import { PageBody, PageHeader, Toolbar } from '@/components/primitives/page';
 import { useConfirm } from '@/components/primitives/confirm';
 import { EmptyState, ErrorState, LoadingRows } from '@/components/primitives/states';
+
+import { SaveQueryDialog } from './SaveQueryDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +21,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useSession } from '@/app/session';
 import { useLocale } from '@/i18n';
-import { api, del } from '@/lib/api';
+import { api, del, post } from '@/lib/api';
 import { relative } from '@/lib/time';
 import { toast, toastError } from '@/lib/toast';
 
@@ -51,17 +53,40 @@ interface HistoryRow {
   feedback: number | null;
   user_id: string;
   conversation_id: string | null;
+  /** Required by `/feedback`, which keys the rating by request, not by row id. */
+  request_id: string | null;
   model: string | null;
   cost_usd: number | null;
   created_at: string;
 }
 
-const STATUSES = ['', 'valid', 'invalid', 'refused'] as const;
+/**
+ * The statuses the API will actually accept.
+ *
+ * `_HISTORY_STATUSES` in `routes/data.py`. This offered `refused`, which is not
+ * one of them -- selecting it returned 400 "Unknown status" and the page showed
+ * an error where the filtered list should have been. The real name is
+ * `rejected_by_policy`, and three more existed that could not be filtered for
+ * at all.
+ *
+ * `empty` is worth having in the list: a query that ran perfectly and returned
+ * nothing is the signature of an invented filter literal, which is the most
+ * common way an answer is confidently wrong.
+ */
+const STATUSES = [
+  '',
+  'valid',
+  'empty',
+  'invalid',
+  'rejected_by_policy',
+  'timeout',
+  'error',
+] as const;
 
 function statusTone(status: string): 'ok' | 'err' | 'warn' | 'neutral' {
   if (status === 'valid') return 'ok';
-  if (status === 'invalid') return 'err';
-  if (status === 'refused') return 'warn';
+  if (status === 'invalid' || status === 'error') return 'err';
+  if (status === 'rejected_by_policy' || status === 'timeout' || status === 'empty') return 'warn';
   return 'neutral';
 }
 
@@ -78,6 +103,7 @@ export default function HistoryPage() {
 
   const [rows, setRows] = React.useState<HistoryRow[]>([]);
   const [expanded, setExpanded] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState<{ question: string; sql: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
@@ -121,16 +147,39 @@ export default function HistoryPage() {
   }, [load]);
 
   async function rate(row: HistoryRow, value: number) {
-    const next = row.feedback === value ? 0 : value;
+    // `/feedback` keys a rating by the request that produced the answer, not by
+    // the history row's id. This used to post `{generation_id, feedback}` --
+    // none of the three fields the endpoint declares -- so every thumb was a
+    // 422 reading "Field required; Field required; Field required", and because
+    // that text was announced into a live region it then followed the user onto
+    // every other page.
+    if (!row.request_id) {
+      toastError(t('history.cannotRate'));
+      return;
+    }
+
+    // The API takes 'positive' or 'negative' and has no way to express "no
+    // opinion", so clicking the lit thumb cannot clear the rating -- say so
+    // rather than sending something that will be rejected.
+    if (row.feedback === value) {
+      toast(t('history.alreadyRated'));
+      return;
+    }
+
     // Optimistic: the thumb is the feedback. Waiting for a round trip to fill it
     // in makes the button feel broken on a slow connection.
     setRows((current) =>
-      current.map((r) => (r.id === row.id ? { ...r, feedback: next } : r)),
+      current.map((r) => (r.id === row.id ? { ...r, feedback: value } : r)),
     );
     try {
-      await api(`/api/vanna/v2/feedback`, {
-        method: 'POST',
-        body: JSON.stringify({ generation_id: row.id, feedback: next }),
+      await post('/api/vanna/v2/feedback', {
+        request_id: row.request_id,
+        conversation_id: row.conversation_id || '',
+        rating: value > 0 ? 'positive' : 'negative',
+        // Carried so a positive rating can promote the pair straight into the
+        // verified example store, which is the point of collecting it.
+        question: row.question || '',
+        sql: row.sql || '',
       });
       toast(t('history.rated'));
     } catch (caught) {
@@ -167,8 +216,10 @@ export default function HistoryPage() {
     });
     if (!ok) return;
     try {
-      await del('/api/vanna/v2/history');
-      toast(t('history.cleared'));
+      // The count comes back from the server; `history.cleared` is
+      // "{count} removed" and used to render the braces to the user.
+      const body = await del<{ deleted?: number }>('/api/vanna/v2/history');
+      toast(t('history.cleared', { count: body?.deleted ?? 0 }));
       void load();
     } catch (caught) {
       toastError((caught as Error).message);
@@ -246,7 +297,7 @@ export default function HistoryPage() {
           <SelectContent>
             {STATUSES.map((s) => (
               <SelectItem key={s || 'any'} value={s || 'any'}>
-                {s ? s : t('history.anyStatus')}
+                {s ? t(`history.status.${s}`) : t('history.anyStatus')}
               </SelectItem>
             ))}
           </SelectContent>
@@ -286,7 +337,7 @@ export default function HistoryPage() {
                 <Th className="w-32">{t('audit.time')}</Th>
                 <Th>{t('history.title')}</Th>
                 <Th className="w-24">{t('history.status')}</Th>
-                <Th className="w-20 text-end">{t('history.rows')}</Th>
+                <Th className="w-20 text-end">{t('history.rowsColumn')}</Th>
                 <Th className="w-32">{t('audit.actor')}</Th>
                 <Th className="w-28" />
               </Tr>
@@ -346,6 +397,21 @@ export default function HistoryPage() {
                         >
                           <ThumbsDown />
                         </Button>
+                        {/* History already holds the question and the SQL it
+                            produced, so this is the shortest path to a saved
+                            query -- and therefore to a dashboard tile. */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={t('history.saveOne')}
+                          title={t('history.saveOne')}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSaving({ question: row.question || '', sql: row.sql || '' });
+                          }}
+                        >
+                          <BookmarkPlus />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -389,6 +455,13 @@ export default function HistoryPage() {
           </DataTable>
         </ScrollX>
       )}
+      {saving ? (
+        <SaveQueryDialog
+          question={saving.question}
+          sql={saving.sql}
+          onClose={() => setSaving(null)}
+        />
+      ) : null}
     </PageBody>
   );
 }

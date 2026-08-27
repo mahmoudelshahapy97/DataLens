@@ -313,8 +313,8 @@ function RunHistory({ runs }: { runs: ReportRun[] | undefined }) {
           <Tr>
             <Th>{t('audit.time')}</Th>
             <Th className="w-28">{t('history.status')}</Th>
-            <Th className="w-20 text-end">{t('dash.tiles')}</Th>
-            <Th className="w-24 text-end">{t('history.rows')}</Th>
+            <Th className="w-20 text-end">{t('dash.tilesColumn')}</Th>
+            <Th className="w-24 text-end">{t('history.rowsColumn')}</Th>
             <Th>{t('report.artifact')}</Th>
           </Tr>
         </thead>

@@ -447,6 +447,57 @@ export class VannaChat extends LitElement {
         border-top-color: rgba(148, 163, 184, 0.22);
       }
 
+      /* Above the prompt, not below: the prompt sits at the bottom of the
+         window, so a menu underneath it would open off-screen. */
+      .command-menu {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 8px;
+        border: 1px solid var(--vanna-border, #e2e8f0);
+        border-radius: 10px;
+        background: var(--vanna-surface, #fff);
+        box-shadow: 0 8px 24px rgb(15 23 42 / 12%);
+        overflow: hidden;
+      }
+
+      :host([theme='dark']) .command-menu {
+        border-color: #334155;
+        background: #1e293b;
+      }
+
+      .command-item {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        padding: 8px 12px;
+        border: 0;
+        background: none;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+        color: inherit;
+      }
+
+      .command-item.active {
+        background: var(--vanna-hover, #f1f5f9);
+      }
+
+      :host([theme='dark']) .command-item.active {
+        background: #334155;
+      }
+
+      .command-name {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.82rem;
+        white-space: nowrap;
+      }
+
+      .command-arg,
+      .command-desc {
+        opacity: 0.65;
+        font-size: 0.78rem;
+      }
+
       .chat-input-container {
         display: flex;
         align-items: center;
@@ -826,6 +877,25 @@ export class VannaChat extends LitElement {
     return translate(this.locale, key);
   }
 
+  /**
+   * Slash commands, offered the way an editor offers them.
+   *
+   * These are not questions -- `DefaultWorkflow.try_handle` intercepts them
+   * before the LLM is ever called, so a near miss is not a bad answer, it is a
+   * sentence sent to a model as if it were a question. They were reachable only
+   * by knowing they existed and typing them exactly; the ask was for a `/` menu
+   * "like in claude and codex". So typing `/` at the start of an empty prompt
+   * opens the list, and the list is the documentation.
+   *
+   * `admin` marks a command the server refuses to non-admins ("Access Denied");
+   * those are hidden rather than offered and then rejected.
+   */
+  @property({ type: Boolean }) isAdmin = false;
+
+  @state() private commandOpen = false;
+  /** Index into `visibleCommands()`, moved with the arrow keys. */
+  @state() private commandIndex = 0;
+
   @state() private currentMessage = '';
   @state() private status: 'idle' | 'working' | 'error' | 'success' = 'idle';
   /** True while a response is streaming; drives the send/stop toggle. */
@@ -1004,16 +1074,127 @@ export class VannaChat extends LitElement {
     }
   }
 
+  /**
+   * The commands `DefaultWorkflow` answers without calling the model.
+   *
+   * `arg` is the placeholder shown after the name for a command that needs one:
+   * `/delete` alone is not a command, it is `/delete <memory id>`, so choosing
+   * it leaves the caret in the prompt instead of sending.
+   */
+  private static readonly COMMANDS: ReadonlyArray<{
+    name: string;
+    key: string;
+    arg?: string;
+    admin?: boolean;
+  }> = [
+    { name: '/help', key: 'cmd.help' },
+    { name: '/status', key: 'cmd.status' },
+    { name: '/memories', key: 'cmd.memories', admin: true },
+    { name: '/delete', key: 'cmd.delete', arg: '<id>', admin: true },
+  ];
+
+  /** The commands this user may run, narrowed to what they have typed. */
+  private visibleCommands() {
+    const typed = this.currentMessage.trim().toLowerCase();
+    return VannaChat.COMMANDS.filter(
+      (command) =>
+        (this.isAdmin || !command.admin) && command.name.startsWith(typed),
+    );
+  }
+
+  /**
+   * Put a command in the prompt, and send it if it is complete.
+   *
+   * A command that takes an argument is never sent from here -- `/delete` with
+   * no id is an error message, so the menu writes `/delete ` and gets out of
+   * the way.
+   */
+  private chooseCommand(command: { name: string; arg?: string }) {
+    this.commandOpen = false;
+    if (command.arg) {
+      this.currentMessage = command.name + ' ';
+      const input = this.shadowRoot?.querySelector('.message-input') as
+        | HTMLTextAreaElement
+        | null;
+      if (input) {
+        input.value = this.currentMessage;
+        input.focus();
+      }
+      return;
+    }
+    void this.sendMessage(command.name);
+  }
+
   private handleInput(e: Event) {
     const input = e.target as HTMLInputElement;
     this.currentMessage = input.value;
+    // Open only while the whole prompt is the command being typed. A slash
+    // inside a question ("revenue w/ tax") is a slash, not a command.
+    this.commandOpen = /^\/\S*$/.test(input.value);
+    this.commandIndex = 0;
   }
 
   private handleKeyPress(e: KeyboardEvent) {
+    if (this.commandOpen) {
+      const options = this.visibleCommands();
+      if (options.length === 0) {
+        this.commandOpen = false;
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : options.length - 1;
+        this.commandIndex = (this.commandIndex + step) % options.length;
+        return;
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        this.chooseCommand(options[this.commandIndex] ?? options[0]);
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.commandOpen = false;
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       this.sendMessage();
     }
+  }
+
+  /** The menu itself. Rendered above the prompt, like every editor's. */
+  private renderCommandMenu() {
+    if (!this.commandOpen) return '';
+    const options = this.visibleCommands();
+    if (options.length === 0) return '';
+    return html`
+      <div class="command-menu" role="listbox" aria-label=${this.t('cmd.title')}>
+        ${options.map(
+          (command, index) => html`
+            <button
+              type="button"
+              role="option"
+              aria-selected=${index === this.commandIndex}
+              class="command-item ${index === this.commandIndex ? 'active' : ''}"
+              @mouseenter=${() => {
+                this.commandIndex = index;
+              }}
+              @mousedown=${(event: Event) => {
+                // mousedown, not click: the prompt must not lose focus first.
+                event.preventDefault();
+                this.chooseCommand(command);
+              }}
+            >
+              <span class="command-name"
+                >${command.name}${command.arg
+                  ? html` <span class="command-arg">${command.arg}</span>`
+                  : ''}</span
+              >
+              <span class="command-desc">${this.t(command.key)}</span>
+            </button>
+          `,
+        )}
+      </div>
+    `;
   }
 
   /**
@@ -1666,14 +1847,33 @@ export class VannaChat extends LitElement {
 
     this.updateEmptyState();
     this.requestUpdate();
+
+    // The banner belongs to the *session*, not to any one thread: it reports
+    // what this deployment can do, so it is as true of a replayed conversation
+    // as of a new one. It is deliberately not part of the stored transcript --
+    // the messages the server keeps are the conversation itself -- so it has to
+    // be asked for again after a replay rather than restored with them.
+    void this.requestStarterUI();
   }
 
-  /** Start an empty conversation under a fresh id. */
+  /**
+   * Start an empty conversation under a fresh id.
+   *
+   * The previous conversation is *not* deleted -- it is stored server-side and
+   * still listed in the rail. Only this view is cleared, and a fresh id means
+   * the next message opens a new thread instead of appending to the old one.
+   *
+   * The starter card is requested again afterwards. Without that, clearing the
+   * transcript also wiped the setup banner and the suggested actions, so "new
+   * conversation" looked like it had emptied the product rather than opened a
+   * clean thread.
+   */
   newConversation(): string {
     this.conversationId = this.generateId();
     this.clearMessages();
     this.updateEmptyState();
     this.requestUpdate();
+    void this.requestStarterUI();
     return this.conversationId;
   }
 
@@ -1691,7 +1891,12 @@ export class VannaChat extends LitElement {
       id: `restored-${sender}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       type: sender === 'user' ? 'user-message' : 'text',
       lifecycle: 'create',
-      data: sender === 'user' ? { content, sender } : { text: content },
+      // Both branches use `content`. The assistant branch passed `{ text }`,
+      // but `TextComponentRenderer` destructures `content` from `data` -- so
+      // every restored answer rendered an empty div and a replayed conversation
+      // showed the questions with nothing between them. The transcript was
+      // stored correctly all along; only the replay dropped it.
+      data: sender === 'user' ? { content, sender } : { content, markdown: true },
       children: [],
       timestamp: new Date().toISOString(),
       visible: true,
@@ -1951,6 +2156,8 @@ export class VannaChat extends LitElement {
             </vanna-status-bar>
 
             ${this.renderAnswerActions()}
+
+            ${this.renderCommandMenu()}
 
             <div class="chat-input-container">
               <textarea

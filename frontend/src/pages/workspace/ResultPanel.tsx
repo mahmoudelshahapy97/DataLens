@@ -134,7 +134,7 @@ export function ResultPanel({ runner }: { runner: Runner }) {
           <>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Badge tone="neutral">
-                {t('history.rows')}: {result.row_count}
+                {t('history.rowsColumn')}: {result.row_count}
               </Badge>
               {result.truncated ? <Badge tone="warn">{t('result.truncated')}</Badge> : null}
               {result.warnings.map((warning) => (

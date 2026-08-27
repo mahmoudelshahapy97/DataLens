@@ -1,10 +1,12 @@
-import { LayoutDashboard, Play, Trash2 } from 'lucide-react';
+import { LayoutDashboard, Play, Plus, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { useSession } from '@/app/session';
 import { useConfirm } from '@/components/primitives/confirm';
 import { PageBody, PageHeader, Toolbar } from '@/components/primitives/page';
 import { EmptyState, ErrorState, LoadingCards } from '@/components/primitives/states';
+
+import { SaveQueryDialog } from './SaveQueryDialog';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -32,6 +34,7 @@ import { ResultPanel, useQueryRunner } from './ResultPanel';
 
 export default function SavedPage() {
   const { t, locale } = useLocale();
+  const [creating, setCreating] = React.useState(false);
   const { canAuthor } = useSession();
   const confirm = useConfirm();
   const runner = useQueryRunner();
@@ -95,7 +98,18 @@ export default function SavedPage() {
   return (
     <PageBody>
       {confirm.dialog}
-      <PageHeader title={t('saved.title')} description={t('saved.sub')} />
+      <PageHeader
+        title={t('saved.title')}
+        description={t('saved.sub')}
+        actions={
+          canAuthor ? (
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              <Plus />
+              {t('saved.newQuery')}
+            </Button>
+          ) : null
+        }
+      />
 
       <Toolbar>
         <Input
@@ -178,6 +192,9 @@ export default function SavedPage() {
             toast(t('dash.pinned'));
           }}
         />
+      ) : null}
+      {creating ? (
+        <SaveQueryDialog onClose={() => setCreating(false)} onSaved={() => void load()} />
       ) : null}
     </PageBody>
   );
