@@ -252,6 +252,109 @@ def counters(app_db: Any) -> Any:
 # ----------------------------------------------------------------------
 
 
+
+# ----------------------------------------------------------------------
+# Chat / Agent pipeline
+# ----------------------------------------------------------------------
+#
+# These build a *real* ``Agent`` (not the ``_FakeAgent`` used by
+# ``test_chat_commands.py``, which only exercises ``WorkflowHandler``) wired to
+# ``MockLlmService`` so tests can drive the actual tool-call loop in
+# ``Agent._send_message`` without needing a live LLM or Postgres.
+
+
+@pytest.fixture
+def chat_user_factory():
+    """Build a real ``vanna.core.user.User`` for driving the Agent directly.
+
+    Distinct from ``user_factory``/``FakeUser`` above, which only carries the
+    attributes ``authz`` reads and is not a real ``User`` model instance.
+    """
+    from vanna.core.user import User
+
+    def build(
+        email: str = "viewer@acme.test",
+        *,
+        tenant_id: str = "acme",
+        admin: bool = False,
+    ) -> Any:
+        return User(
+            id=email,
+            email=email,
+            tenant_id=tenant_id,
+            group_memberships=["admin"] if admin else [],
+        )
+
+    return build
+
+
+@pytest.fixture
+def mock_llm():
+    from vanna.integrations.mock.llm import MockLlmService
+
+    return MockLlmService()
+
+
+@pytest.fixture
+def make_agent(chat_user_factory):
+    """Build a minimally-wired real ``Agent`` for chat-pipeline tests.
+
+    Mirrors the construction in ``vanna_app/platform.py`` but without the
+    tenant/catalog/write-service machinery that production wiring adds -- only
+    the four required constructor arguments plus whatever a test overrides.
+    """
+    from vanna.core.agent.agent import Agent
+    from vanna.core.agent.config import AgentConfig
+    from vanna.core.registry import ToolRegistry
+    from vanna.core.user.request_context import RequestContext
+    from vanna.core.user.resolver import UserResolver
+    from vanna.integrations.local import MemoryConversationStore
+    from vanna.integrations.local.agent_memory.in_memory import DemoAgentMemory
+
+    class _FixedUserResolver(UserResolver):
+        def __init__(self, user):
+            self._user = user
+
+        async def resolve_user(self, request_context):
+            return self._user
+
+    def build(
+        *,
+        llm=None,
+        tools=(),
+        user=None,
+        config=None,
+        workflow_handler=None,
+        lifecycle_hooks=(),
+        conversation_store=None,
+    ):
+        user = user or chat_user_factory()
+        registry = ToolRegistry()
+        for tool, access_groups in tools:
+            registry.register_local_tool(tool, access_groups)
+
+        agent = Agent(
+            llm_service=llm,
+            tool_registry=registry,
+            user_resolver=_FixedUserResolver(user),
+            agent_memory=DemoAgentMemory(),
+            conversation_store=conversation_store or MemoryConversationStore(),
+            config=config or AgentConfig(stream_responses=False),
+            workflow_handler=workflow_handler,
+            lifecycle_hooks=list(lifecycle_hooks),
+        )
+        return agent, user
+
+    return build
+
+
+@pytest.fixture
+def request_context():
+    from vanna.core.user.request_context import RequestContext
+
+    return RequestContext()
+
+
 @pytest.fixture
 async def two_workspaces(directory: Any, accounts: Any) -> Dict[str, Any]:
     """Two workspaces with a full cast in each.

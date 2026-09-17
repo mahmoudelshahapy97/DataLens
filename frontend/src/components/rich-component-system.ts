@@ -823,6 +823,28 @@ export class TextComponentRenderer extends BaseComponentRenderer {
     return container;
   }
 
+  // Streamed answers arrive as many updates to one component. The inherited
+  // update() re-renders and swaps the node, which throws away scroll anchoring
+  // and any selection the user has made mid-answer. Patching the inner text
+  // keeps the element identity stable.
+  update(element: HTMLElement, component: RichComponent, _updates?: Record<string, any>): void {
+    const { content, markdown = false, code_language } = component.data;
+    const target = element.querySelector(
+      code_language ? 'code' : markdown ? '.text-markdown' : '.text-content'
+    );
+
+    if (!target) {
+      // Shape changed (plain text became a code block, say) - fall back to a
+      // full re-render.
+      super.update(element, component, _updates);
+      return;
+    }
+
+    target.innerHTML = markdown && !code_language
+      ? this.renderMarkdown(content)
+      : this.escapeHtml(content);
+  }
+
   private escapeHtml(text: string): string {
     const div = document.createElement('div');
     div.textContent = text;
@@ -1881,6 +1903,21 @@ export class ComponentManager {
       const component = this.normalizeComponent(update.component);
       this.registry.update(element, component, update.updates);
       this.components.set(update.target_id, component);
+
+      // A renderer without its own update() falls back to replacing the node.
+      // Without re-resolving here, this.elements still points at the detached
+      // original, so the *second* update targets a node whose parentNode is
+      // null, replaceChild silently no-ops, and the component freezes at its
+      // first update. replaceComponent() below always got this right.
+      const live = this.container.querySelector(
+        `[data-component-id="${update.target_id}"]`
+      ) as HTMLElement | null;
+      if (live && live !== element) {
+        this.elements.set(update.target_id, live);
+      }
+
+      // A growing answer should keep the newest text in view.
+      this.triggerScroll();
     }
   }
 

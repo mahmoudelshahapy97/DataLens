@@ -129,6 +129,17 @@ class AgentConfig(BaseModel):
     auto_save_conversations: bool = Field(default=True)
     include_thinking_indicators: bool = Field(default=True)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=None, gt=0)
+    max_tokens: Optional[int] = Field(
+        default=4096,
+        gt=0,
+        description=(
+            "Output token ceiling, forwarded to every provider via LlmRequest. "
+            "Left at None this inherited each provider's own fallback -- 512 for "
+            "Anthropic -- which truncated a commented query plus its explanation "
+            "mid-sentence, and could cut a tool call's arguments in half. Set "
+            "here rather than per-wiring or per-integration so one number governs "
+            "every provider."
+        ),
+    )
     ui_features: UiFeatures = Field(default_factory=UiFeatures)
     audit_config: AuditConfig = Field(default_factory=AuditConfig)

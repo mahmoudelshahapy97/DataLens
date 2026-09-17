@@ -5,9 +5,10 @@ This module provides the main Agent class that orchestrates the interaction
 between LLM services, tools, and conversation storage.
 """
 
+import time
 import traceback
 import uuid
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from vanna.components import (
     UiComponent,
@@ -17,6 +18,7 @@ from vanna.components import (
     TaskTrackerUpdateComponent,
     ChatInputUpdateComponent,
     StatusCardComponent,
+    ComponentLifecycle,
     Task,
 )
 from .config import AgentConfig
@@ -49,6 +51,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 logger.info("Loaded vanna.core.agent.agent module")
+
+#: How much streamed text to accumulate before emitting a frame, and how long to
+#: wait before flushing a short one anyway. Per-token frames are mostly protocol
+#: overhead and make the client re-render the bubble hundreds of times; these
+#: values keep the answer visibly growing without that cost.
+_STREAM_FLUSH_CHARS = 24
+_STREAM_FLUSH_SECONDS = 0.08
 
 if TYPE_CHECKING:
     pass
@@ -678,14 +687,64 @@ class Agent:
                 # TODO: Yield thinking indicator
                 pass
 
-            # Get LLM response
+            # Get LLM response. streamed_id is reset every iteration so the
+            # second round of prose gets its own bubble instead of patching the
+            # first round's.
+            streamed_id: Optional[str] = None
             if self.config.stream_responses:
-                response = await self._handle_streaming_response(request)
+                holder: Dict[str, Any] = {}
+                async for stream_component in self._stream_llm_response(
+                    request, holder
+                ):
+                    yield stream_component
+                response = holder["response"]
+                streamed_id = holder.get("text_component_id")
             else:
                 response = await self._send_llm_request(request)
 
+            # Did the provider stop because it ran out of room? Anthropic reports
+            # "max_tokens", OpenAI "length". Either way the text is cut off and any
+            # tool arguments may be structurally incomplete.
+            truncated = (response.finish_reason or "").lower() in {
+                "max_tokens",
+                "length",
+            }
+
             # Handle tool calls
             if response.is_tool_call():
+                if truncated:
+                    # Executing half-parsed arguments is the worse failure: it can
+                    # run a truncated SQL string. Stop and say so instead.
+                    logger.warning(
+                        "LLM response truncated mid-tool-call "
+                        f"(finish_reason={response.finish_reason!r}, "
+                        f"iteration={tool_iterations}) -- not executing"
+                    )
+                    yield UiComponent(  # type: ignore
+                        rich_component=StatusBarUpdateComponent(
+                            status="warning",
+                            message="Response truncated",
+                            detail="The model ran out of room composing the next step.",
+                        )
+                    )
+                    truncation_notice = (
+                        "⚠️ I ran out of room while composing the next step, so I "
+                        "stopped rather than run an incomplete query. Ask me to "
+                        "continue, or try a narrower question."
+                    )
+                    yield UiComponent(
+                        rich_component=RichTextComponent(
+                            content=truncation_notice, markdown=True
+                        ),
+                        simple_component=SimpleTextComponent(text=truncation_notice),
+                    )
+                    yield UiComponent(  # type: ignore
+                        rich_component=ChatInputUpdateComponent(
+                            placeholder="Ask a narrower question...", disabled=False
+                        )
+                    )
+                    break
+
                 tool_iterations += 1
 
                 # First, add the assistant message with tool_calls to the conversation
@@ -706,9 +765,20 @@ class Agent:
                         )
                     )
                     if has_tool_invocation_message_in_chat:
+                        # Anthropic streams tool arguments as input_json_delta,
+                        # which never reaches text_stream -- so anything already
+                        # on screen is real prose, not half-formed JSON. Patch it
+                        # rather than yielding a second copy.
                         yield UiComponent(
                             rich_component=RichTextComponent(
-                                content=response.content, markdown=True
+                                id=streamed_id or str(uuid.uuid4()),
+                                content=response.content,
+                                markdown=True,
+                                lifecycle=(
+                                    ComponentLifecycle.UPDATE
+                                    if streamed_id
+                                    else ComponentLifecycle.CREATE
+                                ),
                             ),
                             simple_component=SimpleTextComponent(text=response.content),
                         )
@@ -722,6 +792,19 @@ class Agent:
                             )
                         )
                     else:
+                        # This preamble belongs in the status bar, not the
+                        # transcript -- but streaming already put it on screen,
+                        # because you cannot know a response is a tool call until
+                        # it ends. Take it back.
+                        if streamed_id:
+                            yield UiComponent(  # type: ignore
+                                rich_component=RichTextComponent(
+                                    id=streamed_id,
+                                    content=response.content,
+                                    markdown=True,
+                                    lifecycle=ComponentLifecycle.REMOVE,
+                                )
+                            )
                         # Yield as a status update instead
                         yield UiComponent(  # type: ignore
                             rich_component=StatusBarUpdateComponent(
@@ -1074,11 +1157,70 @@ class Agent:
                     conversation.add_message(
                         Message(role="assistant", content=response.content)
                     )
+                    # If the answer was streamed, this is the reconciliation:
+                    # same id, full text, plus the simple payload the deltas
+                    # withheld. Otherwise it is the original create path.
                     yield UiComponent(
                         rich_component=RichTextComponent(
-                            content=response.content, markdown=True
+                            id=streamed_id or str(uuid.uuid4()),
+                            content=response.content,
+                            markdown=True,
+                            lifecycle=(
+                                ComponentLifecycle.UPDATE
+                                if streamed_id
+                                else ComponentLifecycle.CREATE
+                            ),
                         ),
                         simple_component=SimpleTextComponent(text=response.content),
+                    )
+
+                    if truncated:
+                        # A separate component rather than text appended to the
+                        # answer, so it does not end up in the message saved above
+                        # and fed back on the next turn.
+                        cutoff_notice = (
+                            "⚠️ This answer was cut off at the response length "
+                            "limit -- ask me to continue and I'll pick up where I "
+                            "left off."
+                        )
+                        yield UiComponent(
+                            rich_component=RichTextComponent(
+                                content=cutoff_notice, markdown=True
+                            ),
+                            simple_component=SimpleTextComponent(text=cutoff_notice),
+                        )
+                else:
+                    # No content and no tool call. Without this the turn ends with
+                    # status-bar updates and nothing in the transcript, which reads
+                    # to the user as a hang. The empty turn is deliberately not
+                    # written to the conversation: an empty assistant message in
+                    # history degrades the next call.
+                    logger.warning(
+                        "LLM returned empty content with no tool calls "
+                        f"(finish_reason={response.finish_reason!r}, "
+                        f"iteration={tool_iterations})"
+                    )
+                    if streamed_id:
+                        # Cannot normally happen -- content only accumulates --
+                        # but leaving a half-written bubble next to the fallback
+                        # would be worse than one extra frame.
+                        yield UiComponent(  # type: ignore
+                            rich_component=RichTextComponent(
+                                id=streamed_id,
+                                content="",
+                                markdown=True,
+                                lifecycle=ComponentLifecycle.REMOVE,
+                            )
+                        )
+                    empty_notice = (
+                        "I wasn't able to produce an answer for that. Could you "
+                        "rephrase the question, or add a bit more detail?"
+                    )
+                    yield UiComponent(
+                        rich_component=RichTextComponent(
+                            content=empty_notice, markdown=True
+                        ),
+                        simple_component=SimpleTextComponent(text=empty_notice),
                     )
                 break
 
@@ -1436,8 +1578,23 @@ You can:
 
         return response
 
-    async def _handle_streaming_response(self, request: LlmRequest) -> LlmResponse:
-        """Handle streaming response from LLM."""
+    async def _stream_llm_response(
+        self, request: LlmRequest, holder: Dict[str, Any]
+    ) -> AsyncGenerator[UiComponent, None]:
+        """Stream an LLM response, emitting the text as it arrives.
+
+        This used to be ``_handle_streaming_response``, an ``async def`` that
+        drained the provider stream and returned one reassembled response. The
+        SSE endpoint therefore emitted nothing until the whole turn finished --
+        the transport streamed, the agent did not.
+
+        It is a generator now so it can ``yield`` text components into the tool
+        loop, which is itself a generator: sub-iteration preserves emission order
+        against the status and task components the loop yields, and inherits the
+        consumer's backpressure. Async generators cannot return a value, so the
+        reassembled ``LlmResponse`` and the streamed component's id are handed
+        back through ``holder``.
+        """
         # Apply before_llm_request middlewares with observability
         for middleware in self.llm_middlewares:
             mw_span = None
@@ -1473,6 +1630,10 @@ You can:
         # dropping it meant no streamed answer could ever be costed.
         accumulated_usage = None
         accumulated_model = None
+        # Same story as usage: the provider reports why it stopped on the terminal
+        # chunk, and dropping it here made a max_tokens truncation indistinguishable
+        # from a finished answer.
+        accumulated_finish_reason = None
 
         # Create span for streaming
         stream_span = None
@@ -1482,10 +1643,43 @@ You can:
                 attributes={"model": getattr(self.llm_service, "model", "unknown")},
             )
 
+        # One component id for the whole answer, patched in place. Deltas are
+        # coalesced rather than emitted per token: SSE framing costs ~100 bytes
+        # per frame for ~4 bytes of payload, and the client re-renders the bubble
+        # on every update.
+        stream_id = str(uuid.uuid4())
+        emitted = False
+        flushed_len = 0
+        last_flush = time.monotonic()
+
         async for chunk in self.llm_service.stream_request(request):
             if chunk.content:
                 accumulated_content += chunk.content
-                # Could yield intermediate TextChunk here
+
+                pending = len(accumulated_content) - flushed_len
+                due = pending >= _STREAM_FLUSH_CHARS or (
+                    pending > 0
+                    and time.monotonic() - last_flush >= _STREAM_FLUSH_SECONDS
+                )
+                if due:
+                    # simple_component stays None on every delta: simple clients
+                    # have no lifecycle notion and would append one bubble per
+                    # flush. They get a single text payload at reconciliation.
+                    yield UiComponent(
+                        rich_component=RichTextComponent(
+                            id=stream_id,
+                            content=accumulated_content,
+                            markdown=True,
+                            lifecycle=(
+                                ComponentLifecycle.UPDATE
+                                if emitted
+                                else ComponentLifecycle.CREATE
+                            ),
+                        )
+                    )
+                    emitted = True
+                    flushed_len = len(accumulated_content)
+                    last_flush = time.monotonic()
 
             if chunk.tool_calls:
                 accumulated_tool_calls.extend(chunk.tool_calls)
@@ -1494,6 +1688,8 @@ You can:
                 accumulated_usage = chunk.usage
             if getattr(chunk, "model", None):
                 accumulated_model = chunk.model
+            if getattr(chunk, "finish_reason", None):
+                accumulated_finish_reason = chunk.finish_reason
 
         # End streaming span
         if self.observability_provider and stream_span:
@@ -1508,6 +1704,7 @@ You can:
         response = LlmResponse(
             content=accumulated_content if accumulated_content else None,
             tool_calls=accumulated_tool_calls if accumulated_tool_calls else None,
+            finish_reason=accumulated_finish_reason,
             usage=accumulated_usage,
             # `model` is not a field on LlmResponse, so it rides in metadata;
             # the metering middleware looks there too.
@@ -1541,4 +1738,5 @@ You can:
                         },
                     )
 
-        return response
+        holder["response"] = response
+        holder["text_component_id"] = stream_id if emitted else None

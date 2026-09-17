@@ -2,15 +2,68 @@
 FastAPI route implementations for Vanna Agents.
 """
 
-import json
-import traceback
-from typing import Any, AsyncGenerator, Dict, Optional
+import asyncio
+import logging
+from typing import Any, AsyncGenerator, Dict, Iterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
-from ..base import ChatHandler, ChatRequest, ChatResponse
+from ..base import ChatHandler, ChatRequest, ChatResponse, ChatStreamChunk
+from ...components import (
+    ChatInputUpdateComponent,
+    SimpleTextComponent,
+    StatusBarUpdateComponent,
+    StatusCardComponent,
+    UiComponent,
+)
 from ...core.user.request_context import RequestContext
+
+logger = logging.getLogger(__name__)
+
+#: How long the SSE stream may go without a frame before it sends a comment to
+#: keep the connection open. A tool-heavy turn can easily run past nginx's
+#: 60-second ``proxy_read_timeout`` with nothing to say.
+_SSE_KEEPALIVE_SECONDS = 15.0
+
+#: What the client is told when the stream fails. The exception text stays in
+#: the log: it names internal tables, hosts and identifiers.
+_STREAM_ERROR_MESSAGE = (
+    "Something went wrong while answering that. Please try again."
+)
+
+
+def _error_chunks(conversation_id: str, request_id: str) -> Iterator[str]:
+    """The frames a failed stream ends with, in the normal chunk shape."""
+    components = [
+        UiComponent(
+            rich_component=StatusCardComponent(
+                title="Error Processing Message",
+                status="error",
+                description=_STREAM_ERROR_MESSAGE,
+                icon="!",
+            ),
+            simple_component=SimpleTextComponent(text=_STREAM_ERROR_MESSAGE),
+        ),
+        UiComponent(
+            rich_component=StatusBarUpdateComponent(
+                status="error",
+                message="Error occurred",
+                detail=_STREAM_ERROR_MESSAGE,
+            )
+        ),
+        # Without this the composer stays disabled and the user cannot retry.
+        UiComponent(
+            rich_component=ChatInputUpdateComponent(
+                placeholder="Try again...", disabled=False
+            )
+        ),
+    ]
+    for component in components:
+        chunk = ChatStreamChunk.from_component(
+            component, conversation_id, request_id
+        )
+        yield f"data: {chunk.model_dump_json()}\n\n"
 
 
 def register_chat_routes(
@@ -42,20 +95,40 @@ def register_chat_routes(
         async def generate() -> AsyncGenerator[str, None]:
             """Generate SSE stream."""
             try:
-                async for chunk in chat_handler.handle_stream(chat_request):
-                    chunk_json = chunk.model_dump_json()
-                    yield f"data: {chunk_json}\n\n"
+                stream = chat_handler.handle_stream(chat_request).__aiter__()
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            stream.__anext__(), timeout=_SSE_KEEPALIVE_SECONDS
+                        )
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        # An SSE comment: keeps proxies from reaping an idle
+                        # connection, and is ignored by any client that only
+                        # reads "data: " lines.
+                        yield ": keepalive\n\n"
+                        continue
+
+                    yield f"data: {chunk.model_dump_json()}\n\n"
+            except Exception:
+                logger.exception(
+                    "chat_sse stream failed (conversation_id=%s, request_id=%s)",
+                    chat_request.conversation_id,
+                    chat_request.request_id,
+                )
+                # Emitted in the normal chunk shape. A bare {"type": "error"}
+                # frame has no "rich" key, so the client dropped it on the floor
+                # and the user saw the turn stall with no explanation.
+                for frame in _error_chunks(
+                    chat_request.conversation_id or "",
+                    chat_request.request_id or "",
+                ):
+                    yield frame
+            finally:
+                # In a finally block so the client's read loop terminates on the
+                # error path too, rather than hanging until the socket closes.
                 yield "data: [DONE]\n\n"
-            except Exception as e:
-                traceback.print_stack()
-                traceback.print_exc()
-                error_data = {
-                    "type": "error",
-                    "data": {"message": str(e)},
-                    "conversation_id": chat_request.conversation_id or "",
-                    "request_id": chat_request.request_id or "",
-                }
-                yield f"data: {json.dumps(error_data)}\n\n"
 
         return StreamingResponse(
             generate(),
@@ -90,8 +163,7 @@ def register_chat_routes(
 
                     chat_request = ChatRequest(**data)
                 except Exception as e:
-                    traceback.print_stack()
-                    traceback.print_exc()
+                    logger.exception("chat_websocket received an invalid request")
                     await websocket.send_json(
                         {
                             "type": "error",
@@ -102,7 +174,13 @@ def register_chat_routes(
 
                 # Stream response
                 try:
+                    # Scoped to this turn. The loop variable used to be read
+                    # through `"chunk" in locals()`, which stayed true across
+                    # iterations -- so a turn that yielded nothing reported the
+                    # *previous* turn's ids.
+                    last_chunk = None
                     async for chunk in chat_handler.handle_stream(chat_request):
+                        last_chunk = chunk
                         await websocket.send_json(chunk.model_dump())
 
                     # Send completion signal
@@ -110,22 +188,30 @@ def register_chat_routes(
                         {
                             "type": "completion",
                             "data": {"status": "done"},
-                            "conversation_id": chunk.conversation_id
-                            if "chunk" in locals()
-                            else "",
-                            "request_id": chunk.request_id
-                            if "chunk" in locals()
-                            else "",
+                            "conversation_id": (
+                                last_chunk.conversation_id
+                                if last_chunk
+                                else (chat_request.conversation_id or "")
+                            ),
+                            "request_id": (
+                                last_chunk.request_id
+                                if last_chunk
+                                else (chat_request.request_id or "")
+                            ),
                         }
                     )
 
-                except Exception as e:
-                    traceback.print_stack()
-                    traceback.print_exc()
+                except Exception:
+                    logger.exception(
+                        "chat_websocket stream failed "
+                        "(conversation_id=%s, request_id=%s)",
+                        chat_request.conversation_id,
+                        chat_request.request_id,
+                    )
                     await websocket.send_json(
                         {
                             "type": "error",
-                            "data": {"message": str(e)},
+                            "data": {"message": _STREAM_ERROR_MESSAGE},
                             "conversation_id": chat_request.conversation_id or "",
                             "request_id": chat_request.request_id or "",
                         }
@@ -133,14 +219,13 @@ def register_chat_routes(
 
         except WebSocketDisconnect:
             pass
-        except Exception as e:
-            traceback.print_stack()
-            traceback.print_exc()
+        except Exception:
+            logger.exception("chat_websocket failed")
             try:
                 await websocket.send_json(
                     {
                         "type": "error",
-                        "data": {"message": f"WebSocket error: {str(e)}"},
+                        "data": {"message": _STREAM_ERROR_MESSAGE},
                     }
                 )
             except Exception:
@@ -165,7 +250,16 @@ def register_chat_routes(
         try:
             result = await chat_handler.handle_poll(chat_request)
             return result
-        except Exception as e:
-            traceback.print_stack()
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+        except Exception:
+            logger.exception(
+                "chat_poll failed (conversation_id=%s, request_id=%s)",
+                chat_request.conversation_id,
+                chat_request.request_id,
+            )
+            # Poll is the fallback transport, so a non-200 is exactly the signal
+            # the client needs -- but the exception text is not for the client.
+            # The request id is, so support can find the log line.
+            detail = "Chat failed"
+            if chat_request.request_id:
+                detail = f"{detail} (request_id={chat_request.request_id})"
+            raise HTTPException(status_code=500, detail=detail)

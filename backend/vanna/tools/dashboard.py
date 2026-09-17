@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from ..components import (
     ComponentType,
     NotificationComponent,
+    RichTextComponent,
     SimpleTextComponent,
     UiComponent,
 )
@@ -152,7 +153,10 @@ class ListDashboardsTool(Tool[ListDashboardsArgs]):
         return ToolResult(
             success=True,
             result_for_llm=text,
-            ui_component=UiComponent(simple_component=SimpleTextComponent(text=text)),
+            ui_component=UiComponent(
+                rich_component=RichTextComponent(content=text, markdown=False),
+                simple_component=SimpleTextComponent(text=text),
+            ),
             metadata={"count": len(dashboards)},
         )
 

@@ -145,6 +145,70 @@ class TestDeleteIsUngated:
         assert "Deleted" in result.components[0].rich_component.content
 
 
+class TestDefaultHandlerAdminGating:
+    """`DataLensWorkflow` overrides `/delete` and never gates `/memorise`, but
+    the vendored `DefaultWorkflowHandler` it falls back to (and that other
+    deployments use unmodified) has its own admin gates on `/status`,
+    `/memories`, and `/delete`. Only the app-layer override was tested before;
+    these exercise the vendored default directly.
+    """
+
+    async def test_status_is_denied_to_a_non_admin(self):
+        from vanna.core.workflow.default import DefaultWorkflowHandler
+
+        agent = _FakeAgent()
+        user = _user(admin=False)
+        conversation = _conversation(user)
+        workflow = DefaultWorkflowHandler()
+
+        result = await workflow.try_handle(agent, user, conversation, "/status")
+
+        assert result.should_skip_llm is True
+        assert "Access Denied" in result.components[0].rich_component.content
+
+    async def test_memories_is_denied_to_a_non_admin(self):
+        from vanna.core.workflow.default import DefaultWorkflowHandler
+
+        agent = _FakeAgent()
+        user = _user(admin=False)
+        conversation = _conversation(user)
+        workflow = DefaultWorkflowHandler()
+
+        result = await workflow.try_handle(agent, user, conversation, "/memories")
+
+        assert result.should_skip_llm is True
+        assert "Access Denied" in result.components[0].rich_component.content
+
+    async def test_delete_is_denied_to_a_non_admin(self):
+        from vanna.core.workflow.default import DefaultWorkflowHandler
+
+        agent = _FakeAgent()
+        user = _user(admin=False)
+        conversation = _conversation(user)
+        workflow = DefaultWorkflowHandler()
+
+        result = await workflow.try_handle(agent, user, conversation, "/delete abc123")
+
+        assert result.should_skip_llm is True
+        assert "Access Denied" in result.components[0].rich_component.content
+
+    async def test_help_lists_admin_commands_only_for_admins(self):
+        from vanna.core.workflow.default import DefaultWorkflowHandler
+
+        agent = _FakeAgent()
+        workflow = DefaultWorkflowHandler()
+
+        viewer_result = await workflow.try_handle(
+            agent, _user(admin=False), _conversation(_user(admin=False)), "/help"
+        )
+        admin_result = await workflow.try_handle(
+            agent, _user(admin=True), _conversation(_user(admin=True)), "/help"
+        )
+
+        assert "Admin Commands" not in viewer_result.components[0].rich_component.content
+        assert "Admin Commands" in admin_result.components[0].rich_component.content
+
+
 def _context(user: User, conversation: Conversation, memory):
     from vanna.core.tool import ToolContext
 
