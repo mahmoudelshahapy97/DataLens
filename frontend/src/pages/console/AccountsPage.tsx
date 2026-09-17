@@ -173,7 +173,7 @@ export default function AccountsPage() {
                         aria-label={`${t('acc.status')} ${account.email}`}
                         onCheckedChange={() => void toggleActive(account)}
                       />
-                      <Badge tone={account.is_active ? 'ok' : 'err'}>
+                      <Badge tone={account.is_active ? 'good' : 'bad'}>
                         {account.is_active ? t('acc.active') : t('ov.inactive')}
                       </Badge>
                     </div>

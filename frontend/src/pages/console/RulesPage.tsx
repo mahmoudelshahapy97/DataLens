@@ -85,7 +85,7 @@ export default function RulesPage() {
   };
 
   const tone = (origin: string) =>
-    origin === 'platform' ? 'err' : origin === 'pack' ? 'admin' : 'neutral';
+    origin === 'platform' ? 'bad' : origin === 'pack' ? 'accent' : 'neutral';
 
   return (
     <PageBody>

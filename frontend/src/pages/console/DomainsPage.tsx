@@ -103,7 +103,7 @@ export default function DomainsPage() {
             <Card key={domain.id} className="p-4">
               <div className="mb-1 flex items-start justify-between gap-2">
                 <h3 className="text-[0.9rem] font-semibold" dir="auto">{domain.name}</h3>
-                <Badge tone={domain.is_enabled ? 'ok' : 'neutral'}>
+                <Badge tone={domain.is_enabled ? 'good' : 'neutral'}>
                   {domain.is_enabled ? t('dom.on') : t('dom.off')}
                 </Badge>
               </div>

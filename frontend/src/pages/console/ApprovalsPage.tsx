@@ -138,7 +138,7 @@ export default function ApprovalsPage() {
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 {/* Destructive is its own colour. A DELETE and an INSERT are not
                     the same decision and must not look like one. */}
-                <Badge tone={write.is_destructive ? 'err' : 'warn'}>{write.operation}</Badge>
+                <Badge tone={write.is_destructive ? 'bad' : 'warn'}>{write.operation}</Badge>
                 <span className="font-mono text-[0.78rem]">{write.tables.join(', ')}</span>
                 <span className="ms-auto text-[0.72rem] text-muted-foreground">
                   {write.requested_by_email || write.requested_by} ·{' '}

@@ -174,7 +174,7 @@ export function ExamplesScreen({ mode }: { mode: 'candidate' | 'verified' }) {
             <Card key={example.id} className="p-4">
               <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                 <p className="font-medium" dir="auto">{example.question}</p>
-                <Badge tone={example.status === 'verified' ? 'ok' : 'warn'}>
+                <Badge tone={example.status === 'verified' ? 'good' : 'warn'}>
                   {example.status}
                 </Badge>
               </div>
