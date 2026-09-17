@@ -702,6 +702,89 @@ class PostgresSchemaCatalog(SchemaCatalog):
         return out
 
     # ------------------------------------------------------------------
+    # Core columns -- which columns an admin curated as the ones that matter
+    # ------------------------------------------------------------------
+    #
+    # Same posture as the annotations above: not foreign-keyed to
+    # catalog_columns, so a selection survives a re-scan and re-applies if a
+    # dropped column comes back, and a write checks the live catalog itself
+    # rather than relying on a database constraint to.
+
+    async def get_core_columns(
+        self, tenant_id: str, data_source_id: str, table_key: str
+    ) -> List[str]:
+        rows = await self.db.fetch_all(
+            f"""SELECT column_key FROM {SCHEMA}.core_columns
+                 WHERE tenant_id = %s AND data_source_id = %s AND table_key = %s
+                 ORDER BY column_key""",
+            (tenant_id, data_source_id, table_key),
+        )
+        return [row["column_key"] for row in rows]
+
+    async def get_core_columns_map(
+        self, tenant_id: str, data_source_id: str, table_keys: Sequence[str]
+    ) -> Dict[str, List[str]]:
+        """Core columns for several tables at once, grouped by table_key.
+
+        One query rather than one per table, same reasoning as
+        ``_columns_for``: the tool may be asked about more than one table.
+        """
+        if not table_keys:
+            return {}
+        rows = await self.db.fetch_all(
+            f"""SELECT table_key, column_key FROM {SCHEMA}.core_columns
+                 WHERE tenant_id = %s AND data_source_id = %s
+                   AND table_key = ANY(%s)
+                 ORDER BY table_key, column_key""",
+            (tenant_id, data_source_id, list(table_keys)),
+        )
+        grouped: Dict[str, List[str]] = {key: [] for key in table_keys}
+        for row in rows:
+            grouped.setdefault(row["table_key"], []).append(row["column_key"])
+        return grouped
+
+    async def set_core_columns(
+        self,
+        tenant_id: str,
+        data_source_id: str,
+        table_key: str,
+        column_keys: Sequence[str],
+        *,
+        marked_by: str = "",
+    ) -> List[str]:
+        """Replace this table's core-column set wholesale.
+
+        A curated set is edited as a set -- merging would make removing a
+        column from it impossible -- so this deletes whatever is not in
+        *column_keys* and upserts the rest, in one transaction so a reader
+        never sees a half-applied selection.
+        """
+        keys = list(dict.fromkeys(column_keys))  # de-duplicate, keep order
+
+        def run(cursor: Any) -> None:
+            cursor.execute(
+                f"""DELETE FROM {SCHEMA}.core_columns
+                     WHERE tenant_id = %s AND data_source_id = %s
+                       AND table_key = %s AND NOT (column_key = ANY(%s))""",
+                (tenant_id, data_source_id, table_key, keys),
+            )
+            for column_key in keys:
+                cursor.execute(
+                    f"""
+                    INSERT INTO {SCHEMA}.core_columns
+                        (tenant_id, data_source_id, table_key, column_key, marked_by)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (tenant_id, data_source_id, table_key, column_key)
+                    DO UPDATE SET marked_by = EXCLUDED.marked_by,
+                                  marked_at = now()
+                    """,
+                    (tenant_id, data_source_id, table_key, column_key, marked_by),
+                )
+
+        await self._transact(run)
+        return await self.get_core_columns(tenant_id, data_source_id, table_key)
+
+    # ------------------------------------------------------------------
     # Plumbing
     # ------------------------------------------------------------------
 

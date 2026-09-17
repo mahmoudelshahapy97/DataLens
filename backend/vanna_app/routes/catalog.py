@@ -24,7 +24,7 @@ column a caller cannot read stays unreadable.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
@@ -53,6 +53,12 @@ class ColumnAnnotation(BaseModel):
     #: {"A": "Active", "C": "Cancelled"} -- replaced as a set when given.
     value_labels: Optional[Dict[str, str]] = None
     sensitivity: Optional[str] = None
+
+
+class CoreColumns(BaseModel):
+    #: Replaced wholesale -- a curated set is edited as a set, and merging
+    #: would make removing a column from it impossible.
+    columns: List[str] = Field(default_factory=list)
 
 
 def register(app: Any, deps: Deps) -> None:
@@ -98,6 +104,58 @@ def register(app: Any, deps: Deps) -> None:
         if not clean:
             raise HTTPException(status_code=400, detail=f"A {what} is required.")
         return normalize_table(clean) if what == "table" else normalize_identifier(clean)
+
+    # Registered before the greedy `/tables/{table_key:path}` route below:
+    # that path converter absorbs slashes, so a route for
+    # "/tables/{table_key:path}/core-columns" registered *after* it would
+    # never be reached -- the earlier, plainer route matches first and
+    # swallows "orders/core-columns" whole as a table key.
+    @app.get(BASE + "/tables/{table_key:path}/core-columns")
+    async def get_core_columns(
+        tenant_id: str, table_key: str, request: Request
+    ) -> Dict[str, Any]:
+        """Which columns of this table were curated as the ones that matter."""
+        await _admin(request, tenant_id)
+        store, data_source = await _store_and_source(tenant_id)
+        key = _key(table_key, what="table")
+        return {"columns": await store.get_core_columns(tenant_id, data_source, key)}
+
+    @app.put(BASE + "/tables/{table_key:path}/core-columns")
+    async def put_core_columns(
+        tenant_id: str, table_key: str, payload: CoreColumns, request: Request
+    ) -> Dict[str, Any]:
+        user = await _admin(request, tenant_id)
+        store, data_source = await _store_and_source(tenant_id)
+        table = _key(table_key, what="table")
+
+        if not await store.table_exists(tenant_id, data_source, table):
+            raise HTTPException(
+                status_code=404, detail="Not in this workspace's catalog."
+            )
+
+        keys = [_key(c, what="column") for c in payload.columns]
+        unknown = [
+            key
+            for key in keys
+            if not await store.column_exists(tenant_id, data_source, table, key)
+        ]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Not in this table's catalog: {', '.join(unknown)}.",
+            )
+
+        columns = await store.set_core_columns(
+            tenant_id, data_source, table, keys, marked_by=user.email or user.id
+        )
+        await deps.admin_audit.record(
+            "catalog.core_columns_set",
+            actor_email=user.email,
+            target=f"{tenant_id}:{table}",
+            actor_ip=deps.client_ip(request),
+        )
+        logger.info("%s set core columns for %s in %s", user.email, table, tenant_id)
+        return {"columns": columns}
 
     @app.get(BASE + "/tables/{table_key:path}")
     async def get_table_annotation(

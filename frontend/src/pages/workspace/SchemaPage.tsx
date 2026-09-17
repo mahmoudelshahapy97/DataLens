@@ -1,4 +1,4 @@
-import { Key, PencilLine, RefreshCw, Table2 } from 'lucide-react';
+import { Key, ListChecks, PencilLine, RefreshCw, Table2 } from 'lucide-react';
 import * as React from 'react';
 
 import { DataTable, ScrollX, Tbody, Td, Th, Tr } from '@/components/primitives/data-table';
@@ -7,9 +7,15 @@ import { EmptyState, ErrorState, LoadingRows } from '@/components/primitives/sta
 import { useSession } from '@/app/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { useLocale } from '@/i18n';
-import { api, post } from '@/lib/api';
+import { api, post, put } from '@/lib/api';
 import { toast, toastError } from '@/lib/toast';
 
 import { DescribeDialog } from './DescribeDialog';
@@ -64,6 +70,8 @@ export default function SchemaPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [scanning, setScanning] = React.useState(false);
+  const [coreColumns, setCoreColumns] = React.useState<Set<string>>(new Set());
+  const [coreBusy, setCoreBusy] = React.useState(false);
 
   const load = React.useCallback(async (alive: () => boolean = () => true) => {
     try {
@@ -124,6 +132,60 @@ export default function SchemaPage() {
   }, [tables, filter]);
 
   const active = visible.find((table) => table.name === selected) ?? visible[0] ?? null;
+  const activeTableKey = active
+    ? active.schema
+      ? `${active.schema}.${active.name}`
+      : active.name
+    : null;
+  const canCurate = isWorkspaceAdmin && data?.layer !== 'active';
+
+  // Loaded per active table, same reasoning as DescribeDialog: the selection
+  // is keyed on the catalog table, not carried in the /schema response.
+  React.useEffect(() => {
+    if (!canCurate || !activeTableKey || !me?.tenant) {
+      setCoreColumns(new Set());
+      return;
+    }
+    let current = true;
+    const base = `/api/vanna/v2/admin/tenants/${encodeURIComponent(me.tenant.id)}/catalog`;
+    void (async () => {
+      try {
+        const body = await api<{ columns: string[] }>(
+          `${base}/tables/${encodeURIComponent(activeTableKey)}/core-columns`,
+        );
+        if (current) setCoreColumns(new Set(body.columns ?? []));
+      } catch {
+        if (current) setCoreColumns(new Set());
+      }
+    })();
+    return () => {
+      current = false;
+    };
+  }, [canCurate, activeTableKey, me?.tenant]);
+
+  async function toggleCore(column: string, checked: boolean) {
+    if (!activeTableKey || !me?.tenant) return;
+    // The server keys columns casefolded (normalize_identifier), so the set
+    // built here must match that or every checkbox would read as unchecked.
+    const key = column.toLowerCase();
+    const next = new Set(coreColumns);
+    if (checked) next.add(key);
+    else next.delete(key);
+
+    setCoreBusy(true);
+    try {
+      const base = `/api/vanna/v2/admin/tenants/${encodeURIComponent(me.tenant.id)}/catalog`;
+      const body = await put<{ columns: string[] }>(
+        `${base}/tables/${encodeURIComponent(activeTableKey)}/core-columns`,
+        { columns: Array.from(next) },
+      );
+      setCoreColumns(new Set(body.columns ?? []));
+    } catch (caught) {
+      toastError((caught as Error).message);
+    } finally {
+      setCoreBusy(false);
+    }
+  }
 
   return (
     <PageBody>
@@ -213,11 +275,33 @@ export default function SchemaPage() {
                 {/* Admin-only, and only over the physical layer: an annotation is
                     keyed on a catalog table, and a semantic model is not one --
                     the same reason the vanilla console hid these buttons. */}
-                {isWorkspaceAdmin && data?.layer !== 'active' ? (
-                  <Button className="shrink-0" onClick={() => setDescribing({ column: null })}>
-                    <PencilLine />
-                    {t('schema.describe')}
-                  </Button>
+                {canCurate ? (
+                  <div className="flex shrink-0 gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button disabled={coreBusy} title={t('schema.coreColumnsHelp')}>
+                          <ListChecks />
+                          {t('schema.coreColumnsCount', { n: coreColumns.size })}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="max-h-[60vh] overflow-y-auto">
+                        {active.columns.map((column) => (
+                          <DropdownMenuCheckboxItem
+                            key={column.name}
+                            checked={coreColumns.has(column.name.toLowerCase())}
+                            onSelect={(event) => event.preventDefault()}
+                            onCheckedChange={(checked) => void toggleCore(column.name, checked)}
+                          >
+                            <span className="truncate font-mono">{column.name}</span>
+                          </DropdownMenuCheckboxItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button onClick={() => setDescribing({ column: null })}>
+                      <PencilLine />
+                      {t('schema.describe')}
+                    </Button>
+                  </div>
                 ) : null}
               </div>
 
@@ -229,7 +313,7 @@ export default function SchemaPage() {
                       <Th>{t('schema.colType')}</Th>
                       <Th className="w-20">{t('schema.colKey')}</Th>
                       <Th>{t('schema.colNotes')}</Th>
-                      {isWorkspaceAdmin && data?.layer !== 'active' ? <Th className="w-10" /> : null}
+                      {canCurate ? <Th className="w-10" /> : null}
                     </Tr>
                   </thead>
                   <Tbody>
@@ -240,17 +324,22 @@ export default function SchemaPage() {
                           {column.data_type}
                         </Td>
                         <Td>
-                          {column.is_primary_key ? (
-                            <Badge tone="accent">
-                              <Key className="size-3" />
-                              PK
-                            </Badge>
-                          ) : null}
+                          <div className="flex flex-wrap gap-1">
+                            {column.is_primary_key ? (
+                              <Badge tone="accent">
+                                <Key className="size-3" />
+                                PK
+                              </Badge>
+                            ) : null}
+                            {coreColumns.has(column.name.toLowerCase()) ? (
+                              <Badge tone="neutral">{t('schema.core')}</Badge>
+                            ) : null}
+                          </div>
                         </Td>
                         <Td dir="auto" className="text-muted-foreground">
                           {column.description || ''}
                         </Td>
-                        {isWorkspaceAdmin && data?.layer !== 'active' ? (
+                        {canCurate ? (
                           <Td className="w-10">
                             <Button
                               variant="ghost"

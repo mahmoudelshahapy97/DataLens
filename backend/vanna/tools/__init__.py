@@ -26,6 +26,7 @@ from .calculator import CalculatorArgs, CalculatorTool
 from .knowledge import SearchKnowledgeArgs, SearchKnowledgeTool
 from .query_history import SearchQueryHistoryArgs, SearchQueryHistoryTool
 from .value_dictionary import ListKnownValuesArgs, ListKnownValuesTool
+from .core_columns import CheckCoreColumnsArgs, CheckCoreColumnsTool
 
 __all__ = [
     # SQL
@@ -38,6 +39,8 @@ __all__ = [
     "GetTableSchemaTool",
     "create_schema_tools",
     "ColumnValuesArgs",
+    "CheckCoreColumnsArgs",
+    "CheckCoreColumnsTool",
     # Determinism / time
     "SystemTimeTool",
     "SystemTimeArgs",

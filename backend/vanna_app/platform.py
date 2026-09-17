@@ -946,6 +946,7 @@ class Platform:
         from vanna.tools import (
             CalculatorTool,
             CheckColumnValuesTool,
+            CheckCoreColumnsTool,
             ListKnownValuesTool,
             SearchKnowledgeTool,
             SearchQueryHistoryTool,
@@ -1123,6 +1124,14 @@ class Platform:
 
         for tool in create_schema_tools(catalog):
             registry.register_local_tool(tool, [])
+
+        # self.catalog rather than the (possibly semantic-wrapped) `catalog`
+        # above: core columns are a control-plane curation concept, same as
+        # the annotations `routes/catalog.py` reaches for `deps.platform.catalog`
+        # to reach, not part of the general SchemaCatalog interface.
+        registry.register_local_tool(
+            CheckCoreColumnsTool(self.catalog, data_source_id=data_source), []
+        )
 
         hooks = build_limit_hooks(
             self.counters,
