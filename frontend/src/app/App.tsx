@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LocaleProvider } from '@/i18n';
 
+import { AppearanceProvider } from './appearance';
 import { AppRoutes } from './routes';
 import { SessionProvider } from './session';
 
@@ -13,20 +14,22 @@ import { SessionProvider } from './session';
  * Locale wraps Session because a sign-in failure has to be readable before there
  * is a session to read it with -- the error text on that screen comes from the
  * dictionary, and a provider ordering that put Session first would render the
- * raw key.
+ * raw key. Appearance has no such dependency and sits alongside Locale.
  */
 export function App() {
   return (
     <LocaleProvider>
-      <SessionProvider>
-        <TooltipProvider delayDuration={300}>
-          <BrowserRouter>
-            <AppRoutes />
-          </BrowserRouter>
-          {/* `richColors` so an error is red without every call site saying so. */}
-          <Toaster position="bottom-center" richColors closeButton />
-        </TooltipProvider>
-      </SessionProvider>
+      <AppearanceProvider>
+        <SessionProvider>
+          <TooltipProvider delayDuration={300}>
+            <BrowserRouter>
+              <AppRoutes />
+            </BrowserRouter>
+            {/* `richColors` so an error is red without every call site saying so. */}
+            <Toaster position="bottom-center" richColors closeButton />
+          </TooltipProvider>
+        </SessionProvider>
+      </AppearanceProvider>
     </LocaleProvider>
   );
 }

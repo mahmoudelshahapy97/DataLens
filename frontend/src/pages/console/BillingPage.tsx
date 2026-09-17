@@ -157,7 +157,7 @@ export default function BillingPage() {
               value={
                 <span className="flex items-center gap-2">
                   {data.plan}
-                  {expired ? <Badge tone="err">{t('time.expired')}</Badge> : null}
+                  {expired ? <Badge tone="bad">{t('time.expired')}</Badge> : null}
                 </span>
               }
               hint={expires ? relative(expires, t, locale) : t('bill.noExpiry')}
@@ -191,7 +191,7 @@ export default function BillingPage() {
                     <p className="flex items-center gap-2 text-[0.875rem] font-semibold">
                       {plan.label}
                       {plan.name === data.plan ? (
-                        <Badge tone="admin">{t('bill.current')}</Badge>
+                        <Badge tone="accent">{t('bill.current')}</Badge>
                       ) : null}
                     </p>
                     <p className="mt-1 text-[0.8125rem] text-muted-foreground">

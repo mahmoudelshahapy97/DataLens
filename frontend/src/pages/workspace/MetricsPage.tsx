@@ -1,6 +1,7 @@
 import { BarChart3, Play } from 'lucide-react';
 import * as React from 'react';
 
+import { useAppearance } from '@/app/appearance';
 import { PlotlyChart } from '@/components/PlotlyChart';
 import { DataTable, ScrollX, Tbody, Td, Th, Tr } from '@/components/primitives/data-table';
 import { PageBody, PageHeader } from '@/components/primitives/page';
@@ -18,7 +19,6 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useLocale } from '@/i18n';
 import { api, post } from '@/lib/api';
-import { currentTheme } from '@/lib/theme';
 import { tileFigure } from '@/lib/tile-figure';
 import { toastError } from '@/lib/toast';
 
@@ -55,7 +55,8 @@ const GRAINS = ['day', 'week', 'month', 'quarter', 'year'] as const;
 
 export default function MetricsPage() {
   const { t } = useLocale();
-  const dark = currentTheme() === 'dark';
+  const { theme } = useAppearance();
+  const dark = theme === 'dark';
 
   const [cubes, setCubes] = React.useState<Cube[]>([]);
   const [name, setName] = React.useState('');

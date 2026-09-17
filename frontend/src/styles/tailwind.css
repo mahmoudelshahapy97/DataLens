@@ -19,6 +19,13 @@
    structure. What is *new* is the second half of each block: an elevation scale,
    a third surface for nested panels, and a focus-ring token -- the three things
    every screen was previously improvising per-component.
+
+   Deliberate exception to the above: light `--good` and `--warn` are retuned
+   (and dark values added for the whole semantic trio, plus `--primary-ink`)
+   because the carried-over values fail WCAG AA as small bold text --
+   `--good` was 3.77:1 on white and `--warn` 3.19:1, against a 4.5:1
+   requirement. That is an accessibility fix, not the "no colour change"
+   promise being broken.
 --------------------------------------------------------------------------- */
 :root {
   --bg:         #f1f5f9;
@@ -40,11 +47,27 @@
   /* New. Tinted primary for selected rows, active nav and chip backgrounds --
      each of those used a different hand-mixed rgba() before. */
   --primary-soft: color-mix(in srgb, var(--primary) 10%, transparent);
-  --good:       #059669;
+  /* New. `--primary` cannot be one value in dark mode: it has to work as a
+     *fill* carrying white text (L <= 0.183) and as *ink* on a dark surface
+     (L >= 0.216), which is arithmetically impossible for one value. In light
+     mode ink and fill are the same colour, so this simply aliases it. */
+  --primary-ink: var(--primary);
+  /* Retuned from #059669 (3.77:1 on white, fails AA as small bold text) to a
+     darker step that passes at 4.5:1+. Was equal to --chart-3 before this
+     change; a semantic ink tuned for legibility and a categorical mark tuned
+     to separate from seven neighbours no longer need to coincide. */
+  --good:       #047857;
   --bad:        #dc2626;
-  --warn:       #d97706;
+  /* Retuned from #d97706 (3.19:1 on white, fails) to the value
+     backend/vanna/dashboards/export.py already uses, so the screen and an
+     exported dashboard converge on one amber. */
+  --warn:       #b45309;
   --radius:     10px;
-  --sidebar:    262px;
+  /* Was 262px with zero consumers -- layout.tsx hard-coded 248px in the grid
+     template directly. Re-pointing this to what the shell actually uses
+     costs nothing and is what lets the collapse rule below share one token
+     with the expanded width instead of inventing a second. */
+  --sidebar:    248px;
 
   /* The rail is a *panel*, not part of the page: tinted a step away from the
      content it sits beside, the way every chat product does it, so the eye
@@ -91,6 +114,34 @@
   --primary:    #6366f1;
   --primary-fg: #ffffff;
   --primary-soft: color-mix(in srgb, var(--primary) 18%, transparent);
+  /* `--primary` as text (`text-primary`, the nav active pill) is 3.97:1 on
+     --surface-3 -- fails as ink even though it is fine as a fill. A lighter
+     step, used only where `--primary` would otherwise be read as text. */
+  --primary-ink: #818cf8;
+
+  /* The semantic trio needs its own dark values -- nothing redefined these
+     before, so they silently inherited the light values against a dark
+     ground and failed AA outright (e.g. light --bad on --surface-3 is
+     3.37:1). 400-step values, matching the categorical palette's weight. */
+  --good: #34d399;
+  --bad:  #f87171;
+  --warn: #fbbf24;
+
+  /* Kept byte-identical to PALETTE_DARK in assets/shared/tile-figure.js, for
+     the same reason the light eight are kept identical to PALETTE: that file
+     is the source (see the note at line 65 below), this follows it. Charts
+     themselves draw from the hardcoded `colorway: dark ? PALETTE_DARK :
+     PALETTE` in tile-figure.js, not from these variables -- there is no CSS
+     consumer of --chart-* today -- so this is a decorative mirror, not the
+     mechanism. Do not let the accent move these. */
+  --chart-1: #818cf8;
+  --chart-2: #fb923c;
+  --chart-3: #34d399;
+  --chart-4: #f87171;
+  --chart-5: #22d3ee;
+  --chart-6: #a78bfa;
+  --chart-7: #facc15;
+  --chart-8: #f472b6;
 
   /* Dark mode inverts the relationship -- the rail sits *under* the content,
      not over it -- so it darkens instead of lightening. */
@@ -107,6 +158,85 @@
 
   color-scheme: dark;
 }
+
+/* ---------------------------------------------------------------------------
+   Accent picker.
+
+   Four accents -- indigo (the default, so it needs no override block below),
+   blue, teal, violet -- chosen via `data-accent` on <html>. Zero component
+   changes: `--primary-soft`, `--ring`, the link colour and the skip link
+   already route through `var(--primary)`, so overriding `--primary` and
+   `--primary-ink` here is the whole mechanism. `--primary-fg` stays white
+   for all four, which is the point of constraining the set to hues that
+   pass 4.5:1 with white text -- no per-accent foreground, no runtime
+   luminance maths.
+
+   Red and amber are deliberately not offered: red is already `--bad` and
+   would make every nav pill and focus ring read as an error, and amber
+   collides with `--warn`. `--chart-*` never moves with the accent -- chart
+   identity is a data property, not a chrome preference, and an exported
+   dashboard has to keep drawing the same first series regardless of which
+   accent a viewer's browser has picked.
+--------------------------------------------------------------------------- */
+:root[data-accent="blue"] {
+  --primary: #2563eb;
+  --primary-ink: #2563eb;
+}
+:root[data-theme="dark"][data-accent="blue"] {
+  --primary: #2f6fed;
+  --primary-ink: #60a5fa;
+}
+
+:root[data-accent="teal"] {
+  --primary: #0f766e;
+  --primary-ink: #0f766e;
+}
+:root[data-theme="dark"][data-accent="teal"] {
+  --primary: #0b8379;
+  --primary-ink: #2dd4bf;
+}
+
+:root[data-accent="violet"] {
+  --primary: #7c3aed;
+  --primary-ink: #7c3aed;
+}
+:root[data-theme="dark"][data-accent="violet"] {
+  --primary: #8358f3;
+  --primary-ink: #a78bfa;
+}
+
+/* ---------------------------------------------------------------------------
+   Collapsible rail.
+
+   Collapsed means narrower, not absent -- matching the vanilla build's own
+   `--sidebar: 60px` (`public/assets/app.css`): icons stay, labels hide, so
+   changing section never costs a trip through the toggle.
+--------------------------------------------------------------------------- */
+:root[data-rail="mini"] {
+  --sidebar: 60px;
+}
+
+/* ---------------------------------------------------------------------------
+   Per-section colour.
+
+   An *ink* only -- never a fill, so it needs no `-fg` companion -- set by a
+   `data-section` attribute the shell puts on `<main>`. Workspace tracks the
+   user's own accent (it is also what makes the accent picker visibly do
+   something on /ask and /dashboards); Governance and Administration get
+   fixed hues from the categorical palette that already exists (`--chart-5`,
+   `--chart-6`). Green and red are deliberately not section colours -- they
+   already mean good and bad.
+
+   The fallback at :root (not scoped to a data-section value) is what keeps
+   PageHeader's rule from vanishing on a screen outside the shell, like
+   /login or a 404.
+--------------------------------------------------------------------------- */
+:root {
+  --section: var(--border);
+}
+[data-section="workspace"]   { --section: var(--primary); }
+[data-section="governance"]  { --section: var(--chart-5); }
+[data-section="admin"]       { --section: var(--chart-6); }
 
 /* ---------------------------------------------------------------------------
    Utilities.
@@ -137,6 +267,7 @@
   --color-primary:            var(--primary);
   --color-primary-foreground: var(--primary-fg);
   --color-primary-soft:       var(--primary-soft);
+  --color-primary-ink:        var(--primary-ink);
 
   --color-secondary:            var(--surface-2);
   --color-secondary-foreground: var(--text);
@@ -158,6 +289,7 @@
   --color-border-soft: var(--border-soft);
   --color-input:       var(--border);
   --color-ring:        var(--ring);
+  --color-section:     var(--section);
 
   --color-rail:        var(--rail);
   --color-rail-hover:  var(--rail-hover);

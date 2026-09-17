@@ -60,11 +60,13 @@ const LAYERS: Array<{ kind: string; labelKey: string }> = [
   { kind: 'report', labelKey: 'nav.reports' },
 ];
 
-function toneFor(kind: string): 'admin' | 'ok' | 'warn' | 'neutral' {
+/** Node *kind*, not a verdict -- a category is not a severity, so this never
+ * resolves to 'warn' or 'bad'. */
+function toneFor(kind: string): 'accent' | 'good' | 'info' | 'neutral' {
   if (kind === 'table') return 'neutral';
-  if (kind === 'saved') return 'admin';
-  if (kind === 'dashboard') return 'ok';
-  return 'warn';
+  if (kind === 'saved') return 'accent';
+  if (kind === 'dashboard') return 'good';
+  return 'info'; // 'report'
 }
 
 export default function LineagePage() {
@@ -149,7 +151,7 @@ export default function LineagePage() {
         <>
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile label={t('lineage.tables')} value={graph.counts.tables} />
-            <StatTile label={t('nav.saved')} value={graph.counts.saved} tone="primary" />
+            <StatTile label={t('nav.saved')} value={graph.counts.saved} tone="accent" />
             <StatTile label={t('nav.dashboards')} value={graph.counts.dashboards} tone="good" />
             <StatTile label={t('nav.reports')} value={graph.counts.reports} tone="warn" />
           </div>

@@ -73,7 +73,7 @@ export default function PasswordPage() {
     <div className="grid min-h-dvh place-items-center bg-surface-2 p-6">
       <Card className="w-full max-w-sm p-6">
         <h1 className="flex items-center gap-2 text-[1.05rem] font-semibold leading-tight">
-          <ShieldCheck className="size-5 text-primary" aria-hidden />
+          <ShieldCheck className="size-5 text-primary-ink" aria-hidden />
           {t('password.title')}
         </h1>
         <p className="mt-1 mb-5 text-[0.8125rem] text-muted-foreground">{t('password.blurb')}</p>

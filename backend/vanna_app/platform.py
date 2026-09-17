@@ -942,8 +942,13 @@ class Platform:
         from vanna.core.system_prompt import AnalystSystemPromptBuilder
         from vanna.integrations.local import MemoryConversationStore
         from vanna.servers.base import ChatHandler
+        from .chat_commands import DataLensWorkflow
         from vanna.tools import (
+            CalculatorTool,
             CheckColumnValuesTool,
+            ListKnownValuesTool,
+            SearchKnowledgeTool,
+            SearchQueryHistoryTool,
             SystemTimeTool,
             TIME_FUNCTION_NAMES,
             ValidateSqlTool,
@@ -1064,6 +1069,27 @@ class Platform:
         registry.register_local_tool(SaveQuestionToolArgsTool(), [])
         registry.register_local_tool(SaveTextMemoryTool(), [])
 
+        # Four services already on Platform with no tool exposing them. Each
+        # registers with [] (no access-group gate): search_knowledge and
+        # list_known_values return exactly what the enhancers already inject
+        # unasked, and search_query_history filters to the caller's own rows
+        # itself rather than via a scope argument (`access_groups` attaches to
+        # a tool name, not its arguments).
+        registry.register_local_tool(CalculatorTool(), [])
+        registry.register_local_tool(
+            SearchKnowledgeTool(self.examples, self.instructions), []
+        )
+        registry.register_local_tool(
+            SearchQueryHistoryTool(self.generations, catalog), []
+        )
+        if self.values is not None:
+            # Platform.values is optional; an unconditional registration would
+            # AttributeError inside execute(), which the registry swallows
+            # into an undiagnosable "Execution failed".
+            registry.register_local_tool(
+                ListKnownValuesTool(self.values, catalog), []
+            )
+
         write_service = None
         if write_runner is not None and self.grants is not None:
             from vanna.core.write.approval import WriteApprovalMode
@@ -1146,6 +1172,7 @@ class Platform:
             lifecycle_hooks=hooks,
             error_recovery_strategy=SqlRepairStrategy(catalog=catalog),
             audit_logger=self.audit_logger,
+            workflow_handler=DataLensWorkflow(),
         )
 
         logger.info("Built runtime for %s -> %s (%s)", tenant_id, data_source, dialect)

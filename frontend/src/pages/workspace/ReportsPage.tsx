@@ -37,9 +37,9 @@ interface ReportRun {
   artifact_bytes: number;
 }
 
-function statusTone(status: string): 'ok' | 'err' | 'warn' | 'neutral' {
-  if (status === 'succeeded') return 'ok';
-  if (status === 'failed') return 'err';
+function statusTone(status: string): 'good' | 'bad' | 'warn' | 'neutral' {
+  if (status === 'succeeded') return 'good';
+  if (status === 'failed') return 'bad';
   if (status === 'running' || status === 'claimed') return 'warn';
   return 'neutral';
 }
@@ -224,7 +224,8 @@ export default function ReportsPage() {
                       {report.is_active ? (
                         until(report.next_run_at, t, locale) || '—'
                       ) : (
-                        <Badge tone="warn">{t('report.paused')}</Badge>
+                        // Paused is a category, not a severity.
+                        <Badge tone="info">{t('report.paused')}</Badge>
                       )}
                     </Td>
                     <Td>

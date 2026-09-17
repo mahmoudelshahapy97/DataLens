@@ -59,10 +59,10 @@ interface GrantsResponse {
 /** Ordered most protective first, which is the order somebody should read them. */
 const STRATEGIES = ['null', 'hash', 'partial', 'none'] as const;
 
-function toneFor(mask: string): 'ok' | 'warn' | 'neutral' {
+function toneFor(mask: string): 'good' | 'warn' | 'neutral' {
   if (mask === 'none') return 'neutral';
-  if (mask === 'null' || mask === 'hash') return 'ok';
-  return 'warn';
+  if (mask === 'null' || mask === 'hash') return 'good';
+  return 'warn'; // 'partial' leaks more than the others -- a real severity, not a category.
 }
 
 export default function MaskingPage() {
@@ -187,7 +187,8 @@ export default function MaskingPage() {
           onChange={(event) => setFilter(event.target.value)}
         />
 
-        <Badge tone={masked ? 'warn' : 'neutral'}>
+        {/* A column being masked is the desired state, not a warning. */}
+        <Badge tone={masked ? 'info' : 'neutral'}>
           {masked} {t('mask.masked')}
         </Badge>
       </Toolbar>

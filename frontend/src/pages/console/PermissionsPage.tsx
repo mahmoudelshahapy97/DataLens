@@ -66,10 +66,10 @@ const FLAGS: Record<Access, {
 };
 
 /** Colour per level. `write` is the one worth a warning colour. */
-const TONE: Record<Access, 'neutral' | 'ok' | 'err'> = {
+const TONE: Record<Access, 'neutral' | 'good' | 'bad'> = {
   none: 'neutral',
-  read: 'ok',
-  write: 'err',
+  read: 'good',
+  write: 'bad',
 };
 
 /** The order the levels are offered in, least to most. */

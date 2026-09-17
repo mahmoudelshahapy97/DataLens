@@ -22,6 +22,10 @@ from .dashboard import (
     create_dashboard_tools,
 )
 from .visualize_data import VisualizeDataTool
+from .calculator import CalculatorArgs, CalculatorTool
+from .knowledge import SearchKnowledgeArgs, SearchKnowledgeTool
+from .query_history import SearchQueryHistoryArgs, SearchQueryHistoryTool
+from .value_dictionary import ListKnownValuesArgs, ListKnownValuesTool
 
 __all__ = [
     # SQL
@@ -48,4 +52,13 @@ __all__ = [
     "ConfirmWriteTool",
     "ProposeWriteTool",
     "create_write_tools",
+    # Additional tools over existing services
+    "CalculatorArgs",
+    "CalculatorTool",
+    "SearchKnowledgeArgs",
+    "SearchKnowledgeTool",
+    "SearchQueryHistoryArgs",
+    "SearchQueryHistoryTool",
+    "ListKnownValuesArgs",
+    "ListKnownValuesTool",
 ]

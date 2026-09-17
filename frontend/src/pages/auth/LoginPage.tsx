@@ -244,7 +244,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => void forgot()}
-            className="mt-4 text-[0.8125rem] text-primary underline-offset-4 hover:underline"
+            className="mt-4 text-[0.8125rem] text-primary-ink underline-offset-4 hover:underline"
           >
             {t('login.forgot')}
           </button>

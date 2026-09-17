@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './app/App';
+import { applyRail } from './lib/rail';
 import { applyTheme } from './lib/theme';
 import './styles/tailwind.css';
 
@@ -9,6 +10,7 @@ import './styles/tailwind.css';
 // attribute is read from localStorage['vanna.theme'] -- the same key the vanilla
 // build used, so an existing user keeps their choice across the rewrite.
 applyTheme();
+applyRail();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root is missing from index.html');

@@ -26,6 +26,8 @@
   "cmd.title": "Commands",
   "cmd.help": "What this assistant can do",
   "cmd.status": "Connection, tools and memory status",
+  "cmd.setup": "What's configured and what's missing",
+  "cmd.memorise": "Save something for it to remember",
   "cmd.memories": "Recent things it has remembered",
   "cmd.delete": "Forget one memory by id"
 }

@@ -184,7 +184,7 @@ export default function DashboardsPage() {
                     {/* A dashboard that declares parameters is what this product
                         calls a report -- the same document, with controls. */}
                     {parameters > 0 ? (
-                      <Badge tone="admin">
+                      <Badge tone="accent">
                         {t(parameters === 1 ? 'dash.parameter1' : 'dash.parameters', {
                           n: parameters,
                         })}

@@ -2,6 +2,7 @@ import { ArrowLeft, Download, Printer, RefreshCw } from 'lucide-react';
 import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { useAppearance } from '@/app/appearance';
 import { PlotlyChart } from '@/components/PlotlyChart';
 import { DataTable, ScrollX, Tbody, Td, Th, Tr } from '@/components/primitives/data-table';
 import { PageBody, PageHeader } from '@/components/primitives/page';
@@ -11,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useLocale } from '@/i18n';
 import { api, download } from '@/lib/api';
-import { currentTheme } from '@/lib/theme';
 import { tileFigure } from '@/lib/tile-figure';
 import { toastError } from '@/lib/toast';
 import type { Dashboard, Tile, TileResult } from '@/types';
@@ -58,7 +58,7 @@ export default function DashboardView() {
   const [loading, setLoading] = React.useState(true);
   const [running, setRunning] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
-  const theme = currentTheme();
+  const { theme } = useAppearance();
 
   // The document first: its `parameters` decide what the bar offers, and the
   // defaults decide what the first execution asks for. Fetching data before the

@@ -101,14 +101,14 @@ export default function DatabasesPage() {
                   <Td>
                     <span className="font-mono text-[0.78rem]">{source.label}</span>
                     {source.is_default ? (
-                      <Badge tone="admin" className="ms-2">{t('db.default')}</Badge>
+                      <Badge tone="accent" className="ms-2">{t('db.default')}</Badge>
                     ) : null}
                   </Td>
                   <Td>
                     {source.last_ok === true ? (
-                      <Badge tone="ok">{t('ov.healthOk')}</Badge>
+                      <Badge tone="good">{t('ov.healthOk')}</Badge>
                     ) : source.last_ok === false ? (
-                      <Badge tone="err">{t('ov.healthFailing')}</Badge>
+                      <Badge tone="bad">{t('ov.healthFailing')}</Badge>
                     ) : (
                       <Badge tone="warn">{t('ov.healthUnknown')}</Badge>
                     )}

@@ -41,6 +41,14 @@ export const PALETTE = [
   '#0891b2', '#7c3aed', '#a16207', '#db2777',
 ];
 
+/** Same hues, brightened for a dark background -- PALETTE's own values are
+ * tuned against white and read as muddy on #111827. Same order, so a series
+ * keeps its identity across a theme toggle. */
+export const PALETTE_DARK = [
+  '#818cf8', '#fb923c', '#34d399', '#f87171',
+  '#22d3ee', '#a78bfa', '#facc15', '#f472b6',
+];
+
 /** Coerce a cell to a number, or null. Dates, labels and NULLs all land here. */
 export function asNumber(value) {
   if (value === null || value === undefined || typeof value === 'boolean') return null;
@@ -262,11 +270,12 @@ function chartFigure(tile, columns, rows, { dark, height, otherLabel }) {
     );
   }
 
+  const palette = dark ? PALETTE_DARK : PALETTE;
   const shape = (name, xs, ys, index) => {
-    const colour = PALETTE[index % PALETTE.length];
+    const colour = palette[index % palette.length];
     if (type === 'pie') {
       return { type: 'pie', labels: xs, values: ys, name,
-               marker: { colors: PALETTE } };
+               marker: { colors: palette } };
     }
     if (type === 'scatter') {
       return { type: 'scatter', mode: 'markers', x: xs, y: ys, name,
@@ -366,7 +375,7 @@ function baseLayout({ dark, height, circular, showlegend }) {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     font: { color: dark ? '#e5e7eb' : '#0f172a' },
-    colorway: PALETTE,
+    colorway: dark ? PALETTE_DARK : PALETTE,
   };
 }
 

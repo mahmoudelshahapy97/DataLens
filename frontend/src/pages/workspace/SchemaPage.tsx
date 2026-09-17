@@ -152,7 +152,7 @@ export default function SchemaPage() {
         {data ? (
           <>
             <Badge tone="neutral">{data.dialect}</Badge>
-            {data.semantic ? <Badge tone="admin">{t('schema.showSemantic')}</Badge> : null}
+            {data.semantic ? <Badge tone="accent">{t('schema.showSemantic')}</Badge> : null}
             <Badge tone="neutral">
               {tables.length} {t('schema.title')}
             </Badge>
@@ -187,7 +187,7 @@ export default function SchemaPage() {
                     className={[
                       'flex w-full items-center justify-between gap-2 border-b border-border-soft px-3 py-2 text-start text-[0.8125rem]',
                       table.name === active?.name
-                        ? 'bg-primary-soft font-medium text-primary'
+                        ? 'bg-primary-soft font-medium text-primary-ink'
                         : 'hover:bg-rail-hover',
                     ].join(' ')}
                   >
@@ -241,7 +241,7 @@ export default function SchemaPage() {
                         </Td>
                         <Td>
                           {column.is_primary_key ? (
-                            <Badge tone="admin">
+                            <Badge tone="accent">
                               <Key className="size-3" />
                               PK
                             </Badge>

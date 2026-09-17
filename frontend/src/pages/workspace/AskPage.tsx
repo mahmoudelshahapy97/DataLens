@@ -1,12 +1,12 @@
 import * as React from 'react';
 
+import { useAppearance } from '@/app/appearance';
 import { useSession } from '@/app/session';
 import { SectionLabel } from '@/components/primitives/page';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/i18n';
 import { api, csrfToken } from '@/lib/api';
 import { identityHeaders } from '@/lib/identity';
-import { currentTheme } from '@/lib/theme';
 import { toastError } from '@/lib/toast';
 
 import { ConversationRail } from './ConversationRail';
@@ -74,7 +74,7 @@ export default function AskPage() {
 
   const [starters, setStarters] = React.useState<Starter[]>([]);
   const [threadTick, setThreadTick] = React.useState(0);
-  const theme = currentTheme();
+  const { theme } = useAppearance();
 
   React.useEffect(() => {
     let current = true;

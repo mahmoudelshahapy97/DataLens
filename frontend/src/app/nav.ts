@@ -51,6 +51,10 @@ export interface NavItem {
 }
 
 export interface NavGroup {
+  /** Stable identifier, used for the collapsed-group set, auto-open, and the
+   * per-section colour -- never derived from `labelKey`, which is a
+   * translation key and must be free to change independent of identity. */
+  id: string;
   /** Omitted for the first group, which needs no heading above the first item. */
   labelKey?: string;
   items: NavItem[];
@@ -61,6 +65,7 @@ const isPlatformAdmin = (me: Me) => me.is_platform_admin;
 
 export const NAV: NavGroup[] = [
   {
+    id: 'workspace',
     labelKey: 'nav.groupWorkspace',
     items: [
       { to: '/ask', labelKey: 'nav.ask', icon: MessageSquare },
@@ -80,6 +85,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    id: 'governance',
     labelKey: 'nav.groupGovernance',
     items: [
       // First in the group, and the app's landing route. An operator opening the
@@ -96,6 +102,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    id: 'admin',
     labelKey: 'nav.groupAdmin',
     items: [
       { to: '/console/workspaces', labelKey: 'tab.tenants', icon: Building2, visible: isPlatformAdmin },
@@ -124,4 +131,30 @@ export function navFor(me: Me): NavGroup[] {
     ...group,
     items: group.items.filter((item) => !item.visible || item.visible(me)),
   })).filter((group) => group.items.length > 0);
+}
+
+/**
+ * Which group a route belongs to, by longest-prefix match against `NAV` --
+ * not `navFor(me)`, because which group a path belongs to does not depend on
+ * who is asking. Shared by the per-section colour (Part 3d) and the
+ * sidebar's auto-open (Part 4): build once, use twice.
+ *
+ * The descendant clause is load-bearing: `/dashboards/:dashboardId` is a
+ * real route with no entry of its own, and must resolve to Workspace -- which
+ * is also exactly how `NavLink` decides `isActive`, so highlight and
+ * auto-open agree by construction. A prefix test on the *group* itself is
+ * not possible: `/console/overview` and `/console/usage` resolve to
+ * different groups despite sharing that prefix.
+ */
+export function groupForPath(pathname: string): string | undefined {
+  let best: { to: string; groupId: string } | undefined;
+  for (const group of NAV) {
+    for (const item of group.items) {
+      const matches = pathname === item.to || pathname.startsWith(item.to + '/');
+      if (matches && (!best || item.to.length > best.to.length)) {
+        best = { to: item.to, groupId: group.id };
+      }
+    }
+  }
+  return best?.groupId;
 }

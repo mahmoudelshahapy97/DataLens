@@ -163,6 +163,61 @@ class TestStores:
         assert inspect.iscoroutinefunction(getattr(PostgresDashboardStore, method))
 
 
+class TestNewToolStoreMethods:
+    """The four Part-2 tools call these store methods by name via duck typing.
+
+    Same failure mode as `TestLlmMiddleware` above: nothing fails at import,
+    the tool just throws inside `execute()` on the first real call, which the
+    registry swallows into a generic "Execution failed".
+    """
+
+    @pytest.mark.parametrize("method", ["search"])
+    def test_example_store_has_what_search_knowledge_calls(self, method: str):
+        from vanna.capabilities.knowledge import ExampleStore
+
+        assert hasattr(ExampleStore, method)
+        assert inspect.iscoroutinefunction(getattr(ExampleStore, method))
+
+    @pytest.mark.parametrize("method", ["resolve"])
+    def test_instruction_store_has_what_search_knowledge_calls(self, method: str):
+        from vanna.capabilities.knowledge import InstructionStore
+
+        assert hasattr(InstructionStore, method)
+        assert inspect.iscoroutinefunction(getattr(InstructionStore, method))
+
+    @pytest.mark.parametrize("method", ["list_recent", "get"])
+    def test_generation_store_has_what_query_history_calls(self, method: str):
+        from vanna.core.generation import GenerationStore
+
+        assert hasattr(GenerationStore, method)
+        assert inspect.iscoroutinefunction(getattr(GenerationStore, method))
+
+    @pytest.mark.parametrize("method", ["list_samples", "dictionary_for"])
+    def test_value_store_has_what_list_known_values_calls(self, method: str):
+        from vanna.capabilities.values import ValueStore
+
+        assert hasattr(ValueStore, method)
+        assert inspect.iscoroutinefunction(getattr(ValueStore, method))
+
+    def test_match_value_is_sync_not_a_coroutine(self):
+        """The mirror-image mistake: nothing here calls it, but a future tool
+        reaching for value matching should not assume every store function on
+        this module is a coroutine the way the ABC methods above are."""
+        from vanna.capabilities.values import match_value
+
+        assert not inspect.iscoroutinefunction(match_value)
+
+    def test_grant_filtered_catalog_has_what_the_new_tools_call_via_getattr(self):
+        """`get_table` and `column_uses` are read with `getattr(..., None)` --
+        a plain `SchemaCatalog` may lack `column_uses`, so this only pins down
+        the shape when the enforcing wrapper is present."""
+        from vanna_app.read_guard import GrantFilteredCatalog
+
+        for method in ("get_table", "column_uses"):
+            assert hasattr(GrantFilteredCatalog, method)
+            assert inspect.iscoroutinefunction(getattr(GrantFilteredCatalog, method))
+
+
 class TestResolver:
     def test_the_user_resolver_subclasses_the_interface(self):
         from vanna.core.user import UserResolver

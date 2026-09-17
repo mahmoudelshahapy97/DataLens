@@ -24,7 +24,9 @@ export function PageHeader({
 }) {
   return (
     <div className={cn('mb-5 flex flex-wrap items-start justify-between gap-3', className)}>
-      <div className="min-w-0">
+      {/* Logical property, so RTL mirrors for free -- the rule sits on the
+          reading-start edge in both directions rather than always on the left. */}
+      <div className="min-w-0 border-s-[3px] border-section ps-3.5">
         <h2 className="text-[1.15rem] font-semibold leading-tight tracking-[-0.01em]">{title}</h2>
         {description ? (
           <p className="mt-1 max-w-3xl text-[0.8125rem] text-muted-foreground">{description}</p>

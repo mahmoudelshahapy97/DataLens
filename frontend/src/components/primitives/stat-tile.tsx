@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Card } from '@/components/ui/card';
+import { TONE_TEXT_CLASSES, type Tone } from '@/lib/tone';
 import { cn } from '@/lib/utils';
 
 /**
@@ -23,16 +24,10 @@ export function StatTile({
   label: string;
   value: React.ReactNode;
   hint?: React.ReactNode;
-  tone?: 'neutral' | 'good' | 'bad' | 'warn' | 'primary';
+  tone?: Tone;
   className?: string;
 }) {
-  const toneClass = {
-    neutral: 'text-foreground',
-    good: 'text-good',
-    bad: 'text-bad',
-    warn: 'text-warn',
-    primary: 'text-primary',
-  }[tone];
+  const toneClass = tone === 'neutral' ? 'text-foreground' : TONE_TEXT_CLASSES[tone];
 
   return (
     <Card className={cn('p-4', className)}>

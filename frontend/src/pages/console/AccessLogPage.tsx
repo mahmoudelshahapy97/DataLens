@@ -156,9 +156,9 @@ export default function AccessLogPage() {
                     <Td className="font-mono text-[0.78rem]">{event.tool_name ?? '—'}</Td>
                     <Td>
                       {event.access_granted === false ? (
-                        <Badge tone="err">{t('audit.denied')}</Badge>
+                        <Badge tone="bad">{t('audit.denied')}</Badge>
                       ) : (
-                        <Badge tone="ok">{t('audit.granted')}</Badge>
+                        <Badge tone="good">{t('audit.granted')}</Badge>
                       )}
                     </Td>
                   </Tr>

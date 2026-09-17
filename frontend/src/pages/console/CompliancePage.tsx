@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useLocale } from '@/i18n';
 import { api, post } from '@/lib/api';
 import { relative } from '@/lib/time';
+import { TONE_TEXT_CLASSES } from '@/lib/tone';
 import { toast, toastError } from '@/lib/toast';
 
 /**
@@ -55,9 +56,9 @@ interface DeletionRequest {
   executed_at: string | null;
 }
 
-function statusTone(status: string): 'ok' | 'err' | 'warn' | 'neutral' {
-  if (status === 'completed') return 'ok';
-  if (status === 'failed') return 'err';
+function statusTone(status: string): 'good' | 'bad' | 'warn' | 'neutral' {
+  if (status === 'completed') return 'good';
+  if (status === 'failed') return 'bad';
   if (status === 'pending' || status === 'executing') return 'warn';
   return 'neutral';
 }
@@ -370,7 +371,7 @@ function Section({
   tone: 'bad' | 'warn' | 'neutral';
   children: React.ReactNode;
 }) {
-  const colour = { bad: 'text-bad', warn: 'text-warn', neutral: 'text-muted-foreground' }[tone];
+  const colour = TONE_TEXT_CLASSES[tone];
   return (
     <div>
       <h4 className={`mb-1 text-[0.6875rem] font-semibold uppercase tracking-wider ${colour}`}>

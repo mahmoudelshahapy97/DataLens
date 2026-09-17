@@ -2,6 +2,7 @@ import { Database } from 'lucide-react';
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useAppearance } from '@/app/appearance';
 import { PlotlyChart, type PlotlyFigure } from '@/components/PlotlyChart';
 import { DataTable, ScrollX, Tbody, Td, Th, Tr } from '@/components/primitives/data-table';
 import { PageBody, PageHeader, Toolbar } from '@/components/primitives/page';
@@ -21,6 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { useLocale } from '@/i18n';
 import { api } from '@/lib/api';
 import { relative } from '@/lib/time';
+import { PALETTE } from '@/lib/tile-figure';
 import type { DataSourceHealth, Overview } from '@/types';
 
 import { ScopePicker, useConsoleScope } from './scope';
@@ -50,6 +52,7 @@ export function OverviewScreen({ embedded = false }: { embedded?: boolean } = {}
   const { t, locale } = useLocale();
   const navigate = useNavigate();
   const { scope } = useConsoleScope();
+  const { theme } = useAppearance();
 
   const [days, setDays] = React.useState(30);
   const [auto, setAuto] = React.useState(false);
@@ -213,6 +216,7 @@ export function OverviewScreen({ embedded = false }: { embedded?: boolean } = {}
           <PlotlyChart
             figure={seriesFigure(data, t('ov.questions'), t('ov.succeeded'))}
             label={t('ov.questionsPerDay')}
+            theme={theme}
             className="h-60"
           />
         </Card>
@@ -227,6 +231,7 @@ export function OverviewScreen({ embedded = false }: { embedded?: boolean } = {}
                 : feedbackFigure(data, [t('ov.liked'), t('ov.disliked'), t('ov.unrated')])
             }
             label={platformWide ? t('ov.byWorkspace') : t('ov.feedback')}
+            theme={theme}
             className="h-60"
           />
         </Card>
@@ -244,7 +249,7 @@ export function OverviewScreen({ embedded = false }: { embedded?: boolean } = {}
                   <button
                     type="button"
                     onClick={() => navigate('/console/audit')}
-                    className="flex w-full flex-wrap items-baseline gap-x-2.5 gap-y-1 py-2 text-start hover:text-primary"
+                    className="flex w-full flex-wrap items-baseline gap-x-2.5 gap-y-1 py-2 text-start hover:text-primary-ink"
                   >
                     <span className="font-mono text-[0.78rem] font-semibold">{event.action}</span>
                     {event.target ? (
@@ -294,7 +299,7 @@ export function OverviewScreen({ embedded = false }: { embedded?: boolean } = {}
                       <Td>
                         <span className="font-medium">{workspace.name}</span>
                         {workspace.is_active ? null : (
-                          <Badge tone="err" className="ms-2">
+                          <Badge tone="bad" className="ms-2">
                             {t('ov.inactive')}
                           </Badge>
                         )}
@@ -417,8 +422,8 @@ function HealthPanel({
  */
 function HealthBadge({ lastOk }: { lastOk: boolean | null }) {
   const t = useLocale().t;
-  if (lastOk === true) return <Badge tone="ok">{t('ov.healthOk')}</Badge>;
-  if (lastOk === false) return <Badge tone="err">{t('ov.healthFailing')}</Badge>;
+  if (lastOk === true) return <Badge tone="good">{t('ov.healthOk')}</Badge>;
+  if (lastOk === false) return <Badge tone="bad">{t('ov.healthFailing')}</Badge>;
   return <Badge tone="warn">{t('ov.healthUnknown')}</Badge>;
 }
 
@@ -450,6 +455,10 @@ const BASE_LAYOUT = {
   plot_bgcolor: 'rgba(0,0,0,0)',
   showlegend: false,
   autosize: true,
+  // Previously unset, so Plotly drew its own default blue/orange while every
+  // dashboard tile drew in PALETTE -- the one place in the shell that used
+  // colour but not the product's palette.
+  colorway: PALETTE,
 };
 
 const CONFIG = { displayModeBar: false, responsive: true };

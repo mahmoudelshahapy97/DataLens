@@ -30,7 +30,7 @@ export class VannaChat extends LitElement {
       :host {
         display: block;
         font-family: var(--vanna-font-family-default);
-        --chat-primary: var(--vanna-accent-primary-default);
+        --chat-primary: var(--primary, var(--vanna-accent-primary-default));
         --chat-primary-stronger: var(--vanna-accent-primary-stronger);
         --chat-primary-foreground: rgb(255, 255, 255);
         --chat-accent-soft: var(--vanna-accent-primary-subtle);
@@ -55,7 +55,7 @@ export class VannaChat extends LitElement {
       }
 
       :host([theme="dark"]) {
-        --chat-primary: var(--vanna-accent-primary-default);
+        --chat-primary: var(--primary, var(--vanna-accent-primary-default));
         --chat-primary-stronger: var(--vanna-accent-primary-stronger);
         --chat-primary-foreground: rgb(255, 255, 255);
         --chat-accent-soft: var(--vanna-accent-primary-subtle);
@@ -1089,6 +1089,8 @@ export class VannaChat extends LitElement {
   }> = [
     { name: '/help', key: 'cmd.help' },
     { name: '/status', key: 'cmd.status' },
+    { name: '/setup', key: 'cmd.setup' },
+    { name: '/memorise', key: 'cmd.memorise', arg: '<text>' },
     { name: '/memories', key: 'cmd.memories', admin: true },
     { name: '/delete', key: 'cmd.delete', arg: '<id>', admin: true },
   ];

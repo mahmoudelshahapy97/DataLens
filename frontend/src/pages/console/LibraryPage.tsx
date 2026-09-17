@@ -106,7 +106,7 @@ export default function LibraryPage() {
             <Card key={pack.id} className="flex flex-col p-4">
               <div className="mb-1 flex items-start justify-between gap-2">
                 <h3 className="text-[0.9rem] font-semibold" dir="auto">{pack.name}</h3>
-                {pack.enabled ? <Badge tone="ok">{t('lib.on')}</Badge> : null}
+                {pack.enabled ? <Badge tone="good">{t('lib.on')}</Badge> : null}
               </div>
               <p className="text-[0.8125rem] text-muted-foreground" dir="auto">
                 {pack.description}

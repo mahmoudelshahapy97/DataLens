@@ -133,6 +133,10 @@ class TestShippedTools:
             "vanna.tools.column_values",
             "vanna.tools.dashboard",
             "vanna.tools.agent_memory",
+            "vanna.tools.calculator",
+            "vanna.tools.knowledge",
+            "vanna.tools.query_history",
+            "vanna.tools.value_dictionary",
         ):
             module = importlib.import_module(module_name)
             for attribute, obj in vars(module).items():

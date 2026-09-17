@@ -167,7 +167,7 @@ export function ConversationRail({
                   onClick={() => void open(row)}
                   className={cn(
                     'w-full rounded-md px-2 py-1.5 pe-14 text-start hover:bg-rail-hover',
-                    active === row.id ? 'bg-primary-soft text-primary' : '',
+                    active === row.id ? 'bg-primary-soft text-primary-ink' : '',
                   )}
                 >
                   <span className="block truncate text-[0.8125rem]" dir="auto">

@@ -119,7 +119,7 @@ export default function WorkspacesPage() {
                   <Td>
                     <span className="font-medium">{workspace.name}</span>
                     {workspace.is_active ? null : (
-                      <Badge tone="err" className="ms-2">{t('ov.inactive')}</Badge>
+                      <Badge tone="bad" className="ms-2">{t('ov.inactive')}</Badge>
                     )}
                     <span className="block font-mono text-[0.72rem] text-muted-foreground">
                       {workspace.id}
@@ -141,7 +141,7 @@ export default function WorkspacesPage() {
                     {workspace.allow_byo_key === false ? (
                       <Badge tone="neutral">{t('wsp.off')}</Badge>
                     ) : (
-                      <Badge tone="ok">{t('wsp.on')}</Badge>
+                      <Badge tone="good">{t('wsp.on')}</Badge>
                     )}
                   </Td>
                   <Td className="text-muted-foreground">

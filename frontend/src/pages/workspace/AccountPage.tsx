@@ -1,6 +1,7 @@
-import { Brain, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Brain, KeyRound, Moon, Plus, Sun, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
+import { ACCENTS, useAppearance, type Accent } from '@/app/appearance';
 import { useSession } from '@/app/session';
 import { useConfirm } from '@/components/primitives/confirm';
 import { DataTable, Tbody, Td, Th, Tr } from '@/components/primitives/data-table';
@@ -16,6 +17,7 @@ import { useLocale } from '@/i18n';
 import { api, del, post } from '@/lib/api';
 import { relative, until } from '@/lib/time';
 import { toast, toastError, toastSuccess } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 
 /**
  * This account: its plan, its password, its tokens and its sessions.
@@ -209,7 +211,7 @@ export default function AccountPage() {
 
       {usage ? (
         <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label={t('plan.plan')} value={usage.plan_label} tone="primary" />
+          <StatTile label={t('plan.plan')} value={usage.plan_label} tone="accent" />
           <StatTile
             label={t('plan.used')}
             value={`${usage.used} / ${usage.limit}`}
@@ -230,6 +232,8 @@ export default function AccountPage() {
           row (a user agent string, a long token name) pushes past the card edge
           instead of scrolling inside it. */}
       <div className="grid gap-3 lg:grid-cols-2">
+        <AppearanceCard />
+
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle>{t('account.changePassword')}</CardTitle>
@@ -360,7 +364,7 @@ export default function AccountPage() {
                       <Td className="text-muted-foreground">
                         {relative(session.created_at, t, locale)}
                         {session.current ? (
-                          <Badge tone="ok" className="ms-2">
+                          <Badge tone="good" className="ms-2">
                             {t('account.thisBrowser')}
                           </Badge>
                         ) : null}
@@ -451,6 +455,78 @@ export default function AccountPage() {
         </Card>
       </div>
     </PageBody>
+  );
+}
+
+const ACCENT_LABEL_KEYS: Record<Accent, string> = {
+  indigo: 'account.accentIndigo',
+  blue: 'account.accentBlue',
+  teal: 'account.accentTeal',
+  violet: 'account.accentViolet',
+};
+
+/** Swatch colours for the picker itself -- fixed, not theme-reactive, so the
+ * four options are always distinguishable regardless of which one is active. */
+const ACCENT_SWATCHES: Record<Accent, string> = {
+  indigo: '#4f46e5',
+  blue: '#2563eb',
+  teal: '#0f766e',
+  violet: '#7c3aed',
+};
+
+/**
+ * Theme and accent together, discoverable in one place for the first time --
+ * previously only the TopBar's icon button existed, and there was no control
+ * for accent at all. The TopBar button stays for muscle memory; both call
+ * the same `useAppearance()` store, so they can never disagree.
+ */
+function AppearanceCard() {
+  const { t } = useLocale();
+  const { theme, toggleTheme, accent, setAccent } = useAppearance();
+
+  return (
+    <Card className="min-w-0">
+      <CardHeader>
+        <CardTitle>{t('account.appearance')}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <Label className="mb-0">{t('account.theme')}</Label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={toggleTheme}
+            aria-pressed={theme === 'dark'}
+          >
+            {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
+            {theme === 'dark' ? t('account.themeDark') : t('account.themeLight')}
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label className="mb-0">{t('account.accent')}</Label>
+          <div className="flex gap-2" role="radiogroup" aria-label={t('account.accent')}>
+            {ACCENTS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={accent === option}
+                aria-label={t(ACCENT_LABEL_KEYS[option])}
+                title={t(ACCENT_LABEL_KEYS[option])}
+                onClick={() => setAccent(option)}
+                className={cn(
+                  'size-8 rounded-full border-2 transition-[border-color]',
+                  accent === option ? 'border-text' : 'border-transparent',
+                )}
+                style={{ backgroundColor: ACCENT_SWATCHES[option] }}
+              />
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

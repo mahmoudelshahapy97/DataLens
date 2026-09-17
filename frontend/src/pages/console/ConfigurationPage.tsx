@@ -78,7 +78,7 @@ export default function ConfigurationPage() {
           value={filter}
           onChange={(event) => setFilter(event.currentTarget.value)}
         />
-        {broken > 0 ? <Badge tone="err">{t('cfg.broken', { n: broken })}</Badge> : null}
+        {broken > 0 ? <Badge tone="bad">{t('cfg.broken', { n: broken })}</Badge> : null}
       </Toolbar>
 
       {error ? (
@@ -118,9 +118,9 @@ export default function ConfigurationPage() {
                   <Td className="tabular-nums">v{file.version}</Td>
                   <Td>
                     {file.parsed ? (
-                      <Badge tone="ok">{t('cfg.parses')}</Badge>
+                      <Badge tone="good">{t('cfg.parses')}</Badge>
                     ) : (
-                      <Badge tone="err">{t('cfg.doesNotParse')}</Badge>
+                      <Badge tone="bad">{t('cfg.doesNotParse')}</Badge>
                     )}
                   </Td>
                   <Td className="text-muted-foreground">

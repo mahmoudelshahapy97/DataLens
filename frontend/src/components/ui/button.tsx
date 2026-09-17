@@ -25,7 +25,7 @@ const buttonVariants = cva(
         outline: 'border border-border bg-surface hover:border-primary',
         danger: 'border border-bad text-bad bg-surface hover:bg-bad/10',
         ghost: 'hover:bg-rail-hover text-muted-foreground hover:text-foreground',
-        link: 'text-primary underline-offset-4 hover:underline',
+        link: 'text-primary-ink underline-offset-4 hover:underline',
       },
       size: {
         sm: 'h-8 px-2.5',

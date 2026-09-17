@@ -83,9 +83,9 @@ const STATUSES = [
   'error',
 ] as const;
 
-function statusTone(status: string): 'ok' | 'err' | 'warn' | 'neutral' {
-  if (status === 'valid') return 'ok';
-  if (status === 'invalid' || status === 'error') return 'err';
+function statusTone(status: string): 'good' | 'bad' | 'warn' | 'neutral' {
+  if (status === 'valid') return 'good';
+  if (status === 'invalid' || status === 'error') return 'bad';
   if (status === 'rejected_by_policy' || status === 'timeout' || status === 'empty') return 'warn';
   return 'neutral';
 }
