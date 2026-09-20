@@ -221,6 +221,50 @@ def recording_run_sql_tool(
 # ----------------------------------------------------------------------
 
 
+def _install_turn_nodes(agent: Any, llm: Any, settings: Any) -> None:
+    """Extend the agent's turn graph with the optional reasoning steps.
+
+    Done after construction rather than by passing ``turn_graph=``, because the
+    three built-in nodes are bound methods on the agent -- there is no graph to
+    extend until it exists.
+
+    Both nodes cost a model call when they fire, and those calls are metered
+    and billed like any other. Neither is wired unless its setting says so.
+    """
+    from vanna.core.agent.graph import TurnGraph
+
+    from .agent_nodes import CriticNode, PlannerNode
+
+    critic = (
+        CriticNode(llm, max_retries=settings.max_critic_retries)
+        if settings.enable_critic and settings.max_critic_retries > 0
+        else None
+    )
+    planner = PlannerNode(llm) if settings.enable_planner else None
+    if critic is None and planner is None:
+        return
+
+    base = agent._default_turn_graph()
+    nodes = list(base.nodes)
+    edges = base.edges
+
+    if critic is not None:
+        nodes.append(critic)
+        # `llm_turn` sends a finished answer to `agent.answer_node`, so pointing
+        # that at the critic is what puts it on the edge. Its own static edge is
+        # where a critic out of retries falls through to.
+        agent.answer_node = critic.name
+        edges[critic.name] = "answer"
+
+    entry = base.entry
+    if planner is not None:
+        nodes.append(planner)
+        entry = planner.name
+        edges[planner.name] = base.entry
+
+    agent.turn_graph = TurnGraph(nodes, entry=entry, edges=edges)
+
+
 def policy_for_user(read_only: Any, settings: Any, tenant: Dict[str, Any]) -> Optional[Any]:
     """Resolve the SQL policy for one caller.
 
@@ -944,12 +988,17 @@ class Platform:
         from vanna.servers.base import ChatHandler
         from .chat_commands import DataLensWorkflow
         from vanna.tools import (
+            AnalyzeTimeseriesTool,
             CalculatorTool,
+            ComparePeriodsTool,
             CheckColumnValuesTool,
             CheckCoreColumnsTool,
             ListKnownValuesTool,
+            ProfileColumnTool,
+            RequestClarificationTool,
             SearchKnowledgeTool,
             SearchQueryHistoryTool,
+            SuggestJoinsTool,
             SystemTimeTool,
             TIME_FUNCTION_NAMES,
             ValidateSqlTool,
@@ -1125,6 +1174,31 @@ class Platform:
         for tool in create_schema_tools(catalog):
             registry.register_local_tool(tool, [])
 
+        # `catalog`, not `self.catalog`: join paths must be narrowed by the same
+        # grant filtering and semantic wrapping every other schema read goes
+        # through, or the tool would suggest a join through a table the caller
+        # is not allowed to see.
+        registry.register_local_tool(
+            SuggestJoinsTool(catalog, data_source_id=data_source), []
+        )
+
+        # `runner` for the live aggregate, `catalog` for the facts the scanner
+        # already captured -- a column profiled at scan time costs no round trip.
+        registry.register_local_tool(
+            ProfileColumnTool(runner, catalog=catalog, data_source_id=data_source), []
+        )
+
+        # Both run model-written SQL and declare `sql_argument_fields`, so the
+        # same policy that guards run_sql guards them -- registering them here,
+        # beside it, rather than with the catalog tools they resemble.
+        registry.register_local_tool(AnalyzeTimeseriesTool(runner), [])
+        registry.register_local_tool(ComparePeriodsTool(runner), [])
+
+        # No dependencies at all: it puts a question to the user and ends the
+        # turn. Available to every role -- a viewer's question is as likely to
+        # be ambiguous as an admin's.
+        registry.register_local_tool(RequestClarificationTool(), [])
+
         # self.catalog rather than the (possibly semantic-wrapped) `catalog`
         # above: core columns are a control-plane curation concept, same as
         # the annotations `routes/catalog.py` reaches for `deps.platform.catalog`
@@ -1183,6 +1257,8 @@ class Platform:
             audit_logger=self.audit_logger,
             workflow_handler=DataLensWorkflow(),
         )
+
+        _install_turn_nodes(agent, self.llm, settings)
 
         logger.info("Built runtime for %s -> %s (%s)", tenant_id, data_source, dialect)
 

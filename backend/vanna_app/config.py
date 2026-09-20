@@ -231,6 +231,24 @@ class Settings:
     #: against have probably not moved.
     write_confirmation_ttl_seconds: int = 900
     scan_on_start: bool = True
+
+    # -- answer checking -------------------------------------------------
+    #: Check each data answer against the question before the user sees it.
+    #:
+    #: Costs one extra model call per turn that ran a query, and a second full
+    #: turn when it rejects. Those calls are metered and billed like any other,
+    #: so this is a real change to a workspace's bill -- which is why it is a
+    #: setting and not a constant.
+    enable_critic: bool = True
+    #: How many times the critic may send one turn back. Two rejections of the
+    #: same answer usually means the critic and the analyst disagree about the
+    #: question rather than that the answer is improving.
+    max_critic_retries: int = 1
+    #: Draft an approach before answering a multi-step question. Off: it costs
+    #: a model call on every turn it fires, and unlike the critic there is no
+    #: cheap signal for when it is worth it.
+    enable_planner: bool = False
+
     index_backend: str = "lexical"
     project_dir: str = ""
     projects_dir: str = ""
@@ -414,6 +432,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         ),
         allow_writes=_flag(env, "VANNA_ALLOW_WRITES", False),
         max_write_rows=_number(env, "VANNA_MAX_WRITE_ROWS", 50, minimum=1),
+        enable_critic=_flag(env, "VANNA_ENABLE_CRITIC", True),
+        max_critic_retries=_number(env, "VANNA_MAX_CRITIC_RETRIES", 1, minimum=0),
+        enable_planner=_flag(env, "VANNA_ENABLE_PLANNER", False),
         write_confirmation_ttl_seconds=_number(
             env, "VANNA_WRITE_CONFIRMATION_TTL_SECONDS", 900, minimum=30
         ),

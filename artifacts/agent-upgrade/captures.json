@@ -1,0 +1,25 @@
+[
+  {
+    "file": "02-multi-hop-join.png",
+    "question": "Which 3 artists earned the most revenue? Give me names and amounts.",
+    "shows": "suggest_joins finds invoice_line -> track -> album -> artist",
+    "settled": true
+  },
+  {
+    "file": "03-clarification.png",
+    "question": "Show me our best customers",
+    "shows": "request_clarification: the agent asks instead of guessing",
+    "settled": true
+  },
+  {
+    "file": "04-trend.png",
+    "question": "Is our monthly revenue growing or shrinking over time?",
+    "shows": "analyze_timeseries computes the trend rather than eyeballing rows",
+    "settled": true
+  },
+  {
+    "file": "06-databases.png",
+    "question": null,
+    "shows": "four data sources across Postgres, MySQL and Oracle"
+  }
+]

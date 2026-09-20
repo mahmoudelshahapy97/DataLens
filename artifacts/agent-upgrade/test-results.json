@@ -1,0 +1,225 @@
+{
+  "captured_at": "2026-09-19T15:30:00Z",
+  "stack": {
+    "frontend": "http://localhost:3000",
+    "model": "gpt-5 (OPENAI_MODEL default)",
+    "engines": [
+      "postgres",
+      "mysql",
+      "oracle"
+    ],
+    "note": "backend container hot-patched via docker cp; rebuild the image to persist"
+  },
+  "suite": {
+    "passed": 1410,
+    "skipped": 376,
+    "failed": 0
+  },
+  "workspaces": {
+    "demo": {
+      "default": "postgresql://db_postgres/chinook",
+      "registered": [
+        "postgresql://db_postgres/chinook",
+        "mysql://db_mysql/sakila",
+        "oracle://db_oracle/XEPDB1",
+        "postgresql://db_postgres/northwind"
+      ]
+    },
+    "acme": {
+      "default": "postgresql://db_postgres/pagila",
+      "registered": [
+        "postgresql://db_postgres/pagila"
+      ]
+    }
+  },
+  "connection_tests": [
+    {
+      "url": "mysql://root:***@db_mysql:3306/sakila",
+      "ok": true
+    },
+    {
+      "url": "postgresql://postgres:***@db_postgres:5432/northwind",
+      "ok": true
+    },
+    {
+      "url": "oracle://system:***@db_oracle:1521/XEPDB1",
+      "ok": true,
+      "note": "failed with ORA-00923 before the health_check_sql fix"
+    },
+    {
+      "url": "mssql://sa:***@db_sqlserver:1433/Northwind",
+      "ok": false,
+      "error": "pyodbc installed but libodbc.so.2 missing (unixODBC not in image)"
+    }
+  ],
+  "questions": [
+    {
+      "case": "PG/chinook simple",
+      "engine": "postgres",
+      "workspace": "demo",
+      "question": "How many albums are there?",
+      "tools": [
+        "validate_sql",
+        "run_sql"
+      ],
+      "seconds": 10,
+      "answer": "347 albums",
+      "correct": true
+    },
+    {
+      "case": "PG/chinook multi-hop",
+      "engine": "postgres",
+      "workspace": "demo",
+      "question": "Which 3 artists earned the most revenue?",
+      "tools": [
+        "suggest_joins",
+        "profile_column",
+        "profile_column",
+        "validate_sql",
+        "run_sql"
+      ],
+      "seconds": 26,
+      "answer": "Iron Maiden $138.60, U2 $105.93, Metallica $90.09",
+      "correct": true,
+      "verified_against": "direct SQL, exact match"
+    },
+    {
+      "case": "PG/chinook ambiguous",
+      "engine": "postgres",
+      "workspace": "demo",
+      "question": "Show me our best customers",
+      "tools": [
+        "request_clarification"
+      ],
+      "seconds": 9,
+      "answer": "card with 4 options; turn ended via END_TURN",
+      "correct": true
+    },
+    {
+      "case": "PG/chinook trend",
+      "engine": "postgres",
+      "workspace": "demo",
+      "question": "Is our monthly revenue growing or shrinking over time?",
+      "tools": [
+        "profile_column",
+        "validate_sql",
+        "analyze_timeseries"
+      ],
+      "seconds": 37,
+      "answer": "+8.4% over 60 months, slight growth with noise",
+      "correct": true
+    },
+    {
+      "case": "MySQL/sakila",
+      "engine": "mysql",
+      "workspace": "demo",
+      "question": "How many films are in the database?",
+      "tools": [
+        "validate_sql",
+        "run_sql"
+      ],
+      "seconds": 17,
+      "answer": "1,000 films",
+      "correct": true
+    },
+    {
+      "case": "MySQL/sakila join",
+      "engine": "mysql",
+      "workspace": "demo",
+      "question": "Which 3 actors appear in the most films?",
+      "tools": [
+        "suggest_joins",
+        "profile_column",
+        "validate_sql",
+        "run_sql"
+      ],
+      "seconds": 35,
+      "answer": "answered; suggest_joins correctly reported no catalog relationships and told the model to fall back",
+      "correct": true
+    },
+    {
+      "case": "PG/northwind",
+      "engine": "postgres",
+      "workspace": "demo",
+      "question": "How many orders are there and how many customers?",
+      "tools": [
+        "validate_sql",
+        "run_sql"
+      ],
+      "seconds": 12,
+      "answer": "830 orders, 91 customers",
+      "correct": true
+    },
+    {
+      "case": "Oracle/XEPDB1",
+      "engine": "oracle",
+      "workspace": "demo",
+      "question": "What tables can you see?",
+      "tools": [
+        "search_tables"
+      ],
+      "seconds": 21,
+      "answer": "listed chinook / northwind / other schemas",
+      "correct": true
+    },
+    {
+      "case": "acme/pagila isolation",
+      "engine": "postgres",
+      "workspace": "acme",
+      "question": "How many films are in the database?",
+      "tools": [
+        "run_sql"
+      ],
+      "seconds": 10,
+      "answer": "1,000 films (pagila, not demo's chinook)",
+      "correct": true
+    }
+  ],
+  "bugs_fixed": [
+    {
+      "id": 1,
+      "severity": "outage",
+      "title": "gpt-5 rejects max_tokens; every request 400s",
+      "files": [
+        "backend/vanna/integrations/openai/llm.py"
+      ],
+      "tests": "backend/tests/test_openai_token_parameter.py (18)"
+    },
+    {
+      "id": 2,
+      "severity": "engine unusable",
+      "title": "Oracle connection probe used SELECT 1 (ORA-00923)",
+      "files": [
+        "backend/vanna/capabilities/sql_runner/base_runner.py",
+        "backend/vanna/integrations/oracle/sql_runner.py",
+        "backend/vanna_app/routes/admin.py",
+        "backend/vanna_app/datasources.py"
+      ],
+      "tests": "backend/tests/test_health_check_sql.py (8)"
+    },
+    {
+      "id": 3,
+      "severity": "misleading diagnostic",
+      "title": "pyodbc error blamed a missing package, not missing unixODBC",
+      "files": [
+        "backend/vanna/integrations/mssql/sql_runner.py"
+      ],
+      "resolved": false,
+      "note": "message fixed; SQL Server still needs unixODBC + msodbcsql18 in the image"
+    },
+    {
+      "id": 4,
+      "severity": "documentation",
+      "title": "VANNA_MAX_TENANT_RUNTIMES documented as 32, actually 2",
+      "files": [
+        "README.md"
+      ],
+      "evidence": "4 runtime evictions across 9 questions"
+    }
+  ],
+  "not_fixed": [
+    "backend/tests/e2e/ uses #si-email/#si-password/#si-go; app renders #login-email/#login-password",
+    "CardComponentRenderer interpolates title/content into innerHTML unescaped",
+    "SQL Server: needs unixODBC + msodbcsql18 system packages in the image"
+  ]
+}

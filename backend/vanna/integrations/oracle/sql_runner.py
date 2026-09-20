@@ -11,6 +11,9 @@ class OracleRunner(BaseSqlRunner):
 
     dialect = "oracle"
 
+    #: Oracle has no bare SELECT; DUAL is the one-row table it provides for this.
+    health_check_sql = "SELECT 1 FROM DUAL"
+
     def __init__(self, user: str, password: str, dsn: str, *,
         policy: Optional[ExecutionPolicy] = None,
         **kwargs):

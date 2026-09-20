@@ -109,7 +109,21 @@ class DataLensWorkflow(DefaultWorkflowHandler):
         content += f"| Memory (search) | {'✅' if analysis['has_search'] else '❌'} |\n"
         content += f"| Memory (save) | {'✅' if analysis['has_save'] else '❌'} |\n"
         content += f"| Visualization | {'✅' if analysis['has_viz'] else '➖ Text/tables only'} |\n"
-        content += f"| Calculator | {'✅' if analysis['has_calculator'] else '➖ Not available'} |\n\n"
+        content += f"| Calculator | {'✅' if analysis['has_calculator'] else '➖ Not available'} |\n"
+
+        # Computed here rather than in `_analyze_setup`, which lives in the
+        # library tree: which tools a DataLens workspace should have is an
+        # app-level question -- the same reason this class exists at all.
+        for label, tool in (
+            ("Join paths", "suggest_joins"),
+            ("Column profiling", "profile_column"),
+            ("Trend analysis", "analyze_timeseries"),
+            ("Period comparison", "compare_periods"),
+            ("Clarifying questions", "request_clarification"),
+        ):
+            status = "✅" if tool in tool_names else "➖ Not available"
+            content += f"| {label} | {status} |\n"
+        content += "\n"
 
         if analysis["is_complete"]:
             content += "Everything is configured — nothing to do.\n"

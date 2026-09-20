@@ -58,7 +58,7 @@ async def _ping(runner: Any, tenant_id: str) -> None:
         tenant_id=tenant_id,
         agent_memory=_build_memory(),
     )
-    await runner.run_sql(RunSqlToolArgs(sql="SELECT 1"), context)
+    await runner.run_sql(RunSqlToolArgs(sql=getattr(runner, "health_check_sql", "SELECT 1")), context)
 
 
 def _sanitise(error: BaseException, url: str) -> str:

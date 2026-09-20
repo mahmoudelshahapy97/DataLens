@@ -94,6 +94,15 @@ class BaseSqlRunner(SqlRunner):
         rather than merely losing its client.
         """
 
+    #: The cheapest statement that proves the connection works.
+    #:
+    #: ``SELECT 1`` is valid in every engine here except Oracle, which requires
+    #: a FROM clause and answers ORA-00923 without one. Hardcoding it meant the
+    #: connection probe rejected every Oracle database -- including ones that
+    #: were perfectly reachable -- so no Oracle workspace could be registered
+    #: through the console at all.
+    health_check_sql: str = "SELECT 1"
+
     def dry_run_sql(self, sql: str) -> None:
         """Check *sql* without returning rows. Raise on a problem.
 
@@ -124,6 +133,40 @@ class BaseSqlRunner(SqlRunner):
             f"{type(self).__name__} cannot execute writes. Writes need a "
             "transaction and a row-count assertion this runner does not implement."
         )
+
+    def explain_sql(self, sql: str) -> Optional[str]:
+        """The engine's query plan as text, or None if it cannot produce one.
+
+        Distinct from :meth:`dry_run_sql`, which runs the same ``EXPLAIN`` and
+        keeps only whether it raised. The plan itself answers a question the
+        error cannot: whether the query the model just wrote is about to do
+        something catastrophic -- a nested loop over two unfiltered tables, a
+        sequential scan of a fact table -- which is not an error and will
+        otherwise be discovered by waiting for it.
+
+        Subclasses override with the engine's own syntax. The default raises
+        :class:`NotImplementedError`, and callers treat that as "no plan
+        available" rather than as a failure.
+        """
+        raise NotImplementedError
+
+    async def explain(self, sql: str, context: "ToolContext") -> Optional[str]:
+        """Plan text, or None when the runner cannot produce one.
+
+        Never raises. A plan is an extra, and a query whose plan could not be
+        fetched is not thereby a bad query -- the caller has already validated
+        it by other means.
+        """
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.explain_sql, sql),
+                timeout=self.policy.timeout_seconds,
+            )
+        except NotImplementedError:
+            return None
+        except Exception as e:
+            logger.debug("Could not explain query: %s", e)
+            return None
 
     async def dry_run(self, sql: str, context: "ToolContext") -> Optional[str]:
         """Validate *sql*, returning an error message or None if it is fine.

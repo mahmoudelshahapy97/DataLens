@@ -27,6 +27,11 @@ from .knowledge import SearchKnowledgeArgs, SearchKnowledgeTool
 from .query_history import SearchQueryHistoryArgs, SearchQueryHistoryTool
 from .value_dictionary import ListKnownValuesArgs, ListKnownValuesTool
 from .core_columns import CheckCoreColumnsArgs, CheckCoreColumnsTool
+from .joins import SuggestJoinsArgs, SuggestJoinsTool
+from .profile import ProfileColumnArgs, ProfileColumnTool
+from .timeseries import AnalyzeTimeseriesArgs, AnalyzeTimeseriesTool
+from .compare import ComparePeriodsArgs, ComparePeriodsTool
+from .clarify import RequestClarificationArgs, RequestClarificationTool
 
 __all__ = [
     # SQL
@@ -38,6 +43,18 @@ __all__ = [
     "SearchTablesTool",
     "GetTableSchemaTool",
     "create_schema_tools",
+    "SuggestJoinsArgs",
+    "SuggestJoinsTool",
+    "ProfileColumnArgs",
+    "ProfileColumnTool",
+    # Analysis over results
+    "AnalyzeTimeseriesArgs",
+    "AnalyzeTimeseriesTool",
+    "ComparePeriodsArgs",
+    "ComparePeriodsTool",
+    # Asking the user
+    "RequestClarificationArgs",
+    "RequestClarificationTool",
     "ColumnValuesArgs",
     "CheckCoreColumnsArgs",
     "CheckCoreColumnsTool",

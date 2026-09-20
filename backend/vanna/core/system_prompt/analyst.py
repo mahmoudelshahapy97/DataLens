@@ -189,6 +189,15 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
         """Emit only the steps whose tools are actually registered."""
         plan: List[str] = []
 
+        if "request_clarification" in names:
+            plan.append(
+                "First decide whether the question has one reasonable "
+                "reading. If two readings are equally likely and would give "
+                "materially different answers, call request_clarification "
+                "instead of guessing. If one reading is clearly most likely, "
+                "answer it and say which you assumed."
+            )
+
         if "get_relevant_tables" in names or "search_tables" in names:
             plan.append(
                 "Identify the relevant tables. The schema you need is usually "
@@ -201,11 +210,27 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
                 "have not been shown."
             )
 
+        if "suggest_joins" in names:
+            plan.append(
+                "Before joining tables you have not joined already in this "
+                "conversation, call suggest_joins. Joining on two columns "
+                "that merely share a name produces a query that runs and a "
+                "number that is wrong."
+            )
+
         if "system_time" in names:
             plan.append(
                 "If the question mentions any date or relative period "
                 "('today', 'last quarter', 'YTD'), call system_time first and "
                 "use the literal dates it returns."
+            )
+
+        if "profile_column" in names:
+            plan.append(
+                "Before averaging, summing or grouping by a column you have "
+                "not seen the contents of, call profile_column. A column "
+                "that is mostly NULL, or has far more distinct values than "
+                "you expect, makes the obvious query the wrong one."
             )
 
         if "check_column_values" in names:
@@ -229,6 +254,15 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
             )
             plan.append(
                 "Interpret the result for the user in a sentence or two."
+            )
+
+        if "analyze_timeseries" in names or "compare_periods" in names:
+            plan.append(
+                "For a question about growth, decline, or how one period "
+                "compares to another, use analyze_timeseries or "
+                "compare_periods rather than reading the rows and judging "
+                "by eye. Both do arithmetic you cannot do reliably by "
+                "inspection."
             )
 
         if "visualize_data" in names:

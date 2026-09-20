@@ -24,6 +24,30 @@ from vanna.core.llm import (
 from vanna.core.tool import ToolCall, ToolSchema
 
 
+#: Model families that renamed ``max_tokens`` to ``max_completion_tokens`` and
+#: reject the old spelling outright with a 400.
+#:
+#: This is not cosmetic. ``AgentConfig.max_tokens`` defaults to 4096 and is
+#: forwarded on every request, so against one of these models *every* call
+#: fails -- the chat cannot answer a single question. The default model here is
+#: ``gpt-5``, which is one of them.
+#:
+#: Matched by prefix rather than an exact list, so a point release does not
+#: reintroduce the outage. Anything unrecognised keeps ``max_tokens``, which is
+#: still correct for gpt-4o and the 3.5/4 families.
+_COMPLETION_TOKEN_MODELS = ("gpt-5", "o1", "o3", "o4")
+
+
+def _token_limit_parameter(model: str) -> str:
+    """Which spelling of the output-token cap *model* accepts."""
+    name = (model or "").lower().lstrip()
+    return (
+        "max_completion_tokens"
+        if name.startswith(_COMPLETION_TOKEN_MODELS)
+        else "max_tokens"
+    )
+
+
 class OpenAILlmService(LlmService):
     """OpenAI Chat Completions-backed LLM service.
 
@@ -261,7 +285,7 @@ class OpenAILlmService(LlmService):
             "messages": messages,
         }
         if request.max_tokens is not None:
-            payload["max_tokens"] = request.max_tokens
+            payload[_token_limit_parameter(self.model)] = request.max_tokens
         if tools_payload:
             payload["tools"] = tools_payload
             payload["tool_choice"] = "auto"

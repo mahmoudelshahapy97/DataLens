@@ -42,6 +42,19 @@ class MSSQLRunner(BaseSqlRunner):
 
             self.pyodbc = pyodbc
         except ImportError as e:
+            # Two different failures reach here and they need different fixes.
+            # `pip install pyodbc` is right for one of them and a dead end for
+            # the other: pyodbc links against unixODBC at import time, so a
+            # perfectly installed wheel still raises when the system library is
+            # absent. Telling that operator to install the package they already
+            # have is how an afternoon gets lost.
+            if "libodbc" in str(e) or "shared object" in str(e):
+                raise ImportError(
+                    "pyodbc is installed but cannot load the unixODBC runtime "
+                    f"({e}). Install the system library and a driver -- on "
+                    "Debian/Ubuntu: unixodbc, plus Microsoft's msodbcsql18 "
+                    "from their apt repository. pip alone cannot supply these."
+                ) from e
             raise ImportError(
                 "pyodbc package is required. Install with: pip install pyodbc"
             ) from e

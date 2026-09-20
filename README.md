@@ -217,10 +217,22 @@ Every variable, its default, and what it does. Anything not listed here is not r
 | `VANNA_RATE_LIMIT_PER_MIN` | `20` | Per user. |
 | `VANNA_MAX_ROWS` | `1000` | Row cap per query. |
 | `VANNA_QUERY_TIMEOUT` | `60` | Seconds. |
-| `VANNA_MAX_TENANT_RUNTIMES` | `32` | Cached agents, one per (workspace, database); each holds a connection pool. |
+| `VANNA_MAX_TENANT_RUNTIMES` | `2` | Cached agents, one per **(workspace, database)** pair; each holds a connection pool. Raise it if you register several databases: two workspaces with two databases each need four, and below that every question evicts a runtime and pays to rebuild it -- reconnecting, rebuilding the semantic layer and re-reading the catalog. The ceiling is what your warehouse permits: `workers x (APP_POOL_MAX + MAX_TENANT_RUNTIMES x WAREHOUSE_POOL_MAX)`. |
 | `VANNA_TENANT_RUNTIME_TTL_SECONDS` | `1800` | Idle eviction. |
 | `VANNA_GENERATION_RETENTION_DAYS` | `365` | Question text is customer data. `0` keeps it forever. |
 | `VANNA_ALLOW_WRITES` | `false` | Master switch. A workspace also needs `allow_writes`, *and* the caller must be an admin of it. |
+
+### Answer checking
+
+Two optional steps in the agent's turn. **Both cost model calls, and those
+calls are metered and billed like any other**, so they are settings rather than
+constants.
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_ENABLE_CRITIC` | `true` | Check each answer against the question before the user sees it. Runs only on a turn that actually queried, so a greeting or a schema question costs nothing extra. Budget roughly one extra call per data question. |
+| `VANNA_MAX_CRITIC_RETRIES` | `1` | How many times the critic may send a turn back. Each rejection costs a further full turn. `0` disables the critic. |
+| `VANNA_ENABLE_PLANNER` | `false` | Draft an approach before answering a multi-step question, and show it. Fires on questions containing words like "compare", "trend" or "why". Off because, unlike the critic, there is no cheap signal for when it earns its call. |
 
 ### Everything else
 

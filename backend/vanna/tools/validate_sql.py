@@ -71,9 +71,11 @@ class ValidateSqlTool(Tool[ValidateSqlArgs]):
     def description(self) -> str:
         return (
             "Check a SQL query for syntax errors, unknown tables or columns, "
-            "and policy violations without running it. Use this before "
-            "run_sql on any query that is long, joins several tables, or "
-            "scans a large table."
+            "and policy violations without running it, and get back the "
+            "database's query plan. Use this before run_sql on any query that "
+            "is long, joins several tables, or scans a large table -- the plan "
+            "shows an accidental cross join, which is not an error and is "
+            "otherwise discovered by waiting for it."
         )
 
     def get_args_schema(self) -> Type[ValidateSqlArgs]:
@@ -125,8 +127,49 @@ class ValidateSqlTool(Tool[ValidateSqlArgs]):
             )
             return _result(False, text, "Dry run failed")
 
+        # The same EXPLAIN the dry run just performed, kept this time rather
+        # than discarded. A plan is the only thing distinguishing a valid query
+        # from an affordable one: an accidental cross join is not an error, and
+        # without this it is discovered by waiting for it.
         text = "The query is valid and ready to run."
+        plan = await self._plan(args.sql, context)
+        if plan:
+            text += f"\n\nQuery plan:\n{plan}"
+            if _looks_expensive(plan):
+                text += (
+                    "\n\nThis plan contains a nested loop or a full scan "
+                    "over more than one table, which is what an accidental "
+                    "cross join looks like. Check every join has an ON clause "
+                    "before running it."
+                )
+
         return _result(True, text, "Valid")
+
+    async def _plan(self, sql: str, context: ToolContext) -> Optional[str]:
+        """Never raises: a plan is an extra, not part of the verdict."""
+        explain = getattr(self.sql_runner, "explain", None)
+        if explain is None:
+            return None
+        try:
+            return await explain(sql, context)
+        except Exception:
+            return None
+
+
+def _looks_expensive(plan: str) -> bool:
+    """Match on words every dialect shares, not on a plan format.
+
+    Plan syntax differs between engines and between versions of one engine, so
+    parsing it properly would be a maintenance burden for what is only a hint.
+    This is deliberately a heuristic, and it is phrased to the model as
+    something to check rather than as a verdict.
+    """
+    lowered = plan.lower()
+    if "nested loop" in lowered or "cartesian" in lowered or "cross join" in lowered:
+        return True
+    # One full scan is ordinary -- a small table has no index worth using. Two
+    # in the same plan is the shape a missing join condition produces.
+    return lowered.count("seq scan") + lowered.count("scan ") > 1
 
 
 def _result(ok: bool, text: str, summary: str, violations=None) -> ToolResult:
