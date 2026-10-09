@@ -100,6 +100,25 @@ def register(app: Any, deps: Deps) -> None:
             )
         return store, runtime.data_source
 
+    async def _store_and_requested_source(tenant_id: str, request: Request) -> tuple:
+        """As :func:`_store_and_source`, for the database the screen is showing.
+
+        Inferred joins exist only on databases without declared foreign keys --
+        rarely a workspace's default -- so these routes follow the
+        ``X-Data-Source-Id`` the schema screen sends rather than the default.
+        The id is checked against the workspace's registry; an unknown one is a
+        404, never a quiet fall back to another database.
+        """
+        from ..datasources import UnknownDataSource
+
+        store, _ = await _store_and_source(tenant_id)
+        requested = request.headers.get("x-data-source-id")
+        try:
+            runtime = await deps.runtime_for(tenant_id, data_source_id=requested)
+        except UnknownDataSource as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return store, runtime.data_source
+
     def _key(raw: str, *, what: str) -> str:
         """Normalize the way the catalog and the grant tables both do.
 
@@ -181,7 +200,7 @@ def register(app: Any, deps: Deps) -> None:
         from vanna.capabilities.schema_catalog.models import INFERRED_MIN_CONFIDENCE
 
         await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         rows = await store.list_inferred_relationships(tenant_id, data_source)
         for row in rows:
             row["in_use"] = row["review_status"] == "accepted" or (
@@ -195,7 +214,7 @@ def register(app: Any, deps: Deps) -> None:
         tenant_id: str, payload: RelationshipReview, request: Request
     ) -> Dict[str, Any]:
         user = await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         found = await store.review_relationship(
             tenant_id,
             data_source,

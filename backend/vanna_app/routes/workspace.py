@@ -256,8 +256,14 @@ def register(app: Any, deps: Deps) -> None:
         # find any of them.
         context = await deps.tool_context(user, data_source=runtime.data_source)
         try:
+            # `data_source_id` as well as the context: the scanner stamps every
+            # table and relationship with it, defaulting to "default", and the
+            # store honours the record's own value over the context's. Without
+            # it every rescan filed the whole database under "default" -- rows
+            # no reader looks up -- and the catalog the agent reads never changed.
+            # `Platform._prepare_tenant` has always passed it; this route did not.
             report = await SchemaScanner(runtime.runner, dialect=runtime.dialect).scan(
-                context, runtime.catalog
+                context, runtime.catalog, data_source_id=runtime.data_source
             )
         except Exception as exc:
             logger.error("Rescan failed for %s: %s", user.tenant_id, exc)
@@ -274,6 +280,7 @@ def register(app: Any, deps: Deps) -> None:
             "tables_scanned": report.tables_scanned,
             "columns_profiled": report.columns_profiled,
             "relationships_found": report.relationships_found,
+            "relationships_inferred": report.relationships_inferred,
             "duration_ms": report.duration_ms,
             "errors": report.errors,
         }
