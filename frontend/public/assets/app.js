@@ -124,6 +124,23 @@ function until(iso) {
  */
 const LLM_KEY = 'vanna.llm';
 const SOURCE_KEY = 'vanna.datasource';
+const EFFORT_KEY = 'vanna.reasoningEffort';
+const EFFORTS = ['low', 'medium', 'high'];
+
+/** The reasoning-effort preference ('' = server default). Not a secret. */
+function reasoningEffort() {
+  try {
+    const v = localStorage.getItem(EFFORT_KEY) || '';
+    return EFFORTS.includes(v) ? v : '';
+  } catch (_) { return ''; }
+}
+
+function setReasoningEffort(value) {
+  try {
+    if (EFFORTS.includes(value)) localStorage.setItem(EFFORT_KEY, value);
+    else localStorage.removeItem(EFFORT_KEY);
+  } catch (_) { /* storage blocked: the default applies */ }
+}
 
 //: The databases this workspace can be asked about, and which one is chosen.
 //: A workspace usually has exactly one, in which case the picker stays hidden --
@@ -219,6 +236,9 @@ function chatHeaders() {
     headers['X-LLM-Provider'] = llm.provider || 'openai';
     if (llm.model) headers['X-LLM-Model'] = llm.model;
   }
+  // Independent of the personal key: it tunes speed on the server's key too.
+  const effort = reasoningEffort();
+  if (effort) headers['X-LLM-Reasoning-Effort'] = effort;
   return headers;
 }
 
@@ -531,7 +551,7 @@ function paintChrome() {
   // next -- and the same facts were already in the sheet, so the header was
   // spending a third of its width restating it.
   $('ask-tools').hidden = !me.is_admin;
-  $('ask-side').hidden = !$('starters').children.length && !me.is_admin;
+  paintStartersLabel();
   // Only shown when the workspace has a semantic layer -- an empty Metrics tab
   // teaches people the feature does not work.
   api('/api/vanna/v2/cubes')
@@ -723,6 +743,7 @@ function mountChat() {
 
   $('chat-wrap').appendChild(chat);
   chatEl = chat;
+  wireEffortPicker();
 }
 
 function ask(question) {
@@ -749,13 +770,34 @@ async function loadUsage() {
   } catch (_) { /* usage is informational; never block the app on it */ }
 }
 
+/** The aside always holds the effort picker; its "Try asking" heading only needs to
+ *  show when there are starters under it. */
+function paintStartersLabel() {
+  $('starters-label').hidden = !$('starters').children.length;
+}
+
+/** The reasoning-effort picker above the chat. */
+function wireEffortPicker() {
+  const select = $('llm-effort');
+  if (!select) return;
+  select.value = reasoningEffort();
+  select.onchange = () => {
+    setReasoningEffort(select.value);
+    // The chat element caches the headers it was given at startup.
+    if (chatEl && typeof chatEl.setCustomHeaders === 'function') {
+      chatEl.setCustomHeaders(chatHeaders());
+    }
+    toast(t('ask.effortSaved'));
+  };
+}
+
 async function loadStarters() {
   const box = $('starters');
   box.innerHTML = '';
   // The panel holds the starters *and* the admin tools, so it stays if either
   // has something to show.
   const show = () => {
-    $('ask-side').hidden = !box.children.length && $('ask-tools').hidden;
+    paintStartersLabel();
   };
   if (!me.control_plane) return show();
 

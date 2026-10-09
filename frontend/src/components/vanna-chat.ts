@@ -67,6 +67,28 @@ export class VannaChat extends LitElement {
         border-color: var(--vanna-outline-default);
       }
 
+      /* Embedded in a page that already provides the card: fill the space it is
+         given instead of the standalone widget's 1024x600 box. Set by the host
+         page with the fill attribute. */
+      :host([fill]) {
+        max-width: none;
+        margin: 0;
+        height: 100%;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      :host([fill]:hover) {
+        box-shadow: none;
+        transform: none;
+      }
+
+      :host([fill]) .chat-layout {
+        height: 100%;
+        max-height: none;
+      }
+
       :host(.maximized) {
         position: fixed;
         top: var(--vanna-space-6);

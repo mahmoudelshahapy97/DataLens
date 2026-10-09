@@ -246,9 +246,16 @@
              either side of the card sat empty. A column also lets a question be a
              sentence rather than something that has to fit in a pill. -->
         <div class="ask-layout">
-          <aside class="ask-side" id="ask-side" hidden
+          <aside class="ask-side" id="ask-side"
                  data-i18n-attr="aria-label:ask.tryLead" aria-label="Try asking">
-            <p class="rail-label" data-i18n="ask.tryLead">Try asking</p>
+            <label class="rail-label" for="llm-effort" data-i18n="ask.effort">Reasoning effort</label>
+            <select id="llm-effort" data-i18n-attr="title:ask.effortHelp"
+                    title="Lower is faster; higher thinks longer before answering.">
+              <option value="" data-i18n="ask.effortDefault">Server default</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>            </select>
+            <p class="rail-label" id="starters-label" data-i18n="ask.tryLead" hidden>Try asking</p>
             <div class="starters" id="starters"></div>
             <div class="starters" id="ask-tools" hidden>
               <button class="starter" id="preview-prompt" type="button"

@@ -23,6 +23,8 @@ role that decides what it can do is read from the ``tenant_users`` row.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -318,7 +320,7 @@ def build_byo_llm_service(headers: Dict[str, str]) -> Optional[Any]:
         return None
 
 
-def close_llm_service(service: Any) -> None:
+async def close_llm_service(service: Any) -> None:
     """Release a per-request LLM service's HTTP connections.
 
     Each personal-key request builds its own client and each client holds a
@@ -334,6 +336,8 @@ def close_llm_service(service: Any) -> None:
     if not callable(close):
         return
     try:
-        close()
+        result = close()
+        if inspect.isawaitable(result):  # AsyncOpenAI.close() is a coroutine
+            await result
     except Exception as exc:  # noqa: BLE001 - a failed cleanup must not fail a request
         logger.debug("Could not close per-request LLM client: %s", type(exc).__name__)

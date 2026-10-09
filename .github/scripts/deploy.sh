@@ -126,14 +126,20 @@ start || rollback "the new release did not become ready at $READY_URL"
 # Keep the current and previous release of each image for a manual rollback, and
 # nothing older: every release is a few hundred MB.
 
-keep=$(cat release.env "$STATE/release.env.previous" 2>/dev/null | cut -d= -f2 | sort -u)
-for image in "$BACKEND_IMAGE" "$FRONTEND_IMAGE"; do
-  repo=${image%:*}
-  docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | while read -r ref; do
-    grep -qxF "$ref" <<<"$keep" || docker image rm "$ref" >/dev/null 2>&1 || true
+# The previous file is absent on a host's first deploy; under pipefail that would
+# abort the script after a successful start.
+keep=$(cat release.env "$STATE/release.env.previous" 2>/dev/null | cut -d= -f2 | sort -u || true)
+# An empty list means release.env could not be read; pruning against it would
+# remove the running images too, so skip pruning rather than guess.
+if [ -n "$keep" ]; then
+  for image in "$BACKEND_IMAGE" "$FRONTEND_IMAGE"; do
+    repo=${image%:*}
+    docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | while read -r ref; do
+      grep -qxF "$ref" <<<"$keep" || docker image rm "$ref" >/dev/null 2>&1 || true
+    done
   done
-done
-docker image prune -f >/dev/null
+  docker image prune -f >/dev/null
+fi
 rm -f "$BUNDLE"
 
 log "Deployed $BACKEND_IMAGE"

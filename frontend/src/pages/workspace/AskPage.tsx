@@ -37,8 +37,24 @@ type ChatElement = HTMLElement & {
 declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
-      'vanna-chat': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'vanna-chat': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+        /** Fill the parent instead of the standalone 1024x600 widget box. */
+        fill?: string;
+      };
     }
+  }
+}
+
+const EFFORT_KEY = 'vanna.reasoningEffort';
+const EFFORTS = ['minimal', 'low', 'medium', 'high'] as const;
+
+/** '' means "let the server decide". A preference, not a credential. */
+function readEffort(): string {
+  try {
+    const value = localStorage.getItem(EFFORT_KEY) ?? '';
+    return (EFFORTS as readonly string[]).includes(value) ? value : '';
+  } catch {
+    return '';
   }
 }
 
@@ -75,6 +91,7 @@ export default function AskPage() {
   const [starters, setStarters] = React.useState<Starter[]>([]);
   const [threadTick, setThreadTick] = React.useState(0);
   const { theme } = useAppearance();
+  const [effort, setEffort] = React.useState(readEffort);
 
   React.useEffect(() => {
     let current = true;
@@ -104,8 +121,10 @@ export default function AskPage() {
     const all: Record<string, string> = { ...identityHeaders(identity) };
     const token = csrfToken();
     if (token) all['X-CSRF-Token'] = token;
+    // Speed/quality dial for OpenAI reasoning models; the server validates it.
+    if (effort) all['X-LLM-Reasoning-Effort'] = effort;
     return all;
-  }, [identity]);
+  }, [identity, effort]);
 
   // Read through a ref so the listener below always sees current values without
   // being re-attached -- re-attaching is what would reintroduce the race.
@@ -158,6 +177,18 @@ export default function AskPage() {
    * all, silently, because both branches were no-ops on an element that
    * implements neither.
    */
+  function changeEffort(next: string) {
+    setEffort(next);
+    try {
+      if (next) localStorage.setItem(EFFORT_KEY, next);
+      else localStorage.removeItem(EFFORT_KEY);
+    } catch {
+      /* private mode: the choice lasts until reload */
+    }
+    // `headers` changes with `effort`, and the effect above re-applies it to the
+    // chat element, which caches the set it was given.
+  }
+
   function ask(question: string) {
     const element = chatRef.current;
     if (!element?.sendMessage) {
@@ -198,8 +229,27 @@ export default function AskPage() {
         ) : null}
       </aside>
 
-      <div className="min-h-0 overflow-hidden rounded-md border border-border bg-surface">
-        <vanna-chat ref={attach as React.Ref<HTMLElement>} style={{ display: 'block', height: '100%' }} />
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-surface">
+        <div className="min-h-0 flex-1">
+          <vanna-chat fill="" ref={attach as React.Ref<HTMLElement>} style={{ display: 'block', height: '100%' }} />
+        </div>
+        <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+          <label htmlFor="reasoning-effort">{t('ask.effort')}</label>
+          <select
+            id="reasoning-effort"
+            value={effort}
+            onChange={(event) => changeEffort(event.target.value)}
+            title={t('ask.effortHelp')}
+            className="h-7 rounded-md border border-border bg-surface px-2 text-foreground"
+          >
+            <option value="">{t('ask.effortDefault')}</option>
+            {EFFORTS.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </div>
   );

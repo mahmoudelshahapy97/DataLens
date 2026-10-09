@@ -606,14 +606,21 @@ class PostgresConversationStore:
         return (row or {}).get("data_source_id") or data_source_id
 
     async def data_source_of(
-        self, tenant_id: str, conversation_id: str
+        self, tenant_id: str, conversation_id: str, user_id: Optional[str] = None
     ) -> Optional[str]:
-        """What this thread is bound to, or None for the workspace default."""
-        row = await self.db.fetch_one(
+        """What this thread is bound to, or None for the workspace default.
+
+        Pass *user_id* to scope the lookup to that user's own threads.
+        """
+        sql = (
             f"SELECT data_source_id FROM {SCHEMA}.conversations "
-            "WHERE id = %s AND tenant_id = %s",
-            (conversation_id, tenant_id),
+            "WHERE id = %s AND tenant_id = %s"
         )
+        params: tuple = (conversation_id, tenant_id)
+        if user_id is not None:
+            sql += " AND user_id = %s"
+            params += (user_id,)
+        row = await self.db.fetch_one(sql, params)
         return (row or {}).get("data_source_id")
 
     async def summaries(

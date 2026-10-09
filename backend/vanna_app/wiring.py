@@ -421,7 +421,9 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
         # An already-bound thread decides, whatever the client says now.
         if conversations is not None and conversation_id:
             try:
-                bound = await conversations.data_source_of(user.tenant_id, conversation_id)
+                bound = await conversations.data_source_of(
+                    user.tenant_id, conversation_id, user.id
+                )
             except Exception as exc:
                 logger.warning("Could not read the thread's database: %s", exc)
                 bound = None
@@ -446,11 +448,16 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
         try:
             await platform.resolve_source(user.tenant_id, str(requested))
         except Exception as exc:
+            # Refuse rather than quietly answer from the default database: the
+            # user asked about one database and would believe the reply was
+            # about it.
             logger.warning(
-                "Ignoring an unavailable database %r for %s: %s",
+                "Refusing an unavailable database %r for %s: %s",
                 requested, user.tenant_id, exc,
             )
-            return None
+            raise PermissionError(
+                "That database is not available in this workspace."
+            ) from exc
 
         if conversations is not None and conversation_id:
             try:
@@ -462,6 +469,23 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
                 # Losing the pin is a worse answer next turn, not a wrong one now.
                 logger.warning("Could not pin the thread's database: %s", exc)
         return str(requested)
+
+    class _TokenPair:
+        """The LLM-service token and the reasoning-effort token, released together."""
+
+        def __init__(self, service_token: Any, effort_token: Any) -> None:
+            self.service_token = service_token
+            self.effort_token = effort_token
+
+    def _release(token: Any) -> None:
+        from vanna.core.llm import release_llm_service
+        from vanna.integrations.openai.llm import release_reasoning_effort
+
+        if isinstance(token, _TokenPair):
+            release_reasoning_effort(token.effort_token)
+            token = token.service_token
+        if token is not None:
+            release_llm_service(token)
 
     class TenantDispatchChatHandler(ChatHandler):
 
@@ -476,6 +500,7 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
             somebody else's API key.
             """
             from vanna.core.llm import use_llm_service
+            from vanna.integrations.openai.llm import use_reasoning_effort
 
             # Read the key BEFORE resolving, because resolve_user strips it from the
             # request context on the way past -- see the comment there.
@@ -505,6 +530,20 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
                     logger.info(
                         "Answering for %s on their own key (quota not charged)", user.email
                     )
+            # A speed/quality dial, not a credential, so it applies on the server's
+            # own key too. Folded into the same token slot so every caller's
+            # `finally` releases it.
+            try:
+                effort_token = use_reasoning_effort(
+                    lowered.get("x-llm-reasoning-effort")
+                )
+            except Exception:
+                # The caller never receives the token, so release it here.
+                if token is not None:
+                    _release(token)
+                raise
+            if effort_token is not None:
+                token = _TokenPair(token, effort_token)
             return handler, token, service
 
         async def handle_stream(self, request: Any) -> Any:
@@ -512,8 +551,6 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
             # handling, which turns it into an SSE `error` event. That is the right
             # place for it to land: the user is looking at the chat transcript, not
             # at a status code.
-            from vanna.core.llm import release_llm_service
-
             handler, token, service = await self._delegate(request)
             try:
                 async for chunk in handler.handle_stream(request):
@@ -522,21 +559,19 @@ def _tenant_dispatch_handler(settings: Any, services: Dict[str, Any]) -> Any:
                 # Also runs when the client disconnects mid-stream, which is the
                 # case that would otherwise leak both the override and the socket.
                 if token is not None:
-                    release_llm_service(token)
+                    _release(token)
                 if service is not None:
-                    close_llm_service(service)
+                    await close_llm_service(service)
 
         async def handle_poll(self, request: Any) -> Any:
-            from vanna.core.llm import release_llm_service
-
             handler, token, service = await self._delegate(request)
             try:
                 return await handler.handle_poll(request)
             finally:
                 if token is not None:
-                    release_llm_service(token)
+                    _release(token)
                 if service is not None:
-                    close_llm_service(service)
+                    await close_llm_service(service)
 
     return TenantDispatchChatHandler()
 

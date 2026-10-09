@@ -11,6 +11,7 @@ conversation upstream.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 from typing import Any, AsyncGenerator, Dict, List, Optional, cast
@@ -48,6 +49,49 @@ def _token_limit_parameter(model: str) -> str:
     )
 
 
+REASONING_EFFORTS = ("low", "medium", "high")
+
+#: Per-request choice from the caller (the chat UI). Set for the life of one request
+#: with :func:`use_reasoning_effort`, so it applies to the server's own key as well
+#: as a personal one.
+_effort_override: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "openai_reasoning_effort", default=None
+)
+
+
+def use_reasoning_effort(value: Optional[str]) -> Optional[contextvars.Token]:
+    """Apply *value* to this request; unknown values are ignored. Release the token."""
+    value = (value or "").strip().lower()
+    if value not in REASONING_EFFORTS:
+        return None
+    return _effort_override.set(value)
+
+
+def release_reasoning_effort(token: Optional[contextvars.Token]) -> None:
+    if token is not None:
+        _effort_override.reset(token)
+
+
+def _reasoning_effort(model: str) -> Optional[str]:
+    """Reasoning effort to request for *model*, or None if it takes no such knob.
+
+    Reasoning models default to medium effort, which turns a text-to-SQL call into
+    15-30 s of hidden thinking. The caller's choice wins; otherwise
+    ``OPENAI_REASONING_EFFORT`` (default ``low``; empty sends nothing).
+    """
+    name = (model or "").lower().lstrip()
+    if not name.startswith(_COMPLETION_TOKEN_MODELS):
+        return None
+    chosen = _effort_override.get()
+    if chosen:
+        return chosen
+    configured = os.getenv("OPENAI_REASONING_EFFORT", "low").strip().lower()
+    if not configured:
+        return None
+    # A typo in the env must not turn every chat into a 400.
+    return configured if configured in REASONING_EFFORTS else "low"
+
+
 class OpenAILlmService(LlmService):
     """OpenAI Chat Completions-backed LLM service.
 
@@ -68,7 +112,7 @@ class OpenAILlmService(LlmService):
         **extra_client_kwargs: Any,
     ) -> None:
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
         except Exception as e:  # pragma: no cover - import-time error surface
             raise ImportError(
                 "openai package is required. Install with: pip install openai"
@@ -87,14 +131,21 @@ class OpenAILlmService(LlmService):
         if base_url:
             client_kwargs["base_url"] = base_url
 
-        self._client = OpenAI(**client_kwargs)
+        # Async client: the sync one blocked the event loop for the whole LLM call,
+        # stalling every other request on the worker. The timeout makes a stuck call
+        # fail instead of hanging the chat.
+        try:
+            timeout = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "90"))
+        except ValueError:
+            timeout = 90.0
+        client_kwargs.setdefault("timeout", timeout)
+        self._client = AsyncOpenAI(**client_kwargs)
 
     async def send_request(self, request: LlmRequest) -> LlmResponse:
         """Send a non-streaming request to OpenAI and return the response."""
         payload = self._build_payload(request)
 
-        # Call the API synchronously; this function is async but we can block here.
-        resp = self._client.chat.completions.create(**payload, stream=False)
+        resp = await self._client.chat.completions.create(**payload, stream=False)
 
         if not resp.choices:
             return LlmResponse(content=None, tool_calls=None, finish_reason=None)
@@ -134,7 +185,7 @@ class OpenAILlmService(LlmService):
         # `include_usage` makes the API append a final packet carrying the token
         # counts. Without it a streamed call reports none at all, which is why
         # cost could never be attributed to a chat answer.
-        stream = self._client.chat.completions.create(
+        stream = await self._client.chat.completions.create(
             **payload, stream=True, stream_options={"include_usage": True}
         )
 
@@ -144,7 +195,7 @@ class OpenAILlmService(LlmService):
         usage: Optional[Dict[str, int]] = None
         model_name: Optional[str] = None
 
-        for event in stream:
+        async for event in stream:
             # The usage packet arrives with an empty `choices`, so it has to be
             # read before the guard below skips it.
             if getattr(event, "usage", None):
@@ -286,6 +337,9 @@ class OpenAILlmService(LlmService):
         }
         if request.max_tokens is not None:
             payload[_token_limit_parameter(self.model)] = request.max_tokens
+        effort = _reasoning_effort(self.model)
+        if effort:
+            payload["reasoning_effort"] = effort
         if tools_payload:
             payload["tools"] = tools_payload
             payload["tool_choice"] = "auto"

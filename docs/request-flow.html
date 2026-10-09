@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat Request Flow</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; background: #fff; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; } h2 { margin-top: 2rem; }
+  .diagram { overflow: auto; border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
+  ol li { margin: 6px 0; } code { background: #f1f1f1; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Chat request flow: what happens when a question is submitted</h1>
+<ol>
+  <li><b>Browser</b>: <code>&lt;vanna-chat&gt;</code> POSTs to <code>/api/vanna/v2/chat_sse</code> with the session cookie.</li>
+  <li><b>FastAPI route</b>: <code>chat_sse</code> builds a <code>RequestContext</code> and streams chunks over SSE.</li>
+  <li><b>Tenant dispatch</b>: resolves the user, picks the tenant runtime, optional BYO LLM key.</li>
+  <li><b>Agent</b>: hooks, conversation, workflow handler, tools, system prompt, then the turn graph.</li>
+  <li><b>Turn graph</b>: <code>llm_turn → tools → llm_turn … → answer</code>, with optional Planner and Critic nodes.</li>
+  <li><b>Response</b>: each UI component becomes a stream chunk rendered live in the browser.</li>
+</ol>
+
+<h2>Flowchart</h2>
+<div class="diagram"><div class="out"></div><script type="text/plain" class="src">
+flowchart TD
+    A["User submits question<br/>vanna-chat / AskPage.tsx"] --> B["api-client.streamChat<br/>POST /api/vanna/v2/chat_sse<br/>(cookie, SSE, AbortSignal)"]
+    B --> C["routes.py chat_sse<br/>build RequestContext<br/>(cookies, headers, IP)"]
+    C --> D["pump task: handle_stream<br/>to asyncio.Queue"]
+    D --> E["TenantDispatchChatHandler<br/>wiring.py _delegate"]
+
+    E --> E1["resolve_user from cookie"]
+    E1 --> E2{"Full session?<br/>(not temp password)"}
+    E2 -- No --> ERR
+    E2 -- Yes --> E3["Resolve data source<br/>platform.runtime_for(tenant, ds)"]
+    E3 --> E4{"BYO key?"}
+    E4 -- Yes --> E5["Use user's own LLM service<br/>quota not charged"]
+    E4 -- No --> E6["Server LLM key"]
+    E5 --> F
+    E6 --> F
+
+    F["ChatHandler.handle_stream<br/>agent.send_message"] --> G["Agent._send_message"]
+    G --> G1["resolve user, before_message hooks"]
+    G1 --> G2{"Empty message<br/>or starter?"}
+    G2 -- Yes --> G3["Return starter UI<br/>no LLM"]
+    G2 -- No --> G4["Load or create conversation"]
+    G4 --> G5{"Workflow handler<br/>matches? (slash cmd)"}
+    G5 -- Yes --> G6["Run command, skip LLM"]
+    G5 -- No --> G7["Append user message<br/>build ToolContext + enrichers"]
+    G7 --> G8["Get tool schemas<br/>build system prompt<br/>(+ domain, memory, instructions)"]
+    G8 --> G9["Build LlmRequest + TurnState"]
+
+    G9 --> H
+
+    subgraph H["Turn graph"]
+        direction TB
+        P["PlannerNode (optional)"] --> L["llm_turn<br/>LLM streams text + tool calls"]
+        L --> Q{"Tool calls?"}
+        Q -- Yes --> T["tools node<br/>run_sql etc. on tenant data source"]
+        T --> L
+        Q -- No --> CR{"Data tool ran<br/>and rows returned?"}
+        CR -- Yes --> CK["CriticNode<br/>OK or reject"]
+        CK -- Reject, retry left --> L
+        CK -- OK --> AN["answer node"]
+        CR -- No --> AN
+    end
+
+    H --> LIM{"Hit max_tool_iterations?"}
+    LIM -- Yes --> W["Warning card:<br/>Tool limit reached"]
+    LIM -- No --> S
+    W --> S["Save conversation<br/>status idle, re-enable input"]
+
+    S --> R["Each UiComponent becomes ChatStreamChunk<br/>create + update frames"]
+    R --> U["SSE: data: {...}<br/>keepalive comments<br/>data: [DONE]"]
+    U --> V["Browser renders live:<br/>status, tasks, text, table/chart"]
+
+    ERR["Error or UserFacingError"] --> EC["Error status card<br/>+ error chunk"]
+    EC --> U
+    G3 --> U
+    G6 --> U
+</script></div>
+
+<h2>Sequence diagram</h2>
+<div class="diagram"><div class="out"></div><script type="text/plain" class="src">
+sequenceDiagram
+    participant UI as vanna-chat (browser)
+    participant API as FastAPI chat_sse
+    participant TD as TenantDispatchHandler
+    participant AG as Agent
+    participant LLM as LLM service
+    participant DB as Tenant data source
+
+    UI->>API: POST /chat_sse {message, conversation_id}
+    API->>TD: handle_stream(request)
+    TD->>TD: resolve user, pick tenant runtime, BYO key?
+    TD->>AG: send_message(...)
+    AG-->>UI: status "Processing..." (SSE)
+    AG->>AG: load conversation, hooks, workflow check
+    AG->>AG: tools + system prompt + context
+    loop until final answer or iteration limit
+        AG->>LLM: request (stream)
+        LLM-->>AG: text / tool call
+        AG-->>UI: partial text (create/update frames)
+        opt tool call
+            AG->>DB: run_sql
+            DB-->>AG: rows
+            AG-->>UI: table / chart component
+        end
+    end
+    opt CriticNode wired
+        AG->>LLM: does this answer the question?
+        LLM-->>AG: OK or reject (retry)
+    end
+    AG->>AG: save conversation
+    AG-->>UI: status idle, input re-enabled
+    API-->>UI: data: [DONE]
+</script></div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, flowchart: { useMaxWidth: false } });
+  let n = 0;
+  for (const box of document.querySelectorAll(".diagram")) {
+    const text = box.querySelector("script.src").textContent.trim();
+    try {
+      const { svg } = await mermaid.render("d" + n++, text);
+      box.querySelector(".out").innerHTML = svg;
+    } catch (e) {
+      box.querySelector(".out").textContent = "Render error: " + e.message;
+    }
+  }
+</script>
+</body>
+</html>

@@ -94,15 +94,29 @@ def register_chat_routes(
 
         async def generate() -> AsyncGenerator[str, None]:
             """Generate SSE stream."""
+            # The handler runs in ONE task and hands chunks over a queue. Timing out
+            # `stream.__anext__()` directly would cancel the generator mid-step
+            # (ending the stream early), and stepping it from a fresh task each time
+            # would lose the per-request contextvars the handler sets for its LLM.
+            queue: asyncio.Queue = asyncio.Queue()
+            end = object()
+
+            async def pump() -> None:
+                try:
+                    async for chunk in chat_handler.handle_stream(chat_request):
+                        queue.put_nowait(chunk)
+                except Exception as exc:  # re-raised on the consumer side
+                    queue.put_nowait(exc)
+                finally:
+                    queue.put_nowait(end)
+
+            pump_task = asyncio.ensure_future(pump())
             try:
-                stream = chat_handler.handle_stream(chat_request).__aiter__()
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(
-                            stream.__anext__(), timeout=_SSE_KEEPALIVE_SECONDS
+                        item = await asyncio.wait_for(
+                            queue.get(), timeout=_SSE_KEEPALIVE_SECONDS
                         )
-                    except StopAsyncIteration:
-                        break
                     except asyncio.TimeoutError:
                         # An SSE comment: keeps proxies from reaping an idle
                         # connection, and is ignored by any client that only
@@ -110,7 +124,11 @@ def register_chat_routes(
                         yield ": keepalive\n\n"
                         continue
 
-                    yield f"data: {chunk.model_dump_json()}\n\n"
+                    if item is end:
+                        break
+                    if isinstance(item, Exception):
+                        raise item
+                    yield f"data: {item.model_dump_json()}\n\n"
             except Exception:
                 logger.exception(
                     "chat_sse stream failed (conversation_id=%s, request_id=%s)",
@@ -126,6 +144,14 @@ def register_chat_routes(
                 ):
                     yield frame
             finally:
+                # Cancelling runs the handler's own `finally` (LLM override and
+                # client release), including when the client disconnects.
+                if not pump_task.done():
+                    pump_task.cancel()
+                    try:
+                        await pump_task
+                    except BaseException:  # noqa: BLE001 - cancellation, already handled
+                        pass
                 # In a finally block so the client's read loop terminates on the
                 # error path too, rather than hanging until the socket closes.
                 yield "data: [DONE]\n\n"
