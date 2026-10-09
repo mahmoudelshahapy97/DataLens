@@ -3,48 +3,82 @@
     "question": "What is the total revenue for each genre?",
     "query": "SELECT g.name AS genre, ROUND(SUM(il.unit_price * il.quantity), 2) AS revenue FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.genre AS g ON g.genre_id = t.genre_id GROUP BY g.name",
     "database": "chinook",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 2
   },
   {
     "question": "Which five artists generated the most revenue?",
     "query": "SELECT ar.name AS artist, ROUND(SUM(il.unit_price * il.quantity), 2) AS revenue FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.album AS al ON al.album_id = t.album_id JOIN chinook.artist AS ar ON ar.artist_id = al.artist_id GROUP BY ar.artist_id, ar.name ORDER BY revenue DESC LIMIT 5",
     "database": "chinook",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 3
   },
   {
     "question": "How much have the customers of each sales support agent spent in total? Show the agent's last name.",
     "query": "SELECT e.last_name, ROUND(SUM(i.total), 2) AS revenue FROM chinook.invoice AS i JOIN chinook.customer AS c ON c.customer_id = i.customer_id JOIN chinook.employee AS e ON e.employee_id = c.support_rep_id GROUP BY e.employee_id, e.last_name",
     "database": "chinook",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 2
   },
   {
     "question": "For customers based in Brazil, what is the revenue by media type?",
     "query": "SELECT mt.name AS media_type, ROUND(SUM(il.unit_price * il.quantity), 2) AS revenue FROM chinook.invoice_line AS il JOIN chinook.invoice AS i ON i.invoice_id = il.invoice_id JOIN chinook.customer AS c ON c.customer_id = i.customer_id JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.media_type AS mt ON mt.media_type_id = t.media_type_id WHERE c.country = 'Brazil' GROUP BY mt.name",
     "database": "chinook",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 4
   },
   {
-    "question": "How many distinct customers have bought at least one track of each genre?",
-    "query": "SELECT g.name AS genre, COUNT(DISTINCT i.customer_id) AS customers FROM chinook.invoice_line AS il JOIN chinook.invoice AS i ON i.invoice_id = il.invoice_id JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.genre AS g ON g.genre_id = t.genre_id GROUP BY g.name",
+    "question": "For each genre, how many distinct customers have bought at least one of its tracks?",
+    "query": "SELECT g.name AS genre, COUNT(DISTINCT i.customer_id) AS customers FROM chinook.genre AS g LEFT JOIN chinook.track AS t ON t.genre_id = g.genre_id LEFT JOIN chinook.invoice_line AS il ON il.track_id = t.track_id LEFT JOIN chinook.invoice AS i ON i.invoice_id = il.invoice_id GROUP BY g.name",
     "database": "chinook",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
+    "note": "Every genre, including any with no sales (0 customers).",
     "hops": 3
   },
   {
     "question": "How many playlists contain at least one Iron Maiden track?",
     "query": "SELECT COUNT(DISTINCT pt.playlist_id) AS playlists FROM chinook.playlist_track AS pt JOIN chinook.track AS t ON t.track_id = pt.track_id JOIN chinook.album AS al ON al.album_id = t.album_id JOIN chinook.artist AS ar ON ar.artist_id = al.artist_id WHERE ar.name = 'Iron Maiden'",
     "database": "chinook",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 3
   },
   {
     "question": "What is the revenue from Rock tracks in each billing country?",
     "query": "SELECT i.billing_country, ROUND(SUM(il.unit_price * il.quantity), 2) AS revenue FROM chinook.invoice_line AS il JOIN chinook.invoice AS i ON i.invoice_id = il.invoice_id JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.genre AS g ON g.genre_id = t.genre_id WHERE g.name = 'Rock' GROUP BY i.billing_country",
     "database": "chinook",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 3
   },
   {
     "question": "For each genre, how many tracks are in the catalogue and how much revenue have they made?",
     "query": "WITH track_counts AS (SELECT genre_id, COUNT(*) AS tracks FROM chinook.track GROUP BY genre_id), revenue AS (SELECT t.genre_id, SUM(il.unit_price * il.quantity) AS revenue FROM chinook.invoice_line AS il JOIN chinook.track AS t ON t.track_id = il.track_id GROUP BY t.genre_id) SELECT g.name AS genre, tc.tracks, ROUND(COALESCE(r.revenue, 0), 2) AS revenue FROM chinook.genre AS g JOIN track_counts AS tc ON tc.genre_id = g.genre_id LEFT JOIN revenue AS r ON r.genre_id = g.genre_id",
     "database": "chinook",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop",
+      "fan_trap"
+    ],
     "hops": 2,
     "note": "Fan trap: joining track and invoice_line once and counting tracks counts invoice lines instead."
   }

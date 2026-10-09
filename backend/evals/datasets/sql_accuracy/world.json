@@ -1,0 +1,79 @@
+[
+  {
+    "question": "For each continent, what is the total population and how many countries does it have?",
+    "query": "SELECT continent, SUM(population) AS population, COUNT(*) AS countries FROM world.country GROUP BY continent",
+    "database": "world",
+    "difficulty": "easy",
+    "skills": ["aggregate"]
+  },
+  {
+    "question": "Which countries have a capital city that is not their most populous city in the database? Give the country names.",
+    "query": "WITH biggest AS (SELECT countrycode, MAX(population) AS population FROM world.city GROUP BY countrycode) SELECT co.name FROM world.country AS co JOIN world.city AS cap ON cap.id = co.capital JOIN biggest AS b ON b.countrycode = co.code WHERE cap.population < b.population",
+    "database": "world",
+    "difficulty": "hard",
+    "skills": ["circular_reference", "subquery_comparison"],
+    "hops": 2,
+    "note": "country.capital -> city.id and city.countrycode -> country.code: the same pair of tables joined two different ways."
+  },
+  {
+    "question": "In which countries is English an official language, and what percentage of the population speaks it there?",
+    "query": "SELECT co.name, cl.percentage FROM world.countrylanguage AS cl JOIN world.country AS co ON co.code = cl.countrycode WHERE cl.language = 'English' AND cl.isofficial = 'T'",
+    "database": "world",
+    "difficulty": "medium",
+    "skills": ["value_filter"],
+    "hops": 1
+  },
+  {
+    "question": "Roughly how many people speak Spanish on each continent? Estimate it as each country's population times the percentage of Spanish speakers there.",
+    "query": "SELECT co.continent, SUM(co.population * cl.percentage / 100) AS spanish_speakers FROM world.countrylanguage AS cl JOIN world.country AS co ON co.code = cl.countrycode WHERE cl.language = 'Spanish' GROUP BY co.continent",
+    "database": "world",
+    "difficulty": "hard",
+    "skills": ["derived_measure", "weighted_sum"],
+    "hops": 1
+  },
+  {
+    "question": "What are the 10 most populous cities in Asia, and which country is each in?",
+    "query": "SELECT ci.name AS city, co.name AS country, ci.population FROM world.city AS ci JOIN world.country AS co ON co.code = ci.countrycode WHERE co.continent = 'Asia' ORDER BY ci.population DESC LIMIT 10",
+    "database": "world",
+    "difficulty": "medium",
+    "skills": ["top_n", "multi_hop"],
+    "hops": 1
+  },
+  {
+    "question": "Which countries have more than 3 official languages, and how many official languages do they have?",
+    "query": "SELECT co.name, COUNT(*) AS official_languages FROM world.countrylanguage AS cl JOIN world.country AS co ON co.code = cl.countrycode WHERE cl.isofficial = 'T' GROUP BY co.code, co.name HAVING COUNT(*) > 3",
+    "database": "world",
+    "difficulty": "medium",
+    "skills": ["having", "value_filter"],
+    "hops": 1
+  },
+  {
+    "question": "For countries with more than 10 million people, what percentage (0-100) of the population lives in the capital city? Show the country and the percentage.",
+    "query": "SELECT co.name, 100.0 * cap.population / co.population AS pct_in_capital FROM world.country AS co JOIN world.city AS cap ON cap.id = co.capital WHERE co.population > 10000000",
+    "database": "world",
+    "difficulty": "hard",
+    "skills": ["circular_reference", "ratio"],
+    "hops": 1
+  },
+  {
+    "question": "What is the average life expectancy on each continent, ignoring countries with no life expectancy recorded?",
+    "query": "SELECT continent, AVG(lifeexpectancy) AS avg_life_expectancy FROM world.country WHERE lifeexpectancy IS NOT NULL GROUP BY continent",
+    "database": "world",
+    "difficulty": "easy",
+    "skills": ["null_handling"]
+  },
+  {
+    "question": "Which countries have no cities listed in the database?",
+    "query": "SELECT co.name FROM world.country AS co WHERE NOT EXISTS (SELECT 1 FROM world.city AS ci WHERE ci.countrycode = co.code)",
+    "database": "world",
+    "difficulty": "medium",
+    "skills": ["anti_join"]
+  },
+  {
+    "question": "For each continent, which country has the largest population? Ignore countries with a population of zero. Show the continent, the country and its population.",
+    "query": "WITH ranked AS (SELECT continent, name, population, RANK() OVER (PARTITION BY continent ORDER BY population DESC) AS rnk FROM world.country WHERE population > 0) SELECT continent, name, population FROM ranked WHERE rnk = 1",
+    "database": "world",
+    "difficulty": "hard",
+    "skills": ["top_n_per_group", "window"]
+  }
+]

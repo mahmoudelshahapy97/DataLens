@@ -331,6 +331,19 @@ class SchemaScanner:
             else "AND table_schema NOT IN "
             "('information_schema','pg_catalog','sys','performance_schema','mysql')"
         )
+        if self.dialect in ("postgres", "postgresql"):
+            # Partitions are listed as base tables of their own. Pagila's
+            # `payment` has 54 -- `payment_p2022_01` and on -- each with the
+            # foreign keys the parent does not declare, so the catalog got 54
+            # near-identical tables in every prompt and the table queries are
+            # written against had no join edges at all. Keep the parent; the
+            # partitions are a storage detail.
+            where += (
+                " AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c"
+                " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+                " WHERE c.relname = table_name AND n.nspname = table_schema"
+                " AND c.relispartition)"
+            )
         rows = await self._query(
             context,
             "SELECT table_schema, table_name FROM information_schema.tables "

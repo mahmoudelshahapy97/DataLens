@@ -1,0 +1,117 @@
+[
+  {
+    "question": "What is the total billed amount for each department, attributing each bill to the department of the staff member who held the appointment?",
+    "query": "SELECT d.departmentname, SUM(b.amount) AS billed FROM healthcare.billing AS b JOIN healthcare.appointments AS a ON a.appointmentid = b.appointmentid JOIN healthcare.medicalstaff AS m ON m.medstaffid = a.medstaffid JOIN healthcare.departments AS d ON d.departmentid = m.departmentid GROUP BY d.departmentname",
+    "database": "healthcare",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
+    "hops": 3
+  },
+  {
+    "question": "What percentage of appointments ended as a no-show, for each visit type?",
+    "query": "SELECT visittype, 100.0 * COUNT(*) FILTER (WHERE status = 'No-Show') / COUNT(*) AS no_show_pct FROM healthcare.appointments GROUP BY visittype",
+    "database": "healthcare",
+    "difficulty": "medium",
+    "skills": [
+      "ratio",
+      "value_filter"
+    ]
+  },
+  {
+    "question": "How much billing is still pending for each payment method?",
+    "query": "SELECT paymentmethod, SUM(amount) AS pending FROM healthcare.billing WHERE status = 'Pending' GROUP BY paymentmethod",
+    "database": "healthcare",
+    "difficulty": "easy",
+    "skills": [
+      "value_filter"
+    ]
+  },
+  {
+    "question": "For each department that has a head of department, show the department name, the head's last name, and how many completed appointments that head has held.",
+    "query": "SELECT d.departmentname, m.lastname, COUNT(a.appointmentid) AS completed FROM healthcare.departments AS d JOIN healthcare.medicalstaff AS m ON m.medstaffid = d.headofdepartment LEFT JOIN healthcare.appointments AS a ON a.medstaffid = m.medstaffid AND a.status = 'Completed' GROUP BY d.departmentname, m.medstaffid, m.lastname",
+    "database": "healthcare",
+    "difficulty": "hard",
+    "skills": [
+      "circular_reference",
+      "multi_hop"
+    ],
+    "hops": 2,
+    "note": "departments.headofdepartment -> medicalstaff and medicalstaff.departmentid -> departments form a cycle; the head is reached through the first."
+  },
+  {
+    "question": "For patients with a Penicillin allergy, how many prescriptions of each medication have they been given?",
+    "query": "SELECT p.medicationname, COUNT(*) AS prescriptions FROM healthcare.prescriptions AS p JOIN healthcare.appointments AS a ON a.appointmentid = p.appointmentid WHERE a.patientid IN (SELECT patientid FROM healthcare.allergies WHERE allergy = 'Penicillin') GROUP BY p.medicationname",
+    "database": "healthcare",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop",
+      "semi_join"
+    ],
+    "hops": 3
+  },
+  {
+    "question": "How many appointments were there in each month of 2024 that had any? Leave out months with none. Return the month number (1-12) and the count.",
+    "query": "SELECT EXTRACT(MONTH FROM appointmentdate) AS month, COUNT(*) AS appointments FROM healthcare.appointments WHERE appointmentdate >= '2024-01-01' AND appointmentdate < '2025-01-01' GROUP BY 1",
+    "database": "healthcare",
+    "difficulty": "easy",
+    "skills": [
+      "time_series"
+    ]
+  },
+  {
+    "question": "How many distinct patients have at least one completed MRI lab referral?",
+    "query": "SELECT COUNT(DISTINCT a.patientid) AS patients FROM healthcare.labreferrals AS l JOIN healthcare.appointments AS a ON a.appointmentid = l.appointmentid WHERE l.testtype = 'MRI' AND l.status = 'Completed'",
+    "database": "healthcare",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop",
+      "count_distinct"
+    ],
+    "hops": 1
+  },
+  {
+    "question": "What share (percentage) of the total paid billing amount comes from each payment method?",
+    "query": "SELECT paymentmethod, 100.0 * SUM(amount) / SUM(SUM(amount)) OVER () AS pct_of_paid FROM healthcare.billing WHERE status = 'Paid' GROUP BY paymentmethod",
+    "database": "healthcare",
+    "difficulty": "medium",
+    "skills": [
+      "ratio",
+      "percent_of_total",
+      "window"
+    ]
+  },
+  {
+    "question": "For each medical staff member who has held appointments, how many completed appointments did they hold and how many prescriptions were written at those completed appointments? Show their staff id and last name.",
+    "query": "WITH completed AS (SELECT appointmentid, medstaffid FROM healthcare.appointments WHERE status = 'Completed'), rx AS (SELECT appointmentid, COUNT(*) AS n FROM healthcare.prescriptions GROUP BY appointmentid) SELECT m.medstaffid, m.lastname, COUNT(c.appointmentid) AS completed_appointments, COALESCE(SUM(rx.n), 0) AS prescriptions FROM healthcare.medicalstaff AS m JOIN completed AS c ON c.medstaffid = m.medstaffid LEFT JOIN rx ON rx.appointmentid = c.appointmentid GROUP BY m.medstaffid, m.lastname",
+    "database": "healthcare",
+    "difficulty": "hard",
+    "skills": [
+      "fan_trap",
+      "multi_hop"
+    ],
+    "hops": 2,
+    "note": "Fan trap: COUNT(*) over appointments joined to prescriptions counts prescriptions, not appointments."
+  },
+  {
+    "question": "Which patients have never had a completed appointment? Give their first and last names.",
+    "query": "SELECT p.firstname, p.lastname FROM healthcare.patients AS p WHERE NOT EXISTS (SELECT 1 FROM healthcare.appointments AS a WHERE a.patientid = p.patientid AND a.status = 'Completed')",
+    "database": "healthcare",
+    "difficulty": "medium",
+    "skills": [
+      "anti_join",
+      "value_filter"
+    ]
+  },
+  {
+    "question": "For each blood type, what is the average billed amount per completed appointment?",
+    "query": "SELECT p.bloodtype, AVG(b.amount) AS avg_billed FROM healthcare.billing AS b JOIN healthcare.appointments AS a ON a.appointmentid = b.appointmentid JOIN healthcare.patients AS p ON p.patientid = a.patientid WHERE a.status = 'Completed' GROUP BY p.bloodtype",
+    "database": "healthcare",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
+    "hops": 2
+  }
+]

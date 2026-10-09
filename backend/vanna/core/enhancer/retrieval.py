@@ -149,6 +149,8 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         observability_provider: Emits per-section token metrics.
         count_tokens: Real tokenizer, if available.
         schema_threshold: Overrides the catalog's full-schema threshold.
+        schema_search_limit / schema_max_bridges: Override the search path's
+            table count and join-bridge cap (``SchemaCatalog.get_context``).
         knowledge: Curated knowledge linked to tables -- business terms and
             metrics that seed schema selection, and core columns rendered
             beside the schema. See ``vanna.capabilities.schema_graph.knowledge``.
@@ -170,6 +172,8 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         count_tokens: Optional[Callable[[str], int]] = None,
         schema_threshold: Optional[int] = None,
         knowledge: Optional["SchemaKnowledge"] = None,
+        schema_search_limit: Optional[int] = None,
+        schema_max_bridges: Optional[int] = None,
     ) -> None:
         self.catalog = catalog
         self.example_store = example_store
@@ -185,6 +189,8 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         #: None keeps the catalog's own default (SCHEMA_FULL_TEXT_THRESHOLD).
         self.schema_threshold = schema_threshold
         self.knowledge = knowledge
+        self.schema_search_limit = schema_search_limit
+        self.schema_max_bridges = schema_max_bridges
 
     # ------------------------------------------------------------------
     # LlmContextEnhancer interface
@@ -368,6 +374,10 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         kwargs = {}
         if self.schema_threshold is not None:
             kwargs["threshold"] = self.schema_threshold
+        if self.schema_search_limit is not None:
+            kwargs["search_limit"] = self.schema_search_limit
+        if self.schema_max_bridges is not None:
+            kwargs["max_bridges"] = self.schema_max_bridges
         hints = await self._knowledge_call("table_hints", [], context, question)
         if hints:
             kwargs["seed_tables"] = hints

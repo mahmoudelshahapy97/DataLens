@@ -1,0 +1,46 @@
+[
+  {
+    "dataset": "multi_hop_chinook.json",
+    "database": "chinook"
+  },
+  {
+    "dataset": "complex_chinook.json",
+    "database": "chinook"
+  },
+  {
+    "dataset": "multi_hop_northwind.json",
+    "database": "northwind"
+  },
+  {
+    "dataset": "complex_northwind.json",
+    "database": "northwind"
+  },
+  {
+    "dataset": "multi_hop_pagila.json",
+    "database": "pagila"
+  },
+  {
+    "dataset": "complex_pagila.json",
+    "database": "pagila"
+  },
+  {
+    "dataset": "ecommerce.json",
+    "database": "ecommerce"
+  },
+  {
+    "dataset": "healthcare.json",
+    "database": "healthcare"
+  },
+  {
+    "dataset": "booking.json",
+    "database": "booking"
+  },
+  {
+    "dataset": "employees.json",
+    "database": "employees"
+  },
+  {
+    "dataset": "world.json",
+    "database": "world"
+  }
+]

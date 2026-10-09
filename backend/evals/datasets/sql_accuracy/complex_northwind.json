@@ -1,0 +1,48 @@
+[
+  {
+    "question": "List every employee with the last name of their manager, including employees who have no manager.",
+    "query": "SELECT e.lastname AS employee, m.lastname AS manager FROM northwind.employee AS e LEFT JOIN northwind.employee AS m ON m.empid = e.mgrid",
+    "database": "northwind",
+    "difficulty": "medium",
+    "skills": ["self_join", "outer_join"]
+  },
+  {
+    "question": "How many customers have ordered products from every product category?",
+    "query": "SELECT COUNT(*) AS customers FROM (SELECT o.custid FROM northwind.salesorder AS o JOIN northwind.orderdetail AS od ON od.orderid = o.orderid JOIN northwind.product AS p ON p.productid = od.productid GROUP BY o.custid HAVING COUNT(DISTINCT p.categoryid) = (SELECT COUNT(*) FROM northwind.category)) AS everything",
+    "database": "northwind",
+    "difficulty": "hard",
+    "skills": ["relational_division", "multi_hop"],
+    "hops": 2
+  },
+  {
+    "question": "For each shipper, what percentage of the orders it shipped were shipped after their required date?",
+    "query": "SELECT sh.companyname, 100.0 * COUNT(*) FILTER (WHERE o.shippeddate > o.requireddate) / COUNT(*) AS late_pct FROM northwind.salesorder AS o JOIN northwind.shipper AS sh ON sh.shipperid = o.shipperid WHERE o.shippeddate IS NOT NULL GROUP BY sh.shipperid, sh.companyname",
+    "database": "northwind",
+    "difficulty": "hard",
+    "skills": ["ratio", "null_handling", "date_comparison"],
+    "hops": 1
+  },
+  {
+    "question": "Within each employee country, rank employees by the net revenue (after discounts) of the orders they handled. Show the country, the employee's last name, the revenue and the rank (1 = highest).",
+    "query": "WITH revenue AS (SELECT e.country, e.lastname, SUM(od.unitprice * od.qty * (1 - od.discount)) AS revenue FROM northwind.orderdetail AS od JOIN northwind.salesorder AS o ON o.orderid = od.orderid JOIN northwind.employee AS e ON e.empid = o.empid GROUP BY e.empid, e.country, e.lastname) SELECT country, lastname, revenue, RANK() OVER (PARTITION BY country ORDER BY revenue DESC) AS rank FROM revenue",
+    "database": "northwind",
+    "difficulty": "hard",
+    "skills": ["window", "ranking", "multi_hop"],
+    "hops": 2
+  },
+  {
+    "question": "Which customers placed at least one order in 2007 but no orders at all in 2008? Give their company names.",
+    "query": "SELECT cu.companyname FROM northwind.customer AS cu WHERE EXISTS (SELECT 1 FROM northwind.salesorder AS o WHERE o.custid = cu.custid AND o.orderdate >= '2007-01-01' AND o.orderdate < '2008-01-01') AND NOT EXISTS (SELECT 1 FROM northwind.salesorder AS o WHERE o.custid = cu.custid AND o.orderdate >= '2008-01-01' AND o.orderdate < '2009-01-01')",
+    "database": "northwind",
+    "difficulty": "hard",
+    "skills": ["anti_join", "semi_join", "time_filter"]
+  },
+  {
+    "question": "Which products are priced above the average unit price of the products in their own category? Show the product name, its category and its unit price.",
+    "query": "SELECT p.productname, c.categoryname, p.unitprice FROM northwind.product AS p JOIN northwind.category AS c ON c.categoryid = p.categoryid WHERE p.unitprice > (SELECT AVG(p2.unitprice) FROM northwind.product AS p2 WHERE p2.categoryid = p.categoryid)",
+    "database": "northwind",
+    "difficulty": "hard",
+    "skills": ["correlated_subquery"],
+    "hops": 1
+  }
+]

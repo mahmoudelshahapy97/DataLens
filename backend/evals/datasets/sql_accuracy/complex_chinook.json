@@ -1,0 +1,48 @@
+[
+  {
+    "question": "For each invoice year, what was the total invoiced revenue and its percentage change from the previous year?",
+    "query": "WITH yearly AS (SELECT EXTRACT(YEAR FROM invoice_date) AS year, SUM(total) AS revenue FROM chinook.invoice GROUP BY 1) SELECT year, revenue, 100.0 * (revenue - LAG(revenue) OVER (ORDER BY year)) / LAG(revenue) OVER (ORDER BY year) AS pct_change FROM yearly",
+    "database": "chinook",
+    "difficulty": "hard",
+    "skills": ["time_series", "window", "period_over_period"]
+  },
+  {
+    "question": "For each genre that has tracks nobody has ever bought, how many such tracks does it have?",
+    "query": "SELECT g.name AS genre, COUNT(*) AS never_purchased FROM chinook.track AS t JOIN chinook.genre AS g ON g.genre_id = t.genre_id WHERE NOT EXISTS (SELECT 1 FROM chinook.invoice_line AS il WHERE il.track_id = t.track_id) GROUP BY g.name",
+    "database": "chinook",
+    "difficulty": "hard",
+    "skills": ["anti_join", "multi_hop"],
+    "hops": 1
+  },
+  {
+    "question": "Which employees have other employees reporting directly to them, and how many direct reports does each have? Show the manager's last name.",
+    "query": "SELECT m.last_name, COUNT(*) AS direct_reports FROM chinook.employee AS e JOIN chinook.employee AS m ON m.employee_id = e.reports_to GROUP BY m.employee_id, m.last_name",
+    "database": "chinook",
+    "difficulty": "hard",
+    "skills": ["self_join"]
+  },
+  {
+    "question": "Which customers have bought tracks from at least 10 different genres? Show their first and last names and how many genres.",
+    "query": "SELECT c.first_name, c.last_name, COUNT(DISTINCT t.genre_id) AS genres FROM chinook.customer AS c JOIN chinook.invoice AS i ON i.customer_id = c.customer_id JOIN chinook.invoice_line AS il ON il.invoice_id = i.invoice_id JOIN chinook.track AS t ON t.track_id = il.track_id GROUP BY c.customer_id, c.first_name, c.last_name HAVING COUNT(DISTINCT t.genre_id) >= 10",
+    "database": "chinook",
+    "difficulty": "hard",
+    "skills": ["multi_hop", "having", "count_distinct"],
+    "hops": 3
+  },
+  {
+    "question": "In each billing country, which genre sold the most tracks by quantity? If genres tie, list all of them. Show the country, the genre and the quantity.",
+    "query": "WITH sold AS (SELECT i.billing_country, g.name AS genre, SUM(il.quantity) AS quantity FROM chinook.invoice_line AS il JOIN chinook.invoice AS i ON i.invoice_id = il.invoice_id JOIN chinook.track AS t ON t.track_id = il.track_id JOIN chinook.genre AS g ON g.genre_id = t.genre_id GROUP BY i.billing_country, g.name), ranked AS (SELECT *, RANK() OVER (PARTITION BY billing_country ORDER BY quantity DESC) AS rnk FROM sold) SELECT billing_country, genre, quantity FROM ranked WHERE rnk = 1",
+    "database": "chinook",
+    "difficulty": "hard",
+    "skills": ["multi_hop", "top_n_per_group", "window", "ties"],
+    "hops": 3
+  },
+  {
+    "question": "Which customers have spent more in total than the average total spend of the customers who share their sales support rep? Show their first and last names and their total spend.",
+    "query": "WITH spend AS (SELECT c.customer_id, c.first_name, c.last_name, c.support_rep_id, SUM(i.total) AS total FROM chinook.customer AS c JOIN chinook.invoice AS i ON i.customer_id = c.customer_id GROUP BY c.customer_id, c.first_name, c.last_name, c.support_rep_id) SELECT first_name, last_name, total FROM spend AS s WHERE total > (SELECT AVG(total) FROM spend AS peers WHERE peers.support_rep_id = s.support_rep_id)",
+    "database": "chinook",
+    "difficulty": "hard",
+    "skills": ["correlated_subquery", "multi_hop"],
+    "hops": 1
+  }
+]

@@ -281,3 +281,28 @@ class TestScannerInfersAndVerifies:
         ).scan(_context(), catalog)
         assert report.relationships_inferred == 0
         assert await catalog.get_relationships(_context()) == []
+
+
+class TestPostgresPartitionsAreNotTables:
+    """Pagila's `payment` has 54 partitions, each listed by information_schema as
+    a base table with the foreign keys the parent lacks."""
+
+    async def test_listing_excludes_partitions_on_postgres_only(self):
+        seen = []
+
+        class Runner:
+            dialect = "postgres"
+
+            async def run_sql(self, args, context):
+                import pandas as pd
+
+                seen.append(args.sql)
+                return pd.DataFrame([{"table_schema": "pagila", "table_name": "payment"}])
+
+        tables = await SchemaScanner(Runner(), dialect="postgres")._list_tables(_context())
+        assert tables == [("pagila", "payment")]
+        assert "relispartition" in seen[-1]
+
+        Runner.dialect = "mssql"
+        await SchemaScanner(Runner(), dialect="mssql")._list_tables(_context())
+        assert "relispartition" not in seen[-1]

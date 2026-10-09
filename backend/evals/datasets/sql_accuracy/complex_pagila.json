@@ -1,0 +1,69 @@
+[
+  {
+    "question": "For each film category that has films nobody has ever rented, how many such films does it have?",
+    "query": "SELECT c.name AS category, COUNT(*) AS never_rented FROM pagila.film AS f JOIN pagila.film_category AS fc ON fc.film_id = f.film_id JOIN pagila.category AS c ON c.category_id = fc.category_id WHERE NOT EXISTS (SELECT 1 FROM pagila.inventory AS i JOIN pagila.rental AS r ON r.inventory_id = i.inventory_id WHERE i.film_id = f.film_id) GROUP BY c.name",
+    "database": "pagila",
+    "difficulty": "hard",
+    "skills": [
+      "anti_join",
+      "multi_hop"
+    ],
+    "hops": 4
+  },
+  {
+    "question": "In each film category, which film earned the most rental payment revenue? Show the category, the film title and the revenue.",
+    "query": "WITH film_revenue AS (SELECT c.name AS category, f.title, SUM(p.amount) AS revenue FROM pagila.payment AS p JOIN pagila.rental AS r ON r.rental_id = p.rental_id JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film AS f ON f.film_id = i.film_id JOIN pagila.film_category AS fc ON fc.film_id = f.film_id JOIN pagila.category AS c ON c.category_id = fc.category_id GROUP BY c.name, f.film_id, f.title), ranked AS (SELECT *, RANK() OVER (PARTITION BY category ORDER BY revenue DESC) AS rnk FROM film_revenue) SELECT category, title, revenue FROM ranked WHERE rnk = 1",
+    "database": "pagila",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop",
+      "top_n_per_group",
+      "window"
+    ],
+    "hops": 5
+  },
+  {
+    "question": "How many customers have rented films from both stores?",
+    "query": "SELECT COUNT(*) AS customers FROM (SELECT r.customer_id FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id GROUP BY r.customer_id HAVING COUNT(DISTINCT i.store_id) = 2) AS both_stores",
+    "database": "pagila",
+    "difficulty": "medium",
+    "skills": [
+      "relational_division",
+      "having"
+    ],
+    "hops": 1
+  },
+  {
+    "question": "For returned rentals only, what is the average rental duration in days (return date minus rental date, including fractions of a day) for each film category?",
+    "query": "SELECT c.name AS category, AVG(EXTRACT(EPOCH FROM (r.return_date - r.rental_date)) / 86400) AS avg_days FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film_category AS fc ON fc.film_id = i.film_id JOIN pagila.category AS c ON c.category_id = fc.category_id WHERE r.return_date IS NOT NULL GROUP BY c.name",
+    "database": "pagila",
+    "difficulty": "hard",
+    "skills": [
+      "date_arithmetic",
+      "null_handling",
+      "multi_hop"
+    ],
+    "hops": 3
+  },
+  {
+    "question": "For each store that has unreturned rentals, how many rentals have not been returned yet?",
+    "query": "SELECT i.store_id, COUNT(*) AS not_returned FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id WHERE r.return_date IS NULL GROUP BY i.store_id",
+    "database": "pagila",
+    "difficulty": "medium",
+    "skills": [
+      "null_handling"
+    ],
+    "hops": 1
+  },
+  {
+    "question": "Which customers have paid more than twice the average total payments per customer? Show their first and last names and their total payments.",
+    "query": "WITH totals AS (SELECT c.customer_id, c.first_name, c.last_name, SUM(p.amount) AS total FROM pagila.customer AS c JOIN pagila.payment AS p ON p.customer_id = c.customer_id GROUP BY c.customer_id, c.first_name, c.last_name) SELECT first_name, last_name, total FROM totals WHERE total > 2 * (SELECT AVG(total) FROM totals)",
+    "database": "pagila",
+    "difficulty": "hard",
+    "skills": [
+      "subquery_comparison",
+      "cte"
+    ],
+    "hops": 1
+  }
+]

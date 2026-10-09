@@ -139,6 +139,23 @@ class TestSearchPathBridges:
         ctx = await catalog.get_context(_context(), "anything")
         assert "chinook.payroll.ledger_id" not in ctx.text
 
+    async def test_relationships_to_vanished_tables_are_not_rendered(self):
+        """Found live: dropped partitions left their foreign keys in the prompt."""
+        catalog = await _catalog()
+        await catalog.upsert_relationships(
+            _context(),
+            [RelationshipMetadata(
+                name="stale", from_table="chinook.payment_p2022_01",
+                from_column="artist_id", to_table="artist", to_column="artist_id",
+            )],
+        )
+        for threshold in (30_000, 0):
+            ctx = await catalog.get_context(_context(), "artist", threshold=threshold)
+            assert "payment_p2022_01" not in ctx.text
+        full = await catalog.get_context(_context(), "artist")
+        assert full.strategy == "full"
+        assert "chinook.album.artist_id -> chinook.artist.artist_id" in full.text
+
     async def test_serialized_context_omits_table_objects(self):
         catalog = await _catalog()
         ctx = await catalog.get_context(_context(), "anything")
@@ -189,6 +206,22 @@ class TestEnhancerKnowledge:
         assert schema["strategy"] == "search"
         assert schema["hinted_tables"] == ["chinook.artist"]
         assert "### Table: chinook.artist" in result.text
+
+    async def test_search_limit_and_bridge_cap_reach_the_catalog(self):
+        """The eval's knobs: a small window, with and without bridges."""
+        catalog = await _catalog()
+        with_bridges = RetrievalContextEnhancer(
+            catalog=catalog, schema_threshold=0, schema_search_limit=2
+        )
+        without = RetrievalContextEnhancer(
+            catalog=catalog, schema_threshold=0, schema_search_limit=2,
+            schema_max_bridges=0,
+        )
+        on = (await with_bridges.build_context("artist invoice line", _user())).metadata
+        off = (await without.build_context("artist invoice line", _user())).metadata
+        assert on["schema"]["bridge_tables"] == ["chinook.track", "chinook.album"]
+        assert off["schema"]["bridge_tables"] == []
+        assert off["schema"]["included_tables"] == 2
 
     async def test_core_columns_are_shown_for_visible_columns_only(self):
         core = {
