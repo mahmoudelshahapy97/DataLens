@@ -27,6 +27,9 @@ database/sql_schema.sql     text eol=lf
 backend/projects/**/*.yml   text eol=lf
 backend/projects/**/*.json  text eol=lf
 
+# Run by bash on the deploy host, where a CR fails every line.
+*.sh    text eol=lf
+
 # Binary, never touched.
 *.png   binary
 *.webp  binary

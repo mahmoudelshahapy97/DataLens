@@ -1,0 +1,20 @@
+# Production override: run the images CI pushed to Docker Hub instead of building
+# on the host.
+#
+#   docker compose --env-file .env --env-file release.env \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
+#
+# The deploy workflow writes release.env, naming the exact images it pulled by
+# commit SHA, so the running stack is always traceable to one commit and a rollback
+# is a matter of pointing these two variables at the previous tag.
+#
+# Everything else -- environment, volumes, networks, healthchecks -- comes from
+# docker-compose.yml unchanged. Secrets live in .env on the host and never pass
+# through CI.
+
+services:
+  backend:
+    image: ${VANNA_BACKEND_IMAGE:?set in release.env by the deploy workflow}
+
+  frontend:
+    image: ${VANNA_FRONTEND_IMAGE:?set in release.env by the deploy workflow}

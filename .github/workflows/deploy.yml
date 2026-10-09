@@ -1,43 +1,121 @@
+# Continuous delivery.
+#
+#   ci        the whole of ci.yml; nothing ships that fails it
+#   publish   build both images and push them to Docker Hub, tagged by commit SHA
+#   deploy    over SSH: pull those exact images on the host and restart the stack,
+#             rolling back to the previous release if it does not become ready
+#
+# Secrets (Settings -> Secrets and variables -> Actions):
+#
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN   push here, pull on the host
+#   DEPLOY_HOST, DEPLOY_USER              where to SSH, port 22
+#   DEPLOY_SSH_KEY                        private key; its public half in authorized_keys
+#   DEPLOY_HOST_FINGERPRINT               the host key's SHA256 fingerprint, from
+#                                           ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+#   DEPLOY_PATH                           absolute directory holding the host's .env
+#
+# Optional variable PUBLIC_URL (e.g. https://example.com): when set, the deploy is
+# also checked from outside, through whatever proxy fronts the host.
+#
+# The application's own secrets never pass through here. They live in
+# $DEPLOY_PATH/.env on the host; see .github/scripts/deploy.sh for what else the
+# host needs before the first run.
+
 name: Deploy
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
+    # Later patterns win: skip prose, but the curated knowledge under
+    # backend/projects is configuration even though it is markdown.
+    paths:
+      - '**'
+      - '!**.md'
+      - '!docs/**'
+      - '!artifacts/**'
+      - 'backend/projects/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
+  # Never cancel a deploy halfway through; queue the next one behind it.
   group: deploy-prod
   cancel-in-progress: false
 
 env:
-  PUBLIC_HEALTH_URL: https://te-s.xyz/insighteye/health
+  BACKEND_REPO: datalens-backend
+  FRONTEND_REPO: datalens-frontend
 
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  deploy:
+  publish:
     needs: ci
     runs-on: ubuntu-24.04
-    environment:
-      name: production
-      url: https://te-s.xyz/insighteye/
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Backend image
+        uses: docker/build-push-action@v6
+        with:
+          # Repository root: the image carries database/migrations too.
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_REPO }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_REPO }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_REPO }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_REPO }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-24.04
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Check deploy secrets
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_HOST_FINGERPRINT: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           missing=()
-          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_HOST_FINGERPRINT DEPLOY_PATH; do
+          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_HOST_FINGERPRINT DEPLOY_PATH \
+                   DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
             [ -n "${!v}" ] || missing+=("$v")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
@@ -45,124 +123,77 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy to EC2 over SSH
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+      - name: Trust the host key, and only that one
+        # ssh-keyscan alone would trust whoever answers; the fingerprint secret is
+        # what turns it into verification.
         env:
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          SHA: ${{ github.sha }}
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
-          envs: DEPLOY_PATH,SHA
-          # A rebuild of the CUDA image can take a long time.
-          command_timeout: 90m
-          script: |
-            set -euo pipefail
-            cd "$DEPLOY_PATH"
-            IMAGE=insighteye_app:latest
-            PREV=insighteye_app:previous
-            # A rebuild adds ~11 GB of layers plus build cache next to the old image.
-            MIN_FREE_GB=15
-
-            free_gb() { df --output=avail -BG / | tail -1 | tr -dc 0-9; }
-
-            # A manual `docker system prune -a` can untag :latest while :previous survives.
-            if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && docker image inspect "$PREV" >/dev/null 2>&1; then
-              echo "==> $IMAGE missing: restoring it from $PREV"
-              docker tag "$PREV" "$IMAGE"
-            fi
-
-            OLD=$(git rev-parse HEAD)
-            git fetch --prune origin
-            git reset --hard "$SHA"
-            echo "Deploying $OLD -> $(git rev-parse HEAD)"
-            PORT=$(grep -E '^APP_PORT=' .env | cut -d= -f2 | tr -d '"' || true)
-            URL="http://localhost:${PORT:-8000}/health"
-
-            healthy() {
-              # Model loading and the DB pool can take a few minutes on start.
-              for _ in $(seq 1 60); do
-                curl -fsS -o /dev/null "$URL" && return 0
-                sleep 5
-              done
-              return 1
-            }
-
-            rollback() {
-              echo "ERROR: $1, rolling back to $OLD"
-              df -h /
-              docker compose logs --tail 100 app celery_worker || true
-              git reset --hard "$OLD"
-              if [ "$rebuilt" = 1 ] && docker image inspect "$PREV" >/dev/null 2>&1; then
-                docker tag "$PREV" "$IMAGE"
-              fi
-              docker compose up -d --force-recreate app celery_worker || true
-              healthy || echo "ERROR: rollback is not healthy either"
-            }
-
-            echo "==> Docker cleanup"
-            docker container prune -f
-            docker image prune -f
-            docker builder prune -f --filter until=168h
-            df -h /
-
-            # Code is bind-mounted into the containers (.:/app), so only image
-            # inputs need a rebuild; anything else just needs a restart.
-            rebuilt=0
-            if git diff --name-only "$OLD" HEAD | grep -qxE 'Dockerfile|\.dockerignore|requirements(-base|-gpu)?\.txt|docker-compose\.yml'; then
-              echo "==> Image inputs changed: rebuilding"
-              if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
-                docker builder prune -af
-              fi
-              if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
-                echo "ERROR: only $(free_gb)G free on /, need ${MIN_FREE_GB}G to rebuild; nothing changed"
-                git reset --hard "$OLD"
-                exit 1
-              fi
-              docker image inspect "$IMAGE" >/dev/null 2>&1 && docker tag "$IMAGE" "$PREV"
-              if ! docker compose build app; then
-                echo "ERROR: build failed; running containers untouched"
-                df -h /
-                git reset --hard "$OLD"
-                exit 1
-              fi
-              rebuilt=1
-            else
-              echo "==> Image inputs unchanged: no rebuild"
-            fi
-
-            echo "==> Restart app and worker"
-            docker compose up -d --remove-orphans redis
-            if ! docker compose up -d --force-recreate app celery_worker; then
-              rollback "docker compose up failed"
-              exit 1
-            fi
-
-            echo "==> Health check $URL"
-            if ! healthy; then
-              rollback "not healthy"
-              exit 1
-            fi
-
-            # :previous only exists to roll back within this deploy.
-            if [ "$rebuilt" = 1 ]; then
-              docker image rm "$PREV" || true
-            fi
-            docker image prune -f
-            docker builder prune -f --filter until=168h
-            df -h /
-            echo "Deployed $(git rev-parse --short HEAD)"
-
-      - name: Health check through the load balancer
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST_FINGERPRINT: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
         run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          want=${DEPLOY_HOST_FINGERPRINT#SHA256:}
+          : > ~/.ssh/known_hosts
+          ssh-keyscan -T 15 "$DEPLOY_HOST" > scanned 2>/dev/null || true
+          while read -r line; do
+            case $line in ''|'#'*) continue ;; esac
+            fp=$(ssh-keygen -lf - <<<"$line" | awk '{print $2}')
+            if [ "${fp#SHA256:}" = "$want" ]; then
+              echo "$line" >> ~/.ssh/known_hosts
+            fi
+          done < scanned
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "::error::No host key from DEPLOY_HOST matches DEPLOY_HOST_FINGERPRINT"
+            exit 1
+          fi
+
+          cat > ~/.ssh/config <<EOF
+          Host deploy
+            HostName $DEPLOY_HOST
+            User $DEPLOY_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+          EOF
+
+      - name: Upload the release bundle
+        # The compose files and backend/projects, the one host bind mount. Code
+        # arrives in the images.
+        run: |
+          tar -czf "bundle-$GITHUB_SHA.tgz" docker-compose.yml docker-compose.prod.yml backend/projects
+          ssh deploy "mkdir -p $(printf %q "$DEPLOY_PATH/.deploy")"
+          scp "bundle-$GITHUB_SHA.tgz" .github/scripts/deploy.sh "deploy:$DEPLOY_PATH/.deploy/"
+
+      - name: Deploy
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          backend="$DOCKERHUB_USERNAME/$BACKEND_REPO:$GITHUB_SHA"
+          frontend="$DOCKERHUB_USERNAME/$FRONTEND_REPO:$GITHUB_SHA"
+          # The token goes over stdin, never onto a command line.
+          ssh deploy "cd $(printf %q "$DEPLOY_PATH") && bash .deploy/deploy.sh \
+            .deploy/bundle-$GITHUB_SHA.tgz $(printf %q "$backend") $(printf %q "$frontend") \
+            $(printf %q "$DOCKERHUB_USERNAME")" <<<"$DOCKERHUB_TOKEN"
+
+      - name: Health check from outside
+        if: vars.PUBLIC_URL != ''
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+        run: |
+          url="${PUBLIC_URL%/}/ready"
           for _ in $(seq 1 30); do
-            if body=$(curl -fsS -m 10 "$PUBLIC_HEALTH_URL"); then
-              echo "$body"
+            if curl -fsS -m 10 -o /dev/null "$url"; then
+              echo "$url is ready"
               exit 0
             fi
             sleep 10
           done
-          echo "ERROR: $PUBLIC_HEALTH_URL not healthy" >&2
+          echo "::error::$url did not become ready"
           exit 1
+
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

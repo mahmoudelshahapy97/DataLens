@@ -14,10 +14,12 @@
 
 name: CI
 
+# No `push` to main here: deploy.yml calls this workflow before it publishes, so a
+# merge runs CI once rather than twice.
 on:
-  push:
-    branches: [main, master]
   pull_request:
+    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 concurrency:

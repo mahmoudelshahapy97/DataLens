@@ -36,6 +36,20 @@ make logs               # watch it come up
 curl -fsS localhost:3000/ready
 ```
 
+Production deploys are automatic: a push to `main` runs CI, pushes both images to
+Docker Hub tagged by commit SHA, and restarts the stack on the host over SSH
+(`.github/workflows/deploy.yml`). The host keeps its secrets in `$DEPLOY_PATH/.env`,
+and the images it runs are named in `$DEPLOY_PATH/release.env`. To act on the
+production stack by hand, use the same files:
+
+```bash
+docker compose --env-file .env --env-file release.env \
+  -f docker-compose.yml -f docker-compose.prod.yml logs -f backend
+```
+
+A release that does not answer `/ready` within a few minutes is rolled back to the
+previous one automatically. `.deploy/release.env.previous` names that release.
+
 With one replica, `VANNA_AUTO_MIGRATE=true` is fine — migrations run at boot under
 an advisory lock, so even concurrent starts are safe. With several, prefer a
 migration job:
