@@ -255,6 +255,12 @@ class Settings:
     #: and evaluation knob: 0 forces the search path on every schema, which is
     #: how ``evals/sql_accuracy.py`` simulates a large warehouse on Chinook.
     schema_full_text_threshold: int = 30_000
+    #: Search path only: tables search selects, and join-bridge tables the
+    #: schema graph may add on top. Defaults suit production; the eval lowers
+    #: the limit to make a small demo database behave like a large warehouse,
+    #: and sets bridges to 0 to measure what they are worth.
+    schema_search_limit: int = 15
+    schema_max_bridges: int = 5
     project_dir: str = ""
     projects_dir: str = ""
 
@@ -448,6 +454,8 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         schema_full_text_threshold=_number(
             env, "VANNA_SCHEMA_FULL_TEXT_THRESHOLD", 30_000, minimum=0
         ),
+        schema_search_limit=_number(env, "VANNA_SCHEMA_SEARCH_LIMIT", 15, minimum=1),
+        schema_max_bridges=_number(env, "VANNA_SCHEMA_MAX_BRIDGES", 5, minimum=0),
         project_dir=_text(env, "VANNA_PROJECT_DIR"),
         projects_dir=_text(env, "VANNA_PROJECTS_DIR"),
         config_source=_text(env, "VANNA_CONFIG_SOURCE", "disk").lower(),

@@ -162,6 +162,16 @@ class SchemaCatalog(ABC):
         from vanna.capabilities.schema_graph import build_schema_graph, table_lookup
 
         canonical = table_lookup(tables)
+        # Both ends visible, on either path. Relationships outlive the tables
+        # they join -- a rescan retires a vanished table but not its edges --
+        # so Pagila's 54 dropped partitions left 36 foreign keys in every
+        # full-schema prompt, each naming a table the model could not see.
+        relationships = [
+            r
+            for r in relationships
+            if (r.from_table or "").lower() in canonical
+            and (r.to_table or "").lower() in canonical
+        ]
         hinted: List[str] = []
         for name in seed_tables or ():
             resolved = canonical.get(str(name).lower())

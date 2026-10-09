@@ -1238,6 +1238,8 @@ class Platform:
                             data_source_id=data_source,
                             budget=BudgetPolicy(total_tokens=120_000),
                             schema_threshold=self.settings.schema_full_text_threshold,
+                            schema_search_limit=self.settings.schema_search_limit,
+                            schema_max_bridges=self.settings.schema_max_bridges,
                             # Glossary terms and cube metrics seed the search
                             # path's table selection; core columns are shown
                             # beside the schema instead of behind a tool call.

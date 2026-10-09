@@ -218,6 +218,9 @@ services:
       # tables instead of the whole schema. 0 forces search everywhere -- the
       # "large warehouse" mode of backend/evals/sql_accuracy.py.
       VANNA_SCHEMA_FULL_TEXT_THRESHOLD: ${VANNA_SCHEMA_FULL_TEXT_THRESHOLD:-30000}
+      # Search path: tables search keeps, and join-bridge tables added on top.
+      VANNA_SCHEMA_SEARCH_LIMIT: ${VANNA_SCHEMA_SEARCH_LIMIT:-15}
+      VANNA_SCHEMA_MAX_BRIDGES: ${VANNA_SCHEMA_MAX_BRIDGES:-5}
       # Served by the ../../vector_db stack over the shared sandbox network, not by
       # a service in this file -- `qdrant` is that stack's service name, which
       # Compose registers as an alias on every network it joins. See the note where

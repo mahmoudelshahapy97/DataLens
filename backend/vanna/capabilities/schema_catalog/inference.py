@@ -128,8 +128,9 @@ def infer_relationships(
                     to_table=target.qualified_name,
                     to_column=key.name,
                     join_type="many_to_one",
-                    description="Inferred from column names and types; no "
-                    "foreign key is declared.",
+                    # No description: `describe()` already labels an
+                    # unconfirmed inferred edge, and a second sentence saying
+                    # the same costs tokens on every one of them.
                     tenant_id=table.tenant_id,
                     data_source_id=data_source_id,
                     origin="inferred",

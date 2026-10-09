@@ -3,54 +3,91 @@
     "question": "What is the net revenue (after discounts) for each product category?",
     "query": "SELECT c.categoryname, ROUND(SUM(od.unitprice * od.qty * (1 - od.discount)), 2) AS revenue FROM northwind.orderdetail AS od JOIN northwind.product AS p ON p.productid = od.productid JOIN northwind.category AS c ON c.categoryid = p.categoryid GROUP BY c.categoryname",
     "database": "northwind",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 2
   },
   {
     "question": "What is the net revenue (after discounts) by supplier country?",
     "query": "SELECT s.country, ROUND(SUM(od.unitprice * od.qty * (1 - od.discount)), 2) AS revenue FROM northwind.orderdetail AS od JOIN northwind.product AS p ON p.productid = od.productid JOIN northwind.supplier AS s ON s.supplierid = p.supplierid GROUP BY s.country",
     "database": "northwind",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 2
   },
   {
     "question": "How many orders shipped to Germany did each employee handle? Show the employee's last name.",
     "query": "SELECT e.lastname, COUNT(*) AS orders FROM northwind.salesorder AS o JOIN northwind.employee AS e ON e.empid = o.empid WHERE o.shipcountry = 'Germany' GROUP BY e.empid, e.lastname",
     "database": "northwind",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 1
   },
   {
     "question": "What is the net revenue (after discounts) by customer country?",
     "query": "SELECT cu.country, ROUND(SUM(od.unitprice * od.qty * (1 - od.discount)), 2) AS revenue FROM northwind.orderdetail AS od JOIN northwind.salesorder AS o ON o.orderid = od.orderid JOIN northwind.customer AS cu ON cu.custid = o.custid GROUP BY cu.country",
     "database": "northwind",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 2
   },
   {
     "question": "For each shipper, how many orders contained at least one Beverages product?",
     "query": "SELECT sh.companyname, COUNT(DISTINCT o.orderid) AS orders FROM northwind.orderdetail AS od JOIN northwind.product AS p ON p.productid = od.productid JOIN northwind.category AS c ON c.categoryid = p.categoryid JOIN northwind.salesorder AS o ON o.orderid = od.orderid JOIN northwind.shipper AS sh ON sh.shipperid = o.shipperid WHERE c.categoryname = 'Beverages' GROUP BY sh.shipperid, sh.companyname",
     "database": "northwind",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 4
   },
   {
     "question": "How many employees cover territories in each region?",
     "query": "SELECT r.regiondescription, COUNT(DISTINCT et.employeeid) AS employees FROM northwind.employeeterritory AS et JOIN northwind.territory AS t ON t.territoryid = et.territoryid JOIN northwind.region AS r ON r.regionid = t.regionid GROUP BY r.regiondescription",
     "database": "northwind",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 2
   },
   {
     "question": "How much Seafood net revenue (after discounts) did each employee's orders bring in? Show the employee's last name.",
     "query": "SELECT e.lastname, ROUND(SUM(od.unitprice * od.qty * (1 - od.discount)), 2) AS revenue FROM northwind.orderdetail AS od JOIN northwind.product AS p ON p.productid = od.productid JOIN northwind.category AS c ON c.categoryid = p.categoryid JOIN northwind.salesorder AS o ON o.orderid = od.orderid JOIN northwind.employee AS e ON e.empid = o.empid WHERE c.categoryname = 'Seafood' GROUP BY e.empid, e.lastname",
     "database": "northwind",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 4
   },
   {
     "question": "How many different suppliers provide products in each category?",
     "query": "SELECT c.categoryname, COUNT(DISTINCT p.supplierid) AS suppliers FROM northwind.product AS p JOIN northwind.category AS c ON c.categoryid = p.categoryid GROUP BY c.categoryname",
     "database": "northwind",
+    "difficulty": "medium",
+    "skills": [
+      "multi_hop"
+    ],
     "hops": 1
   },
   {
     "question": "For each customer country, how many orders were placed and what was the total freight?",
     "query": "SELECT cu.country, COUNT(*) AS orders, ROUND(SUM(o.freight), 2) AS freight FROM northwind.salesorder AS o JOIN northwind.customer AS cu ON cu.custid = o.custid GROUP BY cu.country",
     "database": "northwind",
+    "difficulty": "hard",
+    "skills": [
+      "multi_hop",
+      "fan_trap"
+    ],
     "hops": 1,
     "note": "Fan trap if orderdetail is joined in: freight would be summed once per order line."
   }

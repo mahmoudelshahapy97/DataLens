@@ -202,6 +202,27 @@ qa-json:  ## Export Q&A history across every workspace to qa.json
 	$(PYTHON) tools/export_qa.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(QA_TENANT) --password $(E2E_PASSWORD) --out qa.json
 
+# text2sql-eval-toolkit lives beside this repository and wants Python >= 3.11 in
+# its own venv: `pip install -e ../text2sql-eval-toolkit` there, then point
+# TOOLKIT_PYTHON at it. EVAL_WORKSPACES says which workspace answers each suite
+# database, e.g. "--workspace chinook=demo --workspace pagila=acme".
+TOOLKIT_PYTHON ?= $(PYTHON)
+EVAL_TARGET_HOST ?= postgresql://postgres:postgres123@localhost:5432
+EVAL_PIPELINE ?= vanna-baseline
+EVAL_WORKSPACES ?=
+
+.PHONY: eval-toolkit-export
+eval-toolkit-export:  ## Register the SQL suite and the toolkit's benchmarks for text2sql-eval-toolkit
+	$(TOOLKIT_PYTHON) backend/evals/toolkit_bridge.py export --target-host $(EVAL_TARGET_HOST)
+
+.PHONY: eval-toolkit
+eval-toolkit:  ## Score the SQL suite with text2sql-eval-toolkit (live instance, costs LLM calls)
+	@test -n "$(VANNA_API_TOKEN)" || { echo "Set VANNA_API_TOKEN to an analyst's API token."; exit 1; }
+	@test -n "$(EVAL_WORKSPACES)" || { echo "Set EVAL_WORKSPACES, e.g. \"--workspace chinook=demo\"."; exit 1; }
+	$(TOOLKIT_PYTHON) backend/evals/toolkit_bridge.py suite --pipeline-id $(EVAL_PIPELINE) \
+		--target-host $(EVAL_TARGET_HOST) --token $(VANNA_API_TOKEN) --app-db $(APP_DB_URL) \
+		--server $(E2E_URL) --judge backend/evals/toolkit_judge.yaml $(EVAL_WORKSPACES)
+
 .PHONY: coverage
 coverage:  ## Coverage over the application layer
 	VANNA_TEST_DATABASE_URL=$(DB_URL) $(PYTHON) -m pytest -q \

@@ -1,0 +1,75 @@
+[
+  {
+    "question": "What is the cancellation rate (percentage of bookings canceled) for each hotel?",
+    "query": "SELECT hotel, 100.0 * SUM(is_canceled) / COUNT(*) AS cancellation_pct FROM booking.hotel_bookings GROUP BY hotel",
+    "database": "booking",
+    "difficulty": "easy",
+    "skills": ["ratio"]
+  },
+  {
+    "question": "What is the cancellation rate (percentage of bookings canceled) for each deposit type?",
+    "query": "SELECT deposit_type, 100.0 * SUM(is_canceled) / COUNT(*) AS cancellation_pct FROM booking.hotel_bookings GROUP BY deposit_type",
+    "database": "booking",
+    "difficulty": "easy",
+    "skills": ["ratio"]
+  },
+  {
+    "question": "For each hotel, which arrival month had the highest average daily rate among bookings that were not canceled? Show the hotel, the month and that average daily rate.",
+    "query": "WITH monthly AS (SELECT hotel, arrival_date_month, AVG(adr) AS avg_adr FROM booking.hotel_bookings WHERE is_canceled = 0 GROUP BY hotel, arrival_date_month), ranked AS (SELECT *, RANK() OVER (PARTITION BY hotel ORDER BY avg_adr DESC) AS rnk FROM monthly) SELECT hotel, arrival_date_month, avg_adr FROM ranked WHERE rnk = 1",
+    "database": "booking",
+    "difficulty": "hard",
+    "skills": ["top_n_per_group", "window"]
+  },
+  {
+    "question": "For bookings that were not canceled, what is the average length of stay in nights (weekend nights plus week nights) for each customer type?",
+    "query": "SELECT customer_type, AVG(stays_in_weekend_nights + stays_in_week_nights) AS avg_nights FROM booking.hotel_bookings WHERE is_canceled = 0 GROUP BY customer_type",
+    "database": "booking",
+    "difficulty": "medium",
+    "skills": ["derived_measure"]
+  },
+  {
+    "question": "Which 5 countries had the most bookings that were not canceled, and how many did each have?",
+    "query": "SELECT country, COUNT(*) AS bookings FROM booking.hotel_bookings WHERE is_canceled = 0 GROUP BY country ORDER BY bookings DESC LIMIT 5",
+    "database": "booking",
+    "difficulty": "easy",
+    "skills": ["top_n"]
+  },
+  {
+    "question": "Which guests have stayed in a room with a jacuzzi? Give their first and last names.",
+    "query": "SELECT DISTINCT g.firstname, g.lastname FROM booking.guest AS g JOIN booking.guestreservation AS gr ON gr.guestid = g.guestid JOIN booking.roomreservation AS rr ON rr.reservationid = gr.reservationid JOIN booking.room AS r ON r.roomnumber = rr.roomnumber WHERE r.hasjacuzzi",
+    "database": "booking",
+    "difficulty": "hard",
+    "skills": ["many_to_many", "multi_hop"],
+    "hops": 3,
+    "note": "Two association tables: guests -> reservations -> rooms, never joined directly."
+  },
+  {
+    "question": "What is the total reservation revenue for each room type?",
+    "query": "SELECT r.roomtype, SUM(res.total) AS revenue FROM booking.reservation AS res JOIN booking.roomreservation AS rr ON rr.reservationid = res.reservationid JOIN booking.room AS r ON r.roomnumber = rr.roomnumber GROUP BY r.roomtype",
+    "database": "booking",
+    "difficulty": "medium",
+    "skills": ["many_to_many"],
+    "hops": 2
+  },
+  {
+    "question": "Which rooms have both a Microwave and a Refrigerator? Give the room numbers.",
+    "query": "SELECT ra.roomnumber FROM booking.roomamenity AS ra JOIN booking.amenity AS a ON a.amenityid = ra.amenityid WHERE a.amenitytype IN ('Microwave', 'Refrigerator') GROUP BY ra.roomnumber HAVING COUNT(DISTINCT a.amenitytype) = 2",
+    "database": "booking",
+    "difficulty": "hard",
+    "skills": ["relational_division", "many_to_many", "having"]
+  },
+  {
+    "question": "For each market segment, what share (percentage) of all non-canceled bookings does it account for?",
+    "query": "SELECT market_segment, 100.0 * COUNT(*) / SUM(COUNT(*)) OVER () AS pct FROM booking.hotel_bookings WHERE is_canceled = 0 GROUP BY market_segment",
+    "database": "booking",
+    "difficulty": "medium",
+    "skills": ["percent_of_total", "window"]
+  },
+  {
+    "question": "For each arrival year, how many bookings did repeated guests make, and what percentage of that year's bookings is that?",
+    "query": "SELECT arrival_date_year, SUM(is_repeated_guest) AS repeated_bookings, 100.0 * SUM(is_repeated_guest) / COUNT(*) AS pct FROM booking.hotel_bookings GROUP BY arrival_date_year",
+    "database": "booking",
+    "difficulty": "medium",
+    "skills": ["ratio"]
+  }
+]

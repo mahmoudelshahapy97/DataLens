@@ -1,0 +1,101 @@
+[
+  {
+    "question": "What is the net revenue (sum of order line totals) for each product category?",
+    "query": "SELECT c.name AS category, SUM(oi.line_total) AS revenue FROM ecommerce.order_items AS oi JOIN ecommerce.product_variants AS v ON v.variant_id = oi.variant_id JOIN ecommerce.products AS p ON p.product_id = v.product_id JOIN ecommerce.categories AS c ON c.category_id = p.category_id GROUP BY c.name",
+    "database": "ecommerce",
+    "difficulty": "medium",
+    "skills": ["multi_hop"],
+    "hops": 3
+  },
+  {
+    "question": "Which users have never placed an order? Give their email addresses.",
+    "query": "SELECT u.email FROM ecommerce.users AS u WHERE NOT EXISTS (SELECT 1 FROM ecommerce.orders AS o WHERE o.user_id = u.user_id)",
+    "database": "ecommerce",
+    "difficulty": "medium",
+    "skills": ["anti_join"]
+  },
+  {
+    "question": "In each product category, which product brought in the most net revenue (sum of order line totals)? Show the category, the product name and its revenue.",
+    "query": "WITH product_revenue AS (SELECT c.name AS category, p.name AS product, SUM(oi.line_total) AS revenue FROM ecommerce.order_items AS oi JOIN ecommerce.product_variants AS v ON v.variant_id = oi.variant_id JOIN ecommerce.products AS p ON p.product_id = v.product_id JOIN ecommerce.categories AS c ON c.category_id = p.category_id GROUP BY c.name, p.product_id, p.name), ranked AS (SELECT *, RANK() OVER (PARTITION BY category ORDER BY revenue DESC) AS rnk FROM product_revenue) SELECT category, product, revenue FROM ranked WHERE rnk = 1",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["multi_hop", "top_n_per_group", "window"],
+    "hops": 3
+  },
+  {
+    "question": "For each carrier, what is the average number of days between an order being placed and it being shipped?",
+    "query": "SELECT ca.name AS carrier, AVG(EXTRACT(EPOCH FROM (s.shipped_at - o.ordered_at)) / 86400) AS avg_days_to_ship FROM ecommerce.shipments AS s JOIN ecommerce.orders AS o ON o.order_id = s.order_id JOIN ecommerce.carriers AS ca ON ca.carrier_id = s.carrier_id GROUP BY ca.name",
+    "database": "ecommerce",
+    "difficulty": "medium",
+    "skills": ["multi_hop", "date_arithmetic"],
+    "hops": 2
+  },
+  {
+    "question": "What was the net revenue (sum of order line totals) in each calendar month of 2007, by order date? Return the month number (1-12) and the revenue.",
+    "query": "SELECT EXTRACT(MONTH FROM o.ordered_at) AS month, SUM(oi.line_total) AS revenue FROM ecommerce.orders AS o JOIN ecommerce.order_items AS oi ON oi.order_id = o.order_id WHERE o.ordered_at >= '2007-01-01' AND o.ordered_at < '2008-01-01' GROUP BY 1",
+    "database": "ecommerce",
+    "difficulty": "medium",
+    "skills": ["time_series"],
+    "hops": 1
+  },
+  {
+    "question": "Using the order status history, how many orders took more than 10 days to go from 'paid' to 'shipped'?",
+    "query": "WITH paid AS (SELECT order_id, MIN(changed_at) AS at FROM ecommerce.order_status_history WHERE status = 'paid' GROUP BY order_id), shipped AS (SELECT order_id, MIN(changed_at) AS at FROM ecommerce.order_status_history WHERE status = 'shipped' GROUP BY order_id) SELECT COUNT(*) AS orders FROM paid JOIN shipped USING (order_id) WHERE shipped.at - paid.at > INTERVAL '10 days'",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["event_history", "date_arithmetic"]
+  },
+  {
+    "question": "For each carrier, how many orders did it ship, how much shipping was charged on those orders (shipping total), and how many items (total quantity) did they contain?",
+    "query": "WITH per_order AS (SELECT s.carrier_id, o.order_id, o.shipping_total FROM ecommerce.shipments AS s JOIN ecommerce.orders AS o ON o.order_id = s.order_id), items AS (SELECT order_id, SUM(qty) AS qty FROM ecommerce.order_items GROUP BY order_id) SELECT ca.name AS carrier, COUNT(*) AS orders, SUM(po.shipping_total) AS shipping_charged, SUM(i.qty) AS items FROM per_order AS po JOIN ecommerce.carriers AS ca ON ca.carrier_id = po.carrier_id LEFT JOIN items AS i ON i.order_id = po.order_id GROUP BY ca.name",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["fan_trap", "multi_hop"],
+    "hops": 3,
+    "note": "Fan trap: joining order_items before summing shipping_total counts each order's shipping once per line."
+  },
+  {
+    "question": "For each product category, what percentage of its net revenue (sum of order line totals) came from discounted order lines (discount greater than zero)?",
+    "query": "SELECT c.name AS category, 100.0 * SUM(oi.line_total) FILTER (WHERE oi.discount > 0) / SUM(oi.line_total) AS pct_discounted FROM ecommerce.order_items AS oi JOIN ecommerce.product_variants AS v ON v.variant_id = oi.variant_id JOIN ecommerce.products AS p ON p.product_id = v.product_id JOIN ecommerce.categories AS c ON c.category_id = p.category_id GROUP BY c.name",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["multi_hop", "ratio"],
+    "hops": 3
+  },
+  {
+    "question": "How much captured payment was collected through each payment provider?",
+    "query": "SELECT provider, SUM(amount) AS captured FROM ecommerce.payments WHERE status = 'captured' GROUP BY provider",
+    "database": "ecommerce",
+    "difficulty": "easy",
+    "skills": ["value_filter"]
+  },
+  {
+    "question": "Which users placed at least one order in each of the years 2006, 2007 and 2008? Give their email addresses.",
+    "query": "SELECT u.email FROM ecommerce.users AS u JOIN ecommerce.orders AS o ON o.user_id = u.user_id WHERE o.ordered_at >= '2006-01-01' AND o.ordered_at < '2009-01-01' GROUP BY u.user_id, u.email HAVING COUNT(DISTINCT EXTRACT(YEAR FROM o.ordered_at)) = 3",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["relational_division", "having"]
+  },
+  {
+    "question": "For 2007, show the net revenue (sum of order line totals) of each month together with the running total for the year so far. Return the month number (1-12), the monthly revenue and the running total.",
+    "query": "WITH monthly AS (SELECT EXTRACT(MONTH FROM o.ordered_at) AS month, SUM(oi.line_total) AS revenue FROM ecommerce.orders AS o JOIN ecommerce.order_items AS oi ON oi.order_id = o.order_id WHERE o.ordered_at >= '2007-01-01' AND o.ordered_at < '2008-01-01' GROUP BY 1) SELECT month, revenue, SUM(revenue) OVER (ORDER BY month) AS running_total FROM monthly",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["time_series", "window", "cumulative"]
+  },
+  {
+    "question": "What is the average order value (grand total) by shipping country, for countries with at least 30 orders?",
+    "query": "SELECT ship_country_code, AVG(grand_total) AS avg_order_value FROM ecommerce.orders GROUP BY ship_country_code HAVING COUNT(*) >= 30",
+    "database": "ecommerce",
+    "difficulty": "medium",
+    "skills": ["having"]
+  },
+  {
+    "question": "Which product variants have less stock available (quantity on hand minus quantity reserved) than the total quantity sold of them in 2008? Show the SKU, the available stock and the 2008 quantity sold.",
+    "query": "WITH sold AS (SELECT oi.variant_id, SUM(oi.qty) AS qty FROM ecommerce.order_items AS oi JOIN ecommerce.orders AS o ON o.order_id = oi.order_id WHERE o.ordered_at >= '2008-01-01' AND o.ordered_at < '2009-01-01' GROUP BY oi.variant_id) SELECT v.sku, i.quantity_on_hand - i.quantity_reserved AS available, s.qty AS sold_2008 FROM ecommerce.product_variants AS v JOIN ecommerce.inventory AS i ON i.variant_id = v.variant_id JOIN sold AS s ON s.variant_id = v.variant_id WHERE i.quantity_on_hand - i.quantity_reserved < s.qty",
+    "database": "ecommerce",
+    "difficulty": "hard",
+    "skills": ["multi_hop", "subquery_comparison"],
+    "hops": 3
+  }
+]
