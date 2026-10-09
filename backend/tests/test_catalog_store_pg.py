@@ -464,3 +464,114 @@ class TestWritingAnAnnotation:
         assert await catalog.table_exists("acme", "db2", "sales.orders") is False
         assert await catalog.column_exists("acme", "db1", "sales.orders", "status") is True
         assert await catalog.column_exists("acme", "db1", "sales.orders", "nope") is False
+
+
+def inferred(column_name: str, target: str, *, confidence: float = 0.9, **kwargs):
+    return RelationshipMetadata(
+        name=f"orders.{column_name}->{target} (inferred)",
+        from_table="sales.orders",
+        from_column=column_name,
+        to_table=f"sales.{target}",
+        to_column="id",
+        data_source_id="db1",
+        origin="inferred",
+        confidence=confidence,
+        review_status="proposed",
+        **kwargs,
+    )
+
+
+class TestInferredRelationships:
+    """Migration 0019: proposed joins, served by score, decided once by a human."""
+
+    async def test_only_confident_proposals_are_served(self, catalog, acme):
+        await catalog.upsert_relationships(
+            acme, [inferred("customer_id", "customers", confidence=0.95),
+                   inferred("region_id", "regions", confidence=0.3)]
+        )
+        served = await catalog.get_relationships(acme, data_source_id="db1")
+        assert [r.from_column for r in served] == ["customer_id"]
+        assert served[0].origin == "inferred"
+        assert served[0].is_unconfirmed
+
+        listed = await catalog.list_inferred_relationships("acme", "db1")
+        assert {r["from_column_key"] for r in listed} == {"customer_id", "region_id"}
+
+    async def test_a_rejection_survives_the_next_scan(self, catalog, acme):
+        await catalog.upsert_relationships(acme, [inferred("customer_id", "customers")])
+        assert await catalog.review_relationship(
+            "acme", "db1", from_table="sales.orders", from_column="customer_id",
+            to_table="sales.customers", to_column="id",
+            decision="rejected", reviewed_by="ada@acme.example",
+        )
+        # The rescan infers it again, as proposed.
+        await catalog.upsert_relationships(acme, [inferred("customer_id", "customers")])
+        assert await catalog.get_relationships(acme, data_source_id="db1") == []
+
+    async def test_an_accepted_low_score_join_is_served(self, catalog, acme):
+        await catalog.upsert_relationships(
+            acme, [inferred("region_id", "regions", confidence=0.3)]
+        )
+        await catalog.review_relationship(
+            "acme", "db1", from_table="sales.orders", from_column="region_id",
+            to_table="sales.regions", to_column="id",
+            decision="accepted", reviewed_by="ada@acme.example",
+        )
+        (served,) = await catalog.get_relationships(acme, data_source_id="db1")
+        assert served.review_status == "accepted"
+        assert not served.is_unconfirmed
+
+    async def test_undoing_a_decision_hands_it_back_to_the_score(self, catalog, acme):
+        await catalog.upsert_relationships(acme, [inferred("customer_id", "customers")])
+        for decision in ("rejected", "proposed"):
+            await catalog.review_relationship(
+                "acme", "db1", from_table="sales.orders", from_column="customer_id",
+                to_table="sales.customers", to_column="id",
+                decision=decision, reviewed_by="ada@acme.example",
+            )
+        assert len(await catalog.get_relationships(acme, data_source_id="db1")) == 1
+        (row,) = await catalog.list_inferred_relationships("acme", "db1")
+        assert row["reviewed_by"] is None
+
+    async def test_a_declared_key_settles_a_rejected_guess(self, catalog, acme):
+        await catalog.upsert_relationships(acme, [inferred("customer_id", "customers")])
+        await catalog.review_relationship(
+            "acme", "db1", from_table="sales.orders", from_column="customer_id",
+            to_table="sales.customers", to_column="id",
+            decision="rejected", reviewed_by="ada@acme.example",
+        )
+        await catalog.upsert_relationships(
+            acme,
+            [RelationshipMetadata(
+                name="orders_customer", from_table="sales.orders",
+                from_column="customer_id", to_table="sales.customers",
+                to_column="id", data_source_id="db1",
+            )],
+        )
+        (served,) = await catalog.get_relationships(acme, data_source_id="db1")
+        assert (served.origin, served.review_status) == ("declared", "accepted")
+
+    async def test_declared_relationships_cannot_be_reviewed(self, catalog, acme):
+        await catalog.upsert_relationships(
+            acme,
+            [RelationshipMetadata(
+                name="orders_customer", from_table="sales.orders",
+                from_column="customer_id", to_table="sales.customers",
+                to_column="id", data_source_id="db1",
+            )],
+        )
+        assert not await catalog.review_relationship(
+            "acme", "db1", from_table="sales.orders", from_column="customer_id",
+            to_table="sales.customers", to_column="id",
+            decision="rejected", reviewed_by="ada@acme.example",
+        )
+
+    async def test_a_review_does_not_reach_another_workspace(self, catalog, acme, globex):
+        await catalog.upsert_relationships(acme, [inferred("customer_id", "customers")])
+        assert not await catalog.review_relationship(
+            "globex", "db1", from_table="sales.orders", from_column="customer_id",
+            to_table="sales.customers", to_column="id",
+            decision="rejected", reviewed_by="bob@globex.example",
+        )
+        assert len(await catalog.get_relationships(acme, data_source_id="db1")) == 1
+        assert await catalog.list_inferred_relationships("globex", "db1") == []

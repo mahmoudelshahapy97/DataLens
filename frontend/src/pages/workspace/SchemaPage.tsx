@@ -19,6 +19,7 @@ import { api, post, put } from '@/lib/api';
 import { toast, toastError } from '@/lib/toast';
 
 import { DescribeDialog } from './DescribeDialog';
+import { InferredJoinsPanel } from './InferredJoinsPanel';
 
 /**
  * What the agent can see of the warehouse.
@@ -72,6 +73,8 @@ export default function SchemaPage() {
   const [scanning, setScanning] = React.useState(false);
   const [coreColumns, setCoreColumns] = React.useState<Set<string>>(new Set());
   const [coreBusy, setCoreBusy] = React.useState(false);
+  // Bumped after a rescan, which is what produces new inferred joins.
+  const [scans, setScans] = React.useState(0);
 
   const load = React.useCallback(async (alive: () => boolean = () => true) => {
     try {
@@ -113,6 +116,7 @@ export default function SchemaPage() {
         }),
       );
       await load();
+      setScans((n) => n + 1);
     } catch (caught) {
       toastError((caught as Error).message);
     } finally {
@@ -360,6 +364,9 @@ export default function SchemaPage() {
           ) : null}
         </div>
       )}
+      {canCurate && me?.tenant ? (
+        <InferredJoinsPanel tenantId={me.tenant.id} refreshKey={scans} />
+      ) : null}
       {describing && active && me?.tenant ? (
         <DescribeDialog
           tenant={me.tenant.id}

@@ -30,6 +30,7 @@ import time
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 from ..sql_runner import RunSqlToolArgs, SqlRunner
+from .inference import containment_sql, infer_relationships, rescore
 from .models import (
     CatalogStatus,
     ColumnMetadata,
@@ -151,6 +152,12 @@ class SchemaScanner:
             format. Disable wholesale for regulated tenants.
         redact_sensitive: Skip profiling and sampling for columns whose names
             match :data:`SENSITIVE_COLUMN_PATTERNS`. Leave enabled.
+        infer_relationships: Propose joins for ``*_id`` columns no foreign key
+            declares (see :mod:`.inference`). Stored as proposed, labelled
+            inferred, and used unreviewed only when confident.
+        verify_inferred: Sample each proposed join's data and raise or lower
+            its confidence by whether the values actually match. One bounded
+            query per candidate.
     """
 
     def __init__(
@@ -162,6 +169,8 @@ class SchemaScanner:
         max_categories: int = 100,
         sample_rows: bool = False,
         redact_sensitive: bool = True,
+        infer_relationships: bool = True,
+        verify_inferred: bool = True,
     ) -> None:
         self.runner = runner
         self.dialect = dialect or getattr(runner, "dialect", None) or "generic"
@@ -169,6 +178,8 @@ class SchemaScanner:
         self.max_categories = max_categories
         self.sample_rows = sample_rows
         self.redact_sensitive = redact_sensitive
+        self.infer_relationships = infer_relationships
+        self.verify_inferred = verify_inferred
 
     # ------------------------------------------------------------------
     # Public API
@@ -242,6 +253,16 @@ class SchemaScanner:
                     )
                 )
 
+        if self.infer_relationships:
+            scanned = [t for t in collected if t.status != CatalogStatus.FAILED]
+            inferred = infer_relationships(
+                scanned, relationships, data_source_id=data_source_id
+            )
+            if self.verify_inferred:
+                inferred = [await self._verify(context, rel) for rel in inferred]
+            relationships.extend(inferred)
+            report.relationships_inferred = len(inferred)
+
         if collected:
             await catalog.upsert_tables(context, collected)
         if relationships:
@@ -250,6 +271,21 @@ class SchemaScanner:
 
         report.duration_ms = (time.perf_counter() - started) * 1000
         return report
+
+    async def _verify(
+        self, context: "ToolContext", rel: RelationshipMetadata
+    ) -> RelationshipMetadata:
+        """Rescore an inferred join from a data sample; unchanged on any error."""
+        try:
+            rows = await self._query(context, containment_sql(rel))
+        except Exception as e:
+            logger.debug("Could not verify %s: %s", rel.name, e)
+            return rel
+        if not rows:
+            return rel
+        sampled = int(_cell(rows[0], "sampled") or 0)
+        orphans = int(_cell(rows[0], "orphans") or 0)
+        return rescore(rel, sampled, orphans)
 
     # ------------------------------------------------------------------
     # Introspection

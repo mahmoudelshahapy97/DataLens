@@ -584,4 +584,9 @@ def register(app: Any, deps: Deps) -> None:
                 }
                 for name, tokens in result.section_tokens.items()
             ],
+            # How the schema section was chosen: full or search, which tables
+            # the join tree added as bridges, which a glossary term or metric
+            # pulled in, and the core columns shown. "Why did it not see table
+            # X" is answered here.
+            "schema": (getattr(result, "metadata", None) or {}).get("schema"),
         }

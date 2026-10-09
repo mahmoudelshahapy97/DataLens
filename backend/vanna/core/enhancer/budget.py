@@ -19,7 +19,7 @@ invites the model to invent the columns it cannot see.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 #: Fallback when no tokenizer is available. Four characters per token is a
 #: reasonable English average. Deliberately crude: an accurate count needs a
@@ -103,6 +103,10 @@ class AssemblyResult:
     section_tokens: Dict[str, int] = field(default_factory=dict)
     truncated_sections: List[str] = field(default_factory=list)
     dropped_items: Dict[str, int] = field(default_factory=dict)
+    #: How sources chose what they contributed -- e.g. the schema strategy and
+    #: which tables were added as join bridges. For previews and debugging;
+    #: never rendered into the prompt.
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def was_truncated(self) -> bool:

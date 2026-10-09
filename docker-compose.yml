@@ -214,6 +214,10 @@ services:
       # gets worse rather than the stack failing, so check the effective backend on
       # /api/vanna/v2/schema when answers degrade for no obvious reason.
       VANNA_INDEX_BACKEND: ${VANNA_INDEX_BACKEND:-qdrant}
+      # Schemas rendering larger than this many characters get search-selected
+      # tables instead of the whole schema. 0 forces search everywhere -- the
+      # "large warehouse" mode of backend/evals/sql_accuracy.py.
+      VANNA_SCHEMA_FULL_TEXT_THRESHOLD: ${VANNA_SCHEMA_FULL_TEXT_THRESHOLD:-30000}
       # Served by the ../../vector_db stack over the shared sandbox network, not by
       # a service in this file -- `qdrant` is that stack's service name, which
       # Compose registers as an alias on every network it joins. See the note where

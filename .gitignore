@@ -250,3 +250,6 @@ coverage.xml
 # database (chinook, northwind, pagila and friends), so the names are fictional.
 # Point this repository at a real warehouse and the export stops being safe to
 # commit: regenerate with `make qa-json` and re-add the `qa*.json` rule.
+
+# Execution-accuracy reports from backend/evals/sql_accuracy.py
+backend/evals/results/

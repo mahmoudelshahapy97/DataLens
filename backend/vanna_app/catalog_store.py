@@ -39,6 +39,7 @@ from vanna.capabilities.schema_catalog import (
     SchemaCatalog,
     TableMetadata,
 )
+from vanna.capabilities.schema_catalog.models import INFERRED_MIN_CONFIDENCE
 from vanna.capabilities.schema_catalog.search import rank_tables, search_indexed
 from vanna.core.grants import normalize_identifier, normalize_table
 
@@ -197,29 +198,99 @@ class PostgresSchemaCatalog(SchemaCatalog):
         rows = await self.db.fetch_all(
             f"""
             SELECT data_source_id, name, join_type, description,
-                   from_table_key, from_column_key, to_table_key, to_column_key
+                   from_table_key, from_column_key, to_table_key, to_column_key,
+                   origin, confidence, review_status
               FROM {SCHEMA}.catalog_relationships
              WHERE tenant_id = %s
                AND (%s::text IS NULL OR data_source_id = %s)
                AND lifecycle_status = 'present'
+               -- Served: accepted, or an unreviewed guess the scanner was sure
+               -- of. Rejected and weak guesses stay stored for the review
+               -- screen and so a rescan does not re-propose them as new.
+               AND (review_status = 'accepted'
+                    OR (review_status = 'proposed' AND COALESCE(confidence, 0) >= %s))
              ORDER BY from_table_key, to_table_key
             """,
-            (tenant, data_source_id, data_source_id),
+            (tenant, data_source_id, data_source_id, INFERRED_MIN_CONFIDENCE),
         )
-        return [
-            RelationshipMetadata(
-                name=row["name"],
-                from_table=row["from_table_key"],
-                from_column=row["from_column_key"],
-                to_table=row["to_table_key"],
-                to_column=row["to_column_key"],
-                join_type=row["join_type"],
-                description=row["description"],
-                tenant_id=tenant,
-                data_source_id=row["data_source_id"],
-            )
-            for row in rows
-        ]
+        return [self._relationship_from_row(row, tenant) for row in rows]
+
+    @staticmethod
+    def _relationship_from_row(row: Dict[str, Any], tenant: str) -> RelationshipMetadata:
+        return RelationshipMetadata(
+            name=row["name"],
+            from_table=row["from_table_key"],
+            from_column=row["from_column_key"],
+            to_table=row["to_table_key"],
+            to_column=row["to_column_key"],
+            join_type=row["join_type"],
+            description=row["description"],
+            tenant_id=tenant,
+            data_source_id=row["data_source_id"],
+            origin=row.get("origin") or "declared",
+            confidence=row.get("confidence"),
+            review_status=row.get("review_status") or "accepted",
+        )
+
+    # -- inferred relationships: the review screen ---------------------
+
+    async def list_inferred_relationships(
+        self, tenant_id: str, data_source_id: str
+    ) -> List[Dict[str, Any]]:
+        """Every inferred join for one data source, whatever its review state."""
+        rows = await self.db.fetch_all(
+            f"""
+            SELECT from_table_key, from_column_key, to_table_key, to_column_key,
+                   join_type, confidence, review_status, reviewed_by, reviewed_at,
+                   lifecycle_status
+              FROM {SCHEMA}.catalog_relationships
+             WHERE tenant_id = %s AND data_source_id = %s AND origin = 'inferred'
+             ORDER BY review_status = 'proposed' DESC, confidence DESC NULLS LAST,
+                      from_table_key, from_column_key
+            """,
+            (tenant_id, data_source_id),
+        )
+        return [dict(row) for row in rows]
+
+    async def review_relationship(
+        self,
+        tenant_id: str,
+        data_source_id: str,
+        *,
+        from_table: str,
+        from_column: str,
+        to_table: str,
+        to_column: str,
+        decision: str,
+        reviewed_by: str,
+    ) -> bool:
+        """Accept, reject or un-review one inferred join. False when none exists.
+
+        Declared relationships are not reviewable -- the database says they
+        exist -- so the update is restricted to ``origin = 'inferred'``.
+        ``proposed`` clears a decision, handing the join back to its score.
+        """
+        if decision not in ("accepted", "rejected", "proposed"):
+            raise ValueError(f"Unknown review decision {decision!r}")
+        reviewer = None if decision == "proposed" else reviewed_by
+        updated = await self.db.execute(
+            f"""
+            UPDATE {SCHEMA}.catalog_relationships
+               SET review_status = %s,
+                   reviewed_by   = %s,
+                   reviewed_at   = CASE WHEN %s::text IS NULL THEN NULL ELSE now() END
+             WHERE tenant_id = %s AND data_source_id = %s AND origin = 'inferred'
+               AND from_table_key = %s AND from_column_key = %s
+               AND to_table_key = %s AND to_column_key = %s
+            """,
+            (
+                decision, reviewer, reviewer,
+                tenant_id, data_source_id,
+                normalize_table(from_table), normalize_identifier(from_column),
+                normalize_table(to_table), normalize_identifier(to_column),
+            ),
+        )
+        return bool(updated)
 
     async def _columns_for(
         self, tenant: str, data_source_id: Optional[str]
@@ -470,14 +541,26 @@ class PostgresSchemaCatalog(SchemaCatalog):
                     INSERT INTO {SCHEMA}.catalog_relationships
                         (tenant_id, data_source_id, from_table_key, from_column_key,
                          to_table_key, to_column_key, name, join_type, description,
+                         origin, confidence, review_status,
                          lifecycle_status, last_seen_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'present', now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            'present', now())
                     ON CONFLICT (tenant_id, data_source_id, from_table_key,
                                  from_column_key, to_table_key, to_column_key)
                     DO UPDATE SET
                         name             = EXCLUDED.name,
                         join_type        = EXCLUDED.join_type,
                         description      = EXCLUDED.description,
+                        origin           = EXCLUDED.origin,
+                        confidence       = EXCLUDED.confidence,
+                        -- A declared foreign key settles it. Otherwise a human
+                        -- decision outlives the rescan that re-infers the join.
+                        review_status    = CASE
+                            WHEN EXCLUDED.origin = 'declared' THEN 'accepted'
+                            WHEN catalog_relationships.reviewed_by IS NOT NULL
+                                THEN catalog_relationships.review_status
+                            ELSE EXCLUDED.review_status
+                        END,
                         lifecycle_status = 'present',
                         last_seen_at     = now()
                     """,
@@ -491,6 +574,9 @@ class PostgresSchemaCatalog(SchemaCatalog):
                         rel.name,
                         rel.join_type,
                         rel.description,
+                        rel.origin,
+                        rel.confidence,
+                        rel.review_status,
                     ),
                 )
 

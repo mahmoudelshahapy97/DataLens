@@ -24,7 +24,7 @@ column a caller cannot read stays unreadable.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
@@ -59,6 +59,15 @@ class CoreColumns(BaseModel):
     #: Replaced wholesale -- a curated set is edited as a set, and merging
     #: would make removing a column from it impossible.
     columns: List[str] = Field(default_factory=list)
+
+
+class RelationshipReview(BaseModel):
+    from_table: str = Field(max_length=400)
+    from_column: str = Field(max_length=200)
+    to_table: str = Field(max_length=400)
+    to_column: str = Field(max_length=200)
+    #: ``proposed`` withdraws a decision and hands the join back to its score.
+    decision: Literal["accepted", "rejected", "proposed"]
 
 
 def register(app: Any, deps: Deps) -> None:
@@ -156,6 +165,63 @@ def register(app: Any, deps: Deps) -> None:
         )
         logger.info("%s set core columns for %s in %s", user.email, table, tenant_id)
         return {"columns": columns}
+
+    # -- inferred relationships ----------------------------------------
+    #
+    # Joins the scanner guessed from column names for a database that declares
+    # no foreign key for them. Confident guesses are used before anybody looks;
+    # this is where an admin confirms the right ones (they then weigh the same
+    # as a declared key) and rejects the wrong ones (never served again, even
+    # after a rescan re-infers them).
+
+    @app.get(BASE + "/relationships/inferred")
+    async def list_inferred_relationships(
+        tenant_id: str, request: Request
+    ) -> Dict[str, Any]:
+        from vanna.capabilities.schema_catalog.models import INFERRED_MIN_CONFIDENCE
+
+        await _admin(request, tenant_id)
+        store, data_source = await _store_and_source(tenant_id)
+        rows = await store.list_inferred_relationships(tenant_id, data_source)
+        for row in rows:
+            row["in_use"] = row["review_status"] == "accepted" or (
+                row["review_status"] == "proposed"
+                and (row.get("confidence") or 0) >= INFERRED_MIN_CONFIDENCE
+            )
+        return {"relationships": rows, "min_confidence": INFERRED_MIN_CONFIDENCE}
+
+    @app.put(BASE + "/relationships/review")
+    async def review_relationship(
+        tenant_id: str, payload: RelationshipReview, request: Request
+    ) -> Dict[str, Any]:
+        user = await _admin(request, tenant_id)
+        store, data_source = await _store_and_source(tenant_id)
+        found = await store.review_relationship(
+            tenant_id,
+            data_source,
+            from_table=_key(payload.from_table, what="table"),
+            from_column=_key(payload.from_column, what="column"),
+            to_table=_key(payload.to_table, what="table"),
+            to_column=_key(payload.to_column, what="column"),
+            decision=payload.decision,
+            reviewed_by=user.email or user.id,
+        )
+        if not found:
+            raise HTTPException(
+                status_code=404, detail="No inferred relationship with those columns."
+            )
+        target = (
+            f"{tenant_id}:{payload.from_table}.{payload.from_column}"
+            f"->{payload.to_table}.{payload.to_column}"
+        )
+        await deps.admin_audit.record(
+            f"catalog.relationship_{payload.decision}",
+            actor_email=user.email,
+            target=target,
+            actor_ip=deps.client_ip(request),
+        )
+        logger.info("%s marked %s %s", user.email, target, payload.decision)
+        return {"review_status": payload.decision}
 
     @app.get(BASE + "/tables/{table_key:path}")
     async def get_table_annotation(

@@ -250,6 +250,11 @@ class Settings:
     enable_planner: bool = False
 
     index_backend: str = "lexical"
+    #: Rendered-schema size (characters) above which the prompt carries only
+    #: the tables search picks instead of the whole schema. Mostly a tuning
+    #: and evaluation knob: 0 forces the search path on every schema, which is
+    #: how ``evals/sql_accuracy.py`` simulates a large warehouse on Chinook.
+    schema_full_text_threshold: int = 30_000
     project_dir: str = ""
     projects_dir: str = ""
 
@@ -440,6 +445,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         ),
         scan_on_start=_flag(env, "VANNA_SCAN_ON_START", True),
         index_backend=_text(env, "VANNA_INDEX_BACKEND", "lexical"),
+        schema_full_text_threshold=_number(
+            env, "VANNA_SCHEMA_FULL_TEXT_THRESHOLD", 30_000, minimum=0
+        ),
         project_dir=_text(env, "VANNA_PROJECT_DIR"),
         projects_dir=_text(env, "VANNA_PROJECTS_DIR"),
         config_source=_text(env, "VANNA_CONFIG_SOURCE", "disk").lower(),

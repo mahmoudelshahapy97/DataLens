@@ -1,0 +1,51 @@
+[
+  {
+    "question": "What is the total rental payment revenue for each film category?",
+    "query": "SELECT c.name AS category, ROUND(SUM(p.amount), 2) AS revenue FROM pagila.payment AS p JOIN pagila.rental AS r ON r.rental_id = p.rental_id JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film_category AS fc ON fc.film_id = i.film_id JOIN pagila.category AS c ON c.category_id = fc.category_id GROUP BY c.name",
+    "database": "pagila",
+    "hops": 4
+  },
+  {
+    "question": "How many times have films featuring the actor Penelope Guiness been rented?",
+    "query": "SELECT COUNT(*) AS rentals FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film_actor AS fa ON fa.film_id = i.film_id JOIN pagila.actor AS a ON a.actor_id = fa.actor_id WHERE a.first_name = 'PENELOPE' AND a.last_name = 'GUINESS'",
+    "database": "pagila",
+    "hops": 3
+  },
+  {
+    "question": "What is the total payment revenue by customer country?",
+    "query": "SELECT co.country, ROUND(SUM(p.amount), 2) AS revenue FROM pagila.payment AS p JOIN pagila.customer AS cu ON cu.customer_id = p.customer_id JOIN pagila.address AS ad ON ad.address_id = cu.address_id JOIN pagila.city AS ci ON ci.city_id = ad.city_id JOIN pagila.country AS co ON co.country_id = ci.country_id GROUP BY co.country",
+    "database": "pagila",
+    "hops": 4
+  },
+  {
+    "question": "How many rentals has each store made?",
+    "query": "SELECT i.store_id, COUNT(*) AS rentals FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id GROUP BY i.store_id",
+    "database": "pagila",
+    "hops": 1
+  },
+  {
+    "question": "How many rentals were there for films in each language?",
+    "query": "SELECT l.name AS language, COUNT(*) AS rentals FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film AS f ON f.film_id = i.film_id JOIN pagila.language AS l ON l.language_id = f.language_id GROUP BY l.name",
+    "database": "pagila",
+    "hops": 3
+  },
+  {
+    "question": "How many customers live in Canada?",
+    "query": "SELECT COUNT(*) AS customers FROM pagila.customer AS cu JOIN pagila.address AS ad ON ad.address_id = cu.address_id JOIN pagila.city AS ci ON ci.city_id = ad.city_id JOIN pagila.country AS co ON co.country_id = ci.country_id WHERE co.country = 'Canada'",
+    "database": "pagila",
+    "hops": 3
+  },
+  {
+    "question": "Which film categories has the customer Mary Smith rented from?",
+    "query": "SELECT DISTINCT c.name AS category FROM pagila.rental AS r JOIN pagila.customer AS cu ON cu.customer_id = r.customer_id JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film_category AS fc ON fc.film_id = i.film_id JOIN pagila.category AS c ON c.category_id = fc.category_id WHERE cu.first_name = 'MARY' AND cu.last_name = 'SMITH'",
+    "database": "pagila",
+    "hops": 4
+  },
+  {
+    "question": "For each film category, how many films does it have and how many times have its films been rented?",
+    "query": "WITH films AS (SELECT category_id, COUNT(*) AS films FROM pagila.film_category GROUP BY category_id), rentals AS (SELECT fc.category_id, COUNT(*) AS rentals FROM pagila.rental AS r JOIN pagila.inventory AS i ON i.inventory_id = r.inventory_id JOIN pagila.film_category AS fc ON fc.film_id = i.film_id GROUP BY fc.category_id) SELECT c.name AS category, f.films, COALESCE(rc.rentals, 0) AS rentals FROM pagila.category AS c JOIN films AS f ON f.category_id = c.category_id LEFT JOIN rentals AS rc ON rc.category_id = c.category_id",
+    "database": "pagila",
+    "hops": 3,
+    "note": "Fan trap: counting films over the rental join counts rentals instead."
+  }
+]

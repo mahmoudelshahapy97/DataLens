@@ -46,6 +46,38 @@ from http.cookiejar import CookieJar
 from typing import Any, Dict, List, Optional, Tuple
 
 
+def _one_line(sql: str) -> str:
+    """Collapse *sql* onto one line without changing what it means.
+
+    ``--`` comments run to the end of their line, so collapsing whitespace first
+    turns ``SELECT a, -- note`` + ``b FROM t`` into a statement that is all
+    comment after ``a,``. Line comments are dropped first; quoted text is copied
+    verbatim so a ``'--'`` literal survives. Block comments are self-delimiting
+    and are left alone.
+    """
+    out: List[str] = []
+    i, n = 0, len(sql)
+    quote: Optional[str] = None
+    while i < n:
+        ch = sql[i]
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+        elif sql.startswith("--", i):
+            while i < n and sql[i] != "\n":
+                i += 1
+            out.append(" ")
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return " ".join("".join(out).split())
+
+
 def _decode(raw: str) -> Any:
     if not raw.strip():
         return {}
@@ -185,7 +217,7 @@ def build_one(
         """
         candidates = by_thread.get(thread_id) or by_question.get(question) or []
         good = [r for r in candidates if r.get("status") == "valid"] or candidates
-        statements = [" ".join((r.get("sql") or "").split()) for r in reversed(good)]
+        statements = [_one_line(r.get("sql") or "") for r in reversed(good)]
         return statements if all_queries else statements[-1:]
 
     records: List[Dict[str, str]] = []

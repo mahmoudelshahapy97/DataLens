@@ -247,6 +247,25 @@ class GrantFilteredCatalog:
                 visible.append(edge)
         return visible
 
+    # -- derived reads -------------------------------------------------
+    #
+    # `SchemaCatalog` provides these on top of the three reads above. They must
+    # run against *this* object: falling through `__getattr__` binds them to
+    # the inner catalog, whose `self.get_tables` is unfiltered -- which is how
+    # the prompt's schema section (built by `get_context`) used to carry every
+    # table and column the role had not been granted, while the tools beside
+    # it correctly hid them.
+
+    async def get_context(self, context: Any, question: str, **kwargs: Any) -> Any:
+        from vanna.capabilities.schema_catalog import SchemaCatalog
+
+        return await SchemaCatalog.get_context(self, context, question, **kwargs)
+
+    async def catalog_hash(self, context: Any, **kwargs: Any) -> str:
+        from vanna.capabilities.schema_catalog import SchemaCatalog
+
+        return await SchemaCatalog.catalog_hash(self, context, **kwargs)
+
     # -- pass-through --------------------------------------------------
     #
     # Writes to the catalog come from the scanner on a system context, never

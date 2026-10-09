@@ -215,6 +215,27 @@ class TestFiltering:
             "salaries" not in (e.from_table + e.to_table) for e in edges
         ), "an ungranted table was named in a relationship"
 
+    async def test_the_prompt_schema_section_is_filtered_too(self, store, analyst):
+        """`get_context` builds the schema section of every prompt. It used to
+        reach the inner catalog through `__getattr__` and so read it unfiltered:
+        the tools hid `salaries` while the system prompt described it."""
+        await grant_orders(store, analyst, columns=("order_id",))
+        catalog = guarded(store, inner=FakeCatalog(relationships=[]))
+
+        for threshold in (30_000, 0):  # whole-schema path and search path
+            ctx = await catalog.get_context(analyst, "salaries", threshold=threshold)
+            assert "salaries" not in ctx.text, "an ungranted table reached the prompt"
+            assert "total" not in ctx.text, "an ungranted column reached the prompt"
+            assert ctx.table_names == ["erp.orders"]
+
+    async def test_the_catalog_hash_sees_only_visible_tables(self, store, analyst):
+        await grant_orders(store, analyst)
+        filtered = guarded(store, inner=FakeCatalog(relationships=[]))
+        everything = guarded(store, roles=(), inner=FakeCatalog(relationships=[]))
+        assert await filtered.catalog_hash(analyst) != await everything.catalog_hash(
+            analyst
+        )
+
     async def test_the_original_catalog_is_not_mutated(self, store, analyst):
         """Filtering returns copies. Mutating the shared catalog would narrow it
         for every other caller in the workspace."""

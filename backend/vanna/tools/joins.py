@@ -10,31 +10,35 @@ query that runs, and a number that is wrong -- the failure this tool exists to
 remove.
 
 So this tool answers only the question the schema tools cannot: **what is the
-shortest chain of joins connecting these tables**, including the intermediate
+cheapest set of joins connecting these tables**, including the intermediate
 tables nobody named. Its description says so explicitly, because the model
 otherwise has no way to tell it apart from ``get_table_schema``.
 
-Edges come from two sources, merged: the curated ``RelationshipMetadata`` graph
-and the foreign keys recorded on the columns themselves. Both already exist in
-the catalog; nothing here scans the database.
+The answer is one join *tree* over all requested tables (see
+``vanna.capabilities.schema_graph``), not a separate path from the first table
+to each of the others -- separate paths can route through different bridges
+and describe a join with a cycle in it. The tree also says when it fans out
+one-to-many in two directions from one table, which is where SUMs come back
+multiplied.
 """
 
 from __future__ import annotations
 
-from collections import deque
-from typing import Any, Dict, List, Optional, Set, Tuple, Type
+from typing import List, Optional, Type
 
 from pydantic import BaseModel, Field
 
 from vanna.capabilities.schema_catalog import SchemaCatalog
+from vanna.capabilities.schema_graph import (
+    MAX_HOPS,
+    SchemaGraph,
+    SteinerResult,
+    fan_traps,
+    load_schema_graph,
+    table_lookup,
+)
 from vanna.components import RichTextComponent, SimpleTextComponent, UiComponent
 from vanna.core.tool import Tool, ToolContext, ToolResult
-
-#: Hops allowed before a path is judged too tenuous to suggest. Four already
-#: means three tables the user never mentioned; beyond that a "join path" is
-#: more likely to be two unrelated subject areas sharing a lookup table than a
-#: route anyone wants joined.
-_MAX_HOPS = 4
 
 #: Bridge candidates listed when tables cannot be connected at all. Enough to
 #: be a lead, few enough that the model does not treat the list as a schema.
@@ -96,14 +100,10 @@ class SuggestJoinsTool(Tool[SuggestJoinsArgs]):
         except Exception as e:
             return _failure(f"Could not read the schema catalog: {e}")
 
-        # Canonical name per table, plus a lookup that accepts the bare name,
-        # the qualified name, and either in any case -- the model reliably
-        # supplies a different form from the one the catalog stores.
-        canonical: Dict[str, str] = {}
-        for table in tables:
-            qualified = table.qualified_name
-            canonical[qualified.lower()] = qualified
-            canonical.setdefault(table.table_name.lower(), qualified)
+        # Accepts the bare name, the qualified name, and either in any case --
+        # the model reliably supplies a different form from the one the
+        # catalog stores.
+        canonical = table_lookup(tables)
 
         wanted: List[str] = []
         unknown: List[str] = []
@@ -128,8 +128,10 @@ class SuggestJoinsTool(Tool[SuggestJoinsArgs]):
             text = "Give two or more distinct tables. A single table needs no join."
             return _ok(text, text)
 
-        edges = await self._build_edges(context, tables, canonical)
-        if not edges:
+        graph, _ = await load_schema_graph(
+            self.catalog, context, data_source_id=self.data_source_id, tables=tables
+        )
+        if not graph:
             text = (
                 "The catalog records no relationships or foreign keys for this "
                 "data source, so no join path can be derived. Fall back to "
@@ -138,85 +140,21 @@ class SuggestJoinsTool(Tool[SuggestJoinsArgs]):
             )
             return _ok(text, text)
 
-        return self._describe_paths(wanted, edges)
+        return self._describe_tree(wanted, graph)
 
     # ------------------------------------------------------------------
-    # Graph construction
+    # Rendering
     # ------------------------------------------------------------------
 
-    async def _build_edges(
-        self,
-        context: ToolContext,
-        tables: List[Any],
-        canonical: Dict[str, str],
-    ) -> Dict[str, Set[Tuple[str, str, str]]]:
-        """Undirected adjacency: table -> {(neighbour, own column, their column)}.
-
-        Undirected because a join is symmetric; the catalog stores a direction
-        because cardinality has one, and reading only the stored direction is
-        how a path from the "many" side to the "one" side goes missing.
-        """
-        edges: Dict[str, Set[Tuple[str, str, str]]] = {}
-
-        def add(a: str, a_col: str, b: str, b_col: str) -> None:
-            if a == b:
-                return  # self-joins are real, but never part of a path between two tables
-            edges.setdefault(a, set()).add((b, a_col, b_col))
-            edges.setdefault(b, set()).add((a, b_col, a_col))
-
-        try:
-            relationships = await self.catalog.get_relationships(
-                context, data_source_id=self.data_source_id
-            )
-        except Exception:
-            relationships = []  # foreign keys alone still give a usable graph
-
-        for rel in relationships:
-            source = canonical.get(rel.from_table.lower())
-            target = canonical.get(rel.to_table.lower())
-            if source and target:
-                add(source, rel.from_column, target, rel.to_column)
-
-        for table in tables:
-            for column in getattr(table, "columns", None) or []:
-                fk = getattr(column, "foreign_key", None)
-                if fk is None:
-                    continue
-                target = canonical.get(fk.references_table.lower())
-                if target:
-                    add(
-                        table.qualified_name,
-                        fk.column or column.name,
-                        target,
-                        fk.references_column,
-                    )
-
-        return edges
-
-    # ------------------------------------------------------------------
-    # Path finding
-    # ------------------------------------------------------------------
-
-    def _describe_paths(
-        self, wanted: List[str], edges: Dict[str, Set[Tuple[str, str, str]]]
-    ) -> ToolResult:
-        anchor = wanted[0]
-        sections: List[str] = []
-        joined: Set[str] = {anchor}
-        unreachable: List[str] = []
-
-        for target in wanted[1:]:
-            path = _shortest_path(anchor, target, edges)
-            if path is None:
-                unreachable.append(target)
-                continue
-            joined.update(step[0] for step in path)
-            sections.append(_render_path(anchor, target, path))
+    def _describe_tree(self, wanted: List[str], graph: SchemaGraph) -> ToolResult:
+        tree = graph.steiner_tree(wanted, max_hops=MAX_HOPS)
+        anchor = tree.anchor
+        bridges = tree.bridges(wanted)
+        traps = fan_traps(tree.edges)
 
         text_parts: List[str] = []
-        if sections:
-            text_parts.append("\n\n".join(sections))
-            bridges = sorted(joined - set(wanted))
+        if tree.edges:
+            text_parts.append(_render_tree(tree))
             if bridges:
                 text_parts.append(
                     "Tables needed only to connect the ones you asked for: "
@@ -224,23 +162,31 @@ class SuggestJoinsTool(Tool[SuggestJoinsArgs]):
                     + ". Include them in FROM/JOIN but do not select from them "
                     "unless the question asks for their columns."
                 )
+            for hub, targets in traps:
+                text_parts.append(
+                    f"Row multiplication warning: {hub} joins one-to-many to "
+                    f"both {' and '.join(targets)}. Each {hub} row is repeated "
+                    "once per combination of their rows, so a SUM or COUNT over "
+                    "this join comes back too large. Aggregate each branch "
+                    "separately (a subquery or CTE per branch, grouped by the "
+                    f"{hub} key) and join the aggregates."
+                )
 
-        if unreachable:
-            hints = sorted({n for (n, _, _) in edges.get(anchor, set())})
-            hints = hints[:_MAX_BRIDGE_HINTS]
+        if tree.unreachable:
+            hints = graph.neighbours(anchor)[:_MAX_BRIDGE_HINTS]
             hint_text = (
                 f" {anchor} joins directly to: {', '.join(hints)}." if hints else ""
             )
             text_parts.append(
-                f"No join path of {_MAX_HOPS} hops or fewer connects {anchor} "
-                f"to: {', '.join(unreachable)}.{hint_text} These may belong to "
+                f"No join path of {MAX_HOPS} hops or fewer connects {anchor} "
+                f"to: {', '.join(tree.unreachable)}.{hint_text} These may belong to "
                 "unrelated subject areas -- say so rather than inventing a join."
             )
 
         text = "\n\n".join(text_parts)
         summary = (
             f"Join path for {len(wanted)} table(s)"
-            if sections
+            if tree.edges
             else "No join path found"
         )
         return _ok(
@@ -248,54 +194,25 @@ class SuggestJoinsTool(Tool[SuggestJoinsArgs]):
             summary,
             metadata={
                 "tables": wanted,
-                "bridges": sorted(joined - set(wanted)),
-                "unreachable": unreachable,
+                "bridges": bridges,
+                "unreachable": list(tree.unreachable),
+                "fan_traps": [{"hub": hub, "tables": t} for hub, t in traps],
             },
         )
 
 
-def _shortest_path(
-    start: str, goal: str, edges: Dict[str, Set[Tuple[str, str, str]]]
-) -> Optional[List[Tuple[str, str, str]]]:
-    """Breadth-first, so the first path found is the one with fewest joins.
-
-    Returns the steps taken, each ``(table reached, left column, right column)``,
-    or None when the goal is further than :data:`_MAX_HOPS`.
-    """
-    if start == goal:
-        return []
-
-    queue: deque = deque([(start, [])])
-    seen: Set[str] = {start}
-
-    while queue:
-        current, path = queue.popleft()
-        if len(path) >= _MAX_HOPS:
-            continue
-        # Sorted so the same schema always yields the same suggestion; an
-        # unordered set makes the tool's output vary between identical calls.
-        for neighbour, own_column, their_column in sorted(edges.get(current, set())):
-            if neighbour in seen:
-                continue
-            step = path + [(neighbour, own_column, their_column)]
-            if neighbour == goal:
-                return step
-            seen.add(neighbour)
-            queue.append((neighbour, step))
-
-    return None
-
-
-def _render_path(anchor: str, target: str, path: List[Tuple[str, str, str]]) -> str:
-    hops = len(path)
-    header = f"{anchor} -> {target} ({hops} join{'s' if hops != 1 else ''})"
-    lines = [header]
-    left = anchor
-    for reached, left_column, right_column in path:
+def _render_tree(tree: SteinerResult) -> str:
+    hops = len(tree.edges)
+    header = (
+        f"Join tree for {', '.join(tree.tables)} "
+        f"({hops} join{'s' if hops != 1 else ''})"
+    )
+    lines = [header, f"  FROM {tree.anchor}"]
+    for edge in tree.edges:
         lines.append(
-            f"  JOIN {reached} ON {left}.{left_column} = {reached}.{right_column}"
+            f"  JOIN {edge.right} ON {edge.left}.{edge.left_column} = "
+            f"{edge.right}.{edge.right_column}"
         )
-        left = reached
     return "\n".join(lines)
 
 
