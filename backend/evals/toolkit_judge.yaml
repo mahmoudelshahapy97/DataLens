@@ -1,0 +1,60 @@
+# LLM judge for vanna predictions (backend/evals/toolkit_bridge.py score --judge ...).
+#
+# The prompt is the toolkit's packaged judge (llm_judge_default_config.yaml,
+# calibrated in 1.6.0) copied verbatim; only the model differs. The packaged
+# one runs on watsonx. This one uses Claude, deliberately a different provider
+# from the model vanna generates with, so the judge is not grading its own
+# answers. Needs ANTHROPIC_API_KEY.
+model:
+  id: anthropic:claude-sonnet-5-5
+  max_new_tokens: 4096
+  temperature: 0
+
+prompt_template: |
+  You are grading a text-to-SQL prediction: does the predicted SQL query correctly answer the question?
+
+  You are given the question; the prompt the prediction was generated from, which contains the database schema and sometimes hints that define terms used in the question; a reference SQL query with its result; and the predicted SQL query with its result. Result tables are rendered as text, and long tables are cut to their first and last rows.
+
+  How to judge:
+  1. Work out what the question asks. Where the generation prompt gives hints, they are the definition of the terms they explain: a prediction that departs from a threshold, formula, column or value a hint gives is incorrect, however reasonable its own choice.
+  2. Check the predicted query's logic against that: the tables and join keys, filter conditions and their literal values, aggregation and grouping, the calculation the question asks for, and any ordering or limit the question requires.
+  3. Use the two results as evidence. When the predicted result gives the same answer as the reference, these differences do not make it wrong:
+     - column names, column order, or extra columns that identify or explain the answer;
+     - row order, when the question does not ask for an order;
+     - duplicate rows, or duplicates the reference has and the prediction removes;
+     - a value that differs only in rounding, precision, casting or number formatting;
+     - returning every tied row where the reference keeps one of them arbitrarily.
+  4. The reference query can contain a mistake -- a missing join condition, the wrong aggregate, numbers compared as text, a literal value that does not occur in the data. If it does and the predicted query answers the question correctly, the prediction is correct. Reading an ambiguous phrase differently from the reference is not a mistake in either query; see Maybe.
+  5. A result that matches, or looks plausible, does not make a query correct when its logic answers a different question; results can coincide.
+  6. A query that inspects the schema, samples rows or otherwise does not attempt the question is incorrect. An empty result is correct only when the true answer is empty.
+
+  Verdicts:
+  - Yes: the predicted query correctly answers the question.
+  - Maybe: the question's wording can reasonably be read more than one way, the hints do not settle it, and the prediction follows a reasonable reading different from the reference's. Answer Maybe even if you prefer one of the two readings. Do not use Maybe for a prediction that has a logic error or ignores a hint.
+  - No: the predicted query does not correctly answer the question.
+
+  Reply with the verdict alone on the first line -- exactly one of Yes, Maybe or No -- then a short explanation that names the clause, column or value that decides it.
+
+  ### Question:
+  {question}
+
+  ### Generation prompt (schema and hints):
+  {generation_prompt}
+
+  ### Reference SQL:
+  ```sql
+  {ground_truth_sql}
+  ```
+
+  ### Reference result:
+  {ground_truth_df}
+
+  ### Predicted SQL:
+  ```sql
+  {predicted_sql}
+  ```
+
+  ### Predicted result:
+  {predicted_df}
+
+  ### Verdict:
