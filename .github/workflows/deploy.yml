@@ -1,0 +1,168 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  PUBLIC_HEALTH_URL: https://te-s.xyz/insighteye/health
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: https://te-s.xyz/insighteye/
+    steps:
+      - name: Check deploy secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST_FINGERPRINT: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          missing=()
+          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_HOST_FINGERPRINT DEPLOY_PATH; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Deploy to EC2 over SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          envs: DEPLOY_PATH,SHA
+          # A rebuild of the CUDA image can take a long time.
+          command_timeout: 90m
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+            IMAGE=insighteye_app:latest
+            PREV=insighteye_app:previous
+            # A rebuild adds ~11 GB of layers plus build cache next to the old image.
+            MIN_FREE_GB=15
+
+            free_gb() { df --output=avail -BG / | tail -1 | tr -dc 0-9; }
+
+            # A manual `docker system prune -a` can untag :latest while :previous survives.
+            if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && docker image inspect "$PREV" >/dev/null 2>&1; then
+              echo "==> $IMAGE missing: restoring it from $PREV"
+              docker tag "$PREV" "$IMAGE"
+            fi
+
+            OLD=$(git rev-parse HEAD)
+            git fetch --prune origin
+            git reset --hard "$SHA"
+            echo "Deploying $OLD -> $(git rev-parse HEAD)"
+            PORT=$(grep -E '^APP_PORT=' .env | cut -d= -f2 | tr -d '"' || true)
+            URL="http://localhost:${PORT:-8000}/health"
+
+            healthy() {
+              # Model loading and the DB pool can take a few minutes on start.
+              for _ in $(seq 1 60); do
+                curl -fsS -o /dev/null "$URL" && return 0
+                sleep 5
+              done
+              return 1
+            }
+
+            rollback() {
+              echo "ERROR: $1, rolling back to $OLD"
+              df -h /
+              docker compose logs --tail 100 app celery_worker || true
+              git reset --hard "$OLD"
+              if [ "$rebuilt" = 1 ] && docker image inspect "$PREV" >/dev/null 2>&1; then
+                docker tag "$PREV" "$IMAGE"
+              fi
+              docker compose up -d --force-recreate app celery_worker || true
+              healthy || echo "ERROR: rollback is not healthy either"
+            }
+
+            echo "==> Docker cleanup"
+            docker container prune -f
+            docker image prune -f
+            docker builder prune -f --filter until=168h
+            df -h /
+
+            # Code is bind-mounted into the containers (.:/app), so only image
+            # inputs need a rebuild; anything else just needs a restart.
+            rebuilt=0
+            if git diff --name-only "$OLD" HEAD | grep -qxE 'Dockerfile|\.dockerignore|requirements(-base|-gpu)?\.txt|docker-compose\.yml'; then
+              echo "==> Image inputs changed: rebuilding"
+              if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
+                docker builder prune -af
+              fi
+              if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
+                echo "ERROR: only $(free_gb)G free on /, need ${MIN_FREE_GB}G to rebuild; nothing changed"
+                git reset --hard "$OLD"
+                exit 1
+              fi
+              docker image inspect "$IMAGE" >/dev/null 2>&1 && docker tag "$IMAGE" "$PREV"
+              if ! docker compose build app; then
+                echo "ERROR: build failed; running containers untouched"
+                df -h /
+                git reset --hard "$OLD"
+                exit 1
+              fi
+              rebuilt=1
+            else
+              echo "==> Image inputs unchanged: no rebuild"
+            fi
+
+            echo "==> Restart app and worker"
+            docker compose up -d --remove-orphans redis
+            if ! docker compose up -d --force-recreate app celery_worker; then
+              rollback "docker compose up failed"
+              exit 1
+            fi
+
+            echo "==> Health check $URL"
+            if ! healthy; then
+              rollback "not healthy"
+              exit 1
+            fi
+
+            # :previous only exists to roll back within this deploy.
+            if [ "$rebuilt" = 1 ]; then
+              docker image rm "$PREV" || true
+            fi
+            docker image prune -f
+            docker builder prune -f --filter until=168h
+            df -h /
+            echo "Deployed $(git rev-parse --short HEAD)"
+
+      - name: Health check through the load balancer
+        run: |
+          for _ in $(seq 1 30); do
+            if body=$(curl -fsS -m 10 "$PUBLIC_HEALTH_URL"); then
+              echo "$body"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "ERROR: $PUBLIC_HEALTH_URL not healthy" >&2
+          exit 1

@@ -1,0 +1,80 @@
+153:    throw new Error(`still on ${page.url()} after sign-in. Form says: ${shown.replace(/\s+/g, ' ').slice(0, 400)}`);
+316:    await page.screenshot({ path: path.join(OUT, `${route.replace(/\//g, '_').replace(/^_/, '')}.png`) }).catch(() => {});
+  LOGIN  Signing in as demo@example.com
+  LOGIN  Choosing the "chinook" workspace
+  LOGIN  Signed in
+  01/29  Ask — the chat workspace   /ask
+ ok            /ask                        3410 chars
+  02/29  Schema browser   /schema
+ ok            /schema                      427 chars
+  03/29  Query history   /history
+ ok            /history                   11952 chars
+  04/29  Saved queries   /saved
+ ok            /saved                      5839 chars
+  05/29  Dashboards   /dashboards
+ ok            /dashboards                 2068 chars
+  06/29  Scheduled reports   /reports
+ ok            /reports                     802 chars
+  07/29  Metrics / cubes   /cubes
+ ok            /cubes                       174 chars
+  08/29  Account — sessions, tokens, keys   /account
+ ok            /account                   13138 chars
+  09/29  Console — activity overview   /console/overview
+ ok            /console/overview           2096 chars
+  10/29  Console — permissions   /console/permissions
+ ok            /console/permissions         895 chars
+  11/29  Console — column masking   /console/masking
+ ok            /console/masking            2702 chars
+  12/29  Console — audit log   /console/audit
+ ok            /console/audit              6900 chars
+  13/29  Console — access log   /console/access-log
+ ok            /console/access-log         2368 chars
+  14/29  Console — approvals   /console/approvals
+ ok            /console/approvals           187 chars
+  15/29  Console — lineage   /console/lineage
+ ok            /console/lineage            1370 chars
+  16/29  Console — compliance   /console/compliance
+ ok            /console/compliance          308 chars
+  17/29  Console — workspaces   /console/workspaces
+ ok            /console/workspaces         1026 chars
+  18/29  Console — accounts   /console/accounts
+ ok            /console/accounts            840 chars
+  19/29  Console — members   /console/members
+ ok            /console/members             314 chars
+  20/29  Console — billing   /console/billing
+ ok            /console/billing             724 chars
+  21/29  Console — cost / usage   /console/usage
+ ok            /console/usage               440 chars
+  22/29  Console — example review   /console/review
+ ok            /console/review             6329 chars
+  23/29  Console — verified answers   /console/verified
+ ok            /console/verified           2606 chars
+  24/29  Console — domains   /console/domains
+ ok            /console/domains             220 chars
+  25/29  Console — rules   /console/rules
+ ok            /console/rules              5353 chars
+  26/29  Console — library   /console/library
+ ok            /console/library            8991 chars
+  27/29  Console — starters   /console/starters
+ ok            /console/starters            439 chars
+  28/29  Console — data sources   /console/datasources
+ ok            /console/datasources         188 chars
+  29/29  Console — configuration   /console/configuration
+ ok            /console/configuration      4913 chars
+
+--- asking a question ---
+  ASK  Typing: "Which 5 customers spent the most in total?"
+  ASK  Sent — waiting for SQL and results
+  ASK  Answer received — SQL: no, result table: yes
+  DONE  Tour complete
+Error: EXDEV: cross-device link not permitted, rename '/tmp/datalens-tour-video/page@d86f120b24068f060090f0a4bca44ce8.webm' -> '/mnt/c/Users/User/Desktop/text-to-sql-multi-tenant/best/vanna/artifacts/ui-tour/datalens-full-tour.webm'
+    at async rename (node:internal/fs/promises:784:10)
+    at async main (file:///home/mahmoud/datalens-ui/tour.mjs:356:5) {
+  errno: -18,
+  code: 'EXDEV',
+  syscall: 'rename',
+  path: '/tmp/datalens-tour-video/page@d86f120b24068f060090f0a4bca44ce8.webm',
+  dest: '/mnt/c/Users/User/Desktop/text-to-sql-multi-tenant/best/vanna/artifacts/ui-tour/datalens-full-tour.webm'
+}
+
+[exited with code 0]

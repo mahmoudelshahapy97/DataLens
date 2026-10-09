@@ -49,11 +49,12 @@ class DomainContextEnhancer(LlmContextEnhancer):
 
     ``inner`` runs first, so retrieval context comes before the glossary.
 
-    Every enabled domain contributes, rather than one selected per request. That
-    is the honest shape today: nothing in the chat lifecycle selects a domain, and
-    inventing a selection here would mean guessing. The whole glossary is small,
-    it is the vocabulary of one workspace, and a term the question never uses
-    costs a few tokens rather than an accuracy regression.
+    Every enabled domain contributes, rather than one selected per request: a
+    term the question never uses costs a few tokens, while dropping a domain on
+    a missed match costs an accuracy regression. What the question *does* use
+    decides the order -- domains it touches first, and within each the terms it
+    used first -- so when the glossary outgrows :data:`MAX_CHARS` it is the
+    unrelated vocabulary that is cut, not whatever sorts last alphabetically.
     """
 
     def __init__(
@@ -89,7 +90,7 @@ class DomainContextEnhancer(LlmContextEnhancer):
             logger.debug("Business domains not described: %s", exc)
             return system_prompt
 
-        section = self._render(domains)
+        section = self._render(domains, user_message)
         if not section:
             return system_prompt
         return f"{system_prompt}\n\n## Business domains\n\n{section}"
@@ -136,7 +137,7 @@ class DomainContextEnhancer(LlmContextEnhancer):
             logger.debug("Business domains not previewed: %s", exc)
             return result
 
-        section = self._render(domains)
+        section = self._render(domains, user_message)
         if not section or result is None:
             return result
 
@@ -160,11 +161,19 @@ class DomainContextEnhancer(LlmContextEnhancer):
         return result
 
     @staticmethod
-    def _render(domains: list) -> str:
+    def _render(domains: list, question: str = "") -> str:
+        from .knowledge_links import match_domains
+
+        matched = {id(d): terms for d, terms in match_domains(domains, question)}
+        ordered = [d for d in domains if id(d) in matched] + [
+            d for d in domains if id(d) not in matched
+        ]
+
         lines: list = []
-        for domain in domains:
+        for domain in ordered:
             if not domain.get("is_enabled"):
                 continue
+            used = matched.get(id(domain)) or []
 
             head = f"**{domain['name']}**"
             if domain.get("description"):
@@ -178,8 +187,9 @@ class DomainContextEnhancer(LlmContextEnhancer):
                 # to say the same thing.
                 lines.append(f"  Tables: {', '.join(sorted(tables))}")
 
-            for term, meaning in sorted((domain.get("terminology") or {}).items()):
-                lines.append(f"  {term}: {meaning}")
+            glossary = domain.get("terminology") or {}
+            for term in used + sorted(t for t in glossary if t not in used):
+                lines.append(f"  {term}: {glossary[term]}")
 
             lines.append("")
 

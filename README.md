@@ -217,10 +217,22 @@ Every variable, its default, and what it does. Anything not listed here is not r
 | `VANNA_RATE_LIMIT_PER_MIN` | `20` | Per user. |
 | `VANNA_MAX_ROWS` | `1000` | Row cap per query. |
 | `VANNA_QUERY_TIMEOUT` | `60` | Seconds. |
-| `VANNA_MAX_TENANT_RUNTIMES` | `32` | Cached agents, one per (workspace, database); each holds a connection pool. |
+| `VANNA_MAX_TENANT_RUNTIMES` | `2` | Cached agents, one per **(workspace, database)** pair; each holds a connection pool. Raise it if you register several databases: two workspaces with two databases each need four, and below that every question evicts a runtime and pays to rebuild it -- reconnecting, rebuilding the semantic layer and re-reading the catalog. The ceiling is what your warehouse permits: `workers x (APP_POOL_MAX + MAX_TENANT_RUNTIMES x WAREHOUSE_POOL_MAX)`. |
 | `VANNA_TENANT_RUNTIME_TTL_SECONDS` | `1800` | Idle eviction. |
 | `VANNA_GENERATION_RETENTION_DAYS` | `365` | Question text is customer data. `0` keeps it forever. |
 | `VANNA_ALLOW_WRITES` | `false` | Master switch. A workspace also needs `allow_writes`, *and* the caller must be an admin of it. |
+
+### Answer checking
+
+Two optional steps in the agent's turn. **Both cost model calls, and those
+calls are metered and billed like any other**, so they are settings rather than
+constants.
+
+| Variable | Default | |
+|---|---|---|
+| `VANNA_ENABLE_CRITIC` | `true` | Check each answer against the question before the user sees it. Runs only on a turn that actually queried, so a greeting or a schema question costs nothing extra. Budget roughly one extra call per data question. |
+| `VANNA_MAX_CRITIC_RETRIES` | `1` | How many times the critic may send a turn back. Each rejection costs a further full turn. `0` disables the critic. |
+| `VANNA_ENABLE_PLANNER` | `false` | Draft an approach before answering a multi-step question, and show it. Fires on questions containing words like "compare", "trend" or "why". Off because, unlike the critic, there is no cheap signal for when it earns its call. |
 
 ### Everything else
 
@@ -256,9 +268,9 @@ but whose manifest is not is an error, not a quiet reversion to whatever the ima
 shipped with. Switching back is one variable.
 
 ```bash
-python tools/seed_database.py                       # migrate, import, regenerate database/
-python tools/import_config_files.py --dry-run       # what would change
-python tools/export_sql_schema.py                   # sql_schema.sql + seed/
+python backend/tools/seed_database.py                       # migrate, import, regenerate database/
+python backend/tools/import_config_files.py --dry-run       # what would change
+python backend/tools/export_sql_schema.py                   # sql_schema.sql + seed/
 ```
 
 An edit through `PUT /api/vanna/v2/admin/config/file` (platform admin) is validated
@@ -305,10 +317,10 @@ sheet with `insertRule`, so the `<style>` element's `textContent` is empty and
 cloning the node copies nothing.
 
 Rebuild the bundle with `make plotly-bundle` (needs Docker; the backend image has
-no Node in it, so the output is committed). `tests/test_dashboard_export.py`
+no Node in it, so the output is committed). `backend/tests/test_dashboard_export.py`
 fails if the vendored copy drifts from the frontend one, and
-`tests/test_dashboard_export_ui.py` opens a real export in a real browser with
-the network switched off. `tests/e2e/test_charts_in_browser.py` hovers a bar and
+`backend/tests/test_dashboard_export_ui.py` opens a real export in a real browser with
+the network switched off. `backend/tests/e2e/test_charts_in_browser.py` hovers a bar and
 drags to zoom on the running stack — the only place a dead plot shows up.
 
 ---
@@ -349,7 +361,7 @@ make test-integration      # needs PostgreSQL; see DB_URL in the Makefile
 make test-all
 ```
 
-`tests/test_tenant_isolation.py` is the file to read first. It drives the real
+`backend/tests/test_tenant_isolation.py` is the file to read first. It drives the real
 application and asserts, for every route that names a workspace, that a member of
 another workspace gets a 404 — the property the product is sold on, and the one
 there was previously no automated proof of.
@@ -388,13 +400,13 @@ deleting is deliberate: the stored text is what the deduplication recognises, so
 deleted row comes straight back on the next `provision`.
 
 **No pack may be enabled on two workspaces.** Copied pack rules are byte-identical
-wherever they land, and `tests/e2e/test_domains_in_browser.py` asserts that any text
+wherever they land, and `backend/tests/e2e/test_domains_in_browser.py` asserts that any text
 two workspaces share is a *platform* rule. A pack on both trips that test with a
 message about content, pointing nowhere near pack enablement. The mapping in
-`tools/enable_domain_packs.py` gives each pack one workspace and leaves `pagila` and
+`backend/tools/enable_domain_packs.py` gives each pack one workspace and leaves `pagila` and
 `world` — the pair that test compares — with none.
 
-`tests/test_domain_content.py` enforces all of this offline, in about three seconds.
+`backend/tests/test_domain_content.py` enforces all of this offline, in about three seconds.
 It exists because a malformed pack is otherwise discovered as a container that will
 not boot: `InstructionLibrary.load()` runs during startup, and nothing else loaded the
 shipped files.
@@ -438,7 +450,7 @@ which never runs the hook that captures a question.
 
 It spans every workspace by default (`QA_TENANT=all`), so one file covers all eight
 seeded databases — the music store, the wholesaler, the DVD rental chain, the world
-atlas, the HR system, the clinic, the shop and the hotel. `tools/ask_demo_questions.py`
+atlas, the HR system, the clinic, the shop and the hotel. `backend/tools/ask_demo_questions.py`
 keeps a separate bank of questions per workspace for the same reason: a question
 about invoices means nothing to the world atlas.
 
@@ -471,15 +483,17 @@ artifacts/viewer/     viewer           -- reads everything, writes nothing
 artifacts/user/       outsider         -- a real user of another workspace
 ```
 
-`tests/e2e/test_roles.py` also asserts the boundary each role sits behind, because a
+`backend/tests/e2e/test_roles.py` also asserts the boundary each role sits behind, because a
 screenshot proves a page rendered and cannot prove anybody was refused. The three
 refusals are deliberately different: a viewer writing gets **403** naming their role,
 a member who is not an admin gets **404** from the admin routes, and an outsider is
 refused everything. One stated property does not currently hold -- see the strict
 `xfail` at the bottom of that file.
 
-`make screenshots` writes `artifacts/`, which is git-ignored: the images are
-regenerated on every run and the test that produces them is the reviewable artifact.
+`make screenshots` writes `artifacts/`, which is **tracked**, by request: the point
+is to be able to see the evidence without running the suite against a live stack.
+The images are derived files and every re-record rewrites them, so each run adds its
+own few megabytes to history -- see the note on the rule in `.gitignore`.
 Pass `E2E_TENANT` to point the seeders at a different workspace — this account
 belongs to nine, each bound to its own warehouse, and the session default is not
 necessarily the one your browser has open.
@@ -493,50 +507,65 @@ backend/              Python. Nothing here is pip-installed; uvicorn imports it.
   main.py               uvicorn main:app --reload
   vanna_app/            the application: control plane, accounts, billing, routes
     config.py             every environment variable, validated once, at startup
-    authz.py              who may do what — one implementation, used everywhere
+    authz.py              who may do what -- one implementation, used everywhere
     identity.py           who is calling; the resolver every route shares
     platform.py           the per-workspace agent cache
+    migrate.py            the migration runner; reads ../database/migrations/
     routes/               the HTTP surface, one module per area
   vanna/                the library: agent, tools, semantic layer, integrations
+    core/                 interfaces and the agent loop
+    capabilities/         schema catalog, retrieval index, sql runner, knowledge
+    semantic/             manifests, the compiler, cube rewriting
+    integrations/         one package per LLM, vector store and warehouse
+    dashboards/           render and export; vendor/ holds the browser code
   instructions/         the platform instruction baseline and starter packs
   domains/domains.yml   one workspace per seeded database
-  projects/             semantic manifests, one per database
-  requirements.txt      pinned; generated from requirements.in
+  projects/             semantic manifests, one per database (chinook, acme)
+  evals/                the LLM comparison harness
+  tests/                unit (no database) and integration (marked)
+    e2e/                  the same product in a real browser. Needs VANNA_E2E_URL.
+      test_screenshots.py    photographs every screen into artifacts/
+  tools/                standalone scripts. Not imported by the app.
+    plotly_export_bundle/ the Plotly build embedded in exported dashboards
+  requirements.in       hand-edited; the source of truth for dependencies
+  requirements.txt      pinned; generated from requirements.in by `make lock`
 
 frontend/             Node. One Vite project.
   public/               served verbatim, at the URLs it references
     index.html            the workspace page
     admin/index.html      the operator console
-    assets/app.js         and console.js, and shared/core.js — escaping, fetch,
+    assets/app.js         and console.js, and shared/core.js -- escaping, fetch,
                           CSRF, accessibility, in one copy
     locales/              interface translations, fetched at runtime
   src/                  the <vanna-chat> element, TypeScript, bundled
   nginx.conf            serves the above and proxies /api to the backend
 
 database/             SQL.
-  migrations/           numbered, applied under an advisory lock
+  migrations/           numbered, applied under an advisory lock. Source of truth.
+  sql_schema.sql        generated: every applied migration, concatenated
+  seed/configuration.sql  generated: the configuration catalog
 
-tests/                unit (no database) and integration (marked). Spans both
-                      backend and frontend, which is why it is not inside either.
-  e2e/                  the same product in a real browser. Needs VANNA_E2E_URL.
-    test_screenshots.py    photographs every screen into artifacts/
-
-tools/                standalone scripts. Not imported by anything.
-  plotly_export_bundle/ the Plotly build embedded in exported dashboards
-  seed_demo_data.py     fills a workspace with content, over the app's own API
-  ask_demo_questions.py asks real questions through the chat, for real history
-  export_qa.py          question/answer/query/database, as qa.json
-  enable_domain_packs.py  one starter-library pack per workspace
-  retire_wrong_rules.py   switches off rules naming columns that do not exist
-  prune_chinook_seed.py   removes content this repo used to push over the API
+docs/                 operations.md (the runbook), security.md (the threat model)
+artifacts/            screenshots and video, tracked deliberately
 ```
+
+`tests/` and `tools/` live under `backend/` because that is what they mostly are:
+the suite imports `vanna` and `vanna_app`, and the scripts either import them too or
+drive the running app. Both still reach up into `../../frontend/` -- the UI tests
+read `frontend/public/` from disk, and `mock_component_backend.py` serves
+`frontend/dist/assets` -- so the three directories are cleanly separated, not
+independent. `pytest` is run from the repository root, where `pyproject.toml` puts
+`backend/` on `sys.path` and points `testpaths` at `backend/tests`.
 
 **There is no package.** `backend/vanna/` and `backend/vanna_app/` are imported
 from source. That is the whole reason `backend/` is flat: both are top-level
 packages, so the working directory is the only thing on `sys.path` that matters,
 and `pip install -e .` is not a step anybody has to remember. The version lives in
-`backend/vanna/__init__.py`, and `python -m vanna` replaces what used to be a
-`vanna` console script.
+`backend/vanna/__init__.py`, and the application's own in
+`backend/vanna_app/__init__.py` -- deliberately two numbers, because the library and
+the deployment of it are versioned separately. The developer command line that used
+to ship as `python -m vanna` has been removed; nothing in the deployed application
+imported it.
 
 ---
 

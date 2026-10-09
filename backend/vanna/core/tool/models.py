@@ -53,6 +53,18 @@ class ToolContext(BaseModel):
         arbitrary_types_allowed = True
 
 
+#: Metadata key a tool sets to end the turn instead of returning control to
+#: the model. The agent still records the tool's result in the conversation --
+#: a tool call stored without its result makes the transcript invalid for the
+#: next turn -- but it does not call the LLM again.
+#:
+#: For tools whose whole purpose is to put a question to the user. Without it,
+#: the model receives "I asked the user X" and composes a reply to itself,
+#: which reads as the assistant answering its own question. Honoured only on a
+#: successful result: a tool that failed should not end the turn silently.
+END_TURN = "end_turn"
+
+
 class ToolResult(BaseModel):
     """Result from tool execution.
 
@@ -67,7 +79,14 @@ class ToolResult(BaseModel):
         default=None, description="Optional UI component for rendering"
     )
     error: Optional[str] = Field(default=None, description="Error message if failed")
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Free-form data for callers. The agent reads one key from it: "
+            "`END_TURN`, which ends the turn rather than returning control "
+            "to the model. Everything else is passed through untouched."
+        ),
+    )
 
 
 class ToolSchema(BaseModel):

@@ -1,9 +1,0 @@
-name: genres
-description: Musical genre. Joined through tracks, never directly to a sale.
-table_reference: chinook.genre
-columns:
-  - name: genre_id
-    type: INTEGER
-    is_primary_key: true
-  - name: name
-    type: VARCHAR

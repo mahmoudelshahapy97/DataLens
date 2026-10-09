@@ -609,6 +609,94 @@ class Directory:
             ],
         }
 
+    async def activity_series(
+        self, tenant_id: str = "", *, days: int = 30
+    ) -> List[Dict[str, Any]]:
+        """Questions per day, oldest first. An empty ``tenant_id`` means every
+        workspace, which is what the platform-wide overview asks for.
+
+        Quiet days are filled in rather than left out. A line chart plots the
+        points it is given against an evenly spaced axis, so a series that simply
+        omits the days nobody asked anything draws the gap as a straight line
+        between two busy days -- a chart that is wrong about its own x-axis.
+
+        The filling is done by ``generate_series`` rather than in Python, because
+        the two clocks disagree. ``created_at`` is a ``timestamptz`` bucketed in
+        the database's time zone, and a web server an hour east of it spends part
+        of every night believing in a "today" the database has not reached --
+        which put every one of that day's questions in a bucket the series did not
+        contain, and dropped them silently.
+        """
+        days = min(max(days, 1), 365)
+
+        # Tenant predicate first, so the (tenant_id, created_at) index stays usable;
+        # a scan filtered only by date cannot use it. Same reasoning as
+        # list_tenants_with_usage.
+        scoped = "tenant_id = %s AND " if tenant_id else ""
+        params: List[Any] = [days]
+        if tenant_id:
+            params.append(tenant_id)
+        params.append(days)
+
+        rows = await self.db.fetch_all(
+            f"""
+            WITH days AS (
+                SELECT generate_series(
+                           date_trunc('day', now()) - make_interval(days => %s - 1),
+                           date_trunc('day', now()),
+                           interval '1 day'
+                       )::date AS day
+            ),
+            counted AS (
+                SELECT date_trunc('day', created_at)::date                 AS day,
+                       count(*)                                            AS questions,
+                       count(*) FILTER (WHERE status IN ('valid','empty')) AS succeeded
+                  FROM {SCHEMA}.generations
+                 WHERE {scoped}created_at > now() - make_interval(days => %s)
+                 GROUP BY 1
+            )
+            SELECT d.day,
+                   coalesce(c.questions, 0) AS questions,
+                   coalesce(c.succeeded, 0) AS succeeded
+              FROM days d
+              LEFT JOIN counted c USING (day)
+             ORDER BY d.day
+            """,
+            params,
+        )
+        return [
+            {
+                "day": str(row["day"]),
+                "questions": int(row["questions"]),
+                "succeeded": int(row["succeeded"]),
+            }
+            for row in rows
+        ]
+
+    async def platform_spend(self, *, days: int = 30) -> Dict[str, Any]:
+        """What every workspace's questions cost, together.
+
+        The per-tenant :meth:`spend` summed in a Python loop is one query per
+        workspace to render a single number; this is one query.
+        """
+        days = min(max(days, 1), 365)
+        row = await self.db.fetch_one(
+            f"""SELECT coalesce(sum(cost_usd), 0)          AS cost_usd,
+                       coalesce(sum(prompt_tokens), 0)     AS prompt_tokens,
+                       coalesce(sum(completion_tokens), 0) AS completion_tokens,
+                       count(*)                            AS questions
+                  FROM {SCHEMA}.generations
+                 WHERE created_at > now() - make_interval(days => %s)""",
+            (days,),
+        ) or {}
+        return {
+            "window_days": days,
+            "cost_usd": float(row.get("cost_usd") or 0.0),
+            "prompt_tokens": int(row.get("prompt_tokens") or 0),
+            "completion_tokens": int(row.get("completion_tokens") or 0),
+            "questions": int(row.get("questions") or 0),
+        }
+
     async def purge_tenant_data(self, tenant_id: str) -> Dict[str, int]:
         """Erase everything this workspace generated.
 

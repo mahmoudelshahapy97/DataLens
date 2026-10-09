@@ -36,11 +36,44 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...capabilities.agent_memory import AgentMemory
     from ...capabilities.knowledge import ExampleStore, InstructionStore
     from ...capabilities.schema_catalog import SchemaCatalog
+    from ...capabilities.schema_graph import SchemaKnowledge
     from ..llm.models import LlmMessage
     from ..observability import ObservabilityProvider
     from ..user.models import User
 
 logger = logging.getLogger(__name__)
+
+#: Examples fetched per example shown when re-ranking by table overlap.
+EXAMPLE_CANDIDATE_FACTOR = 3
+
+
+def _render_core_columns(core: dict, tables) -> str:
+    """Core columns of the shown tables, limited to columns the caller can see.
+
+    The curation is keyed by table, not by role, so a column hidden by a
+    column-level grant can still be on the list; it is dropped here rather
+    than named.
+    """
+    if not core:
+        return ""
+    visible = {
+        t.qualified_name: {c.name.lower(): c.name for c in t.columns} for t in tables
+    }
+    lines = []
+    for table in sorted(core):
+        columns = visible.get(table)
+        if not columns:
+            continue
+        shown = [columns[c.lower()] for c in core[table] if c.lower() in columns]
+        if shown:
+            lines.append(f"  - {table}: {', '.join(shown)}")
+    if not lines:
+        return ""
+    return (
+        "### Core columns\n"
+        "Curated by an administrator as the columns that matter most. Prefer "
+        "them when the question does not name columns.\n" + "\n".join(lines)
+    )
 
 
 class _NullAgentMemory:
@@ -115,6 +148,10 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         verified_examples_only: Use only human-reviewed examples.
         observability_provider: Emits per-section token metrics.
         count_tokens: Real tokenizer, if available.
+        schema_threshold: Overrides the catalog's full-schema threshold.
+        knowledge: Curated knowledge linked to tables -- business terms and
+            metrics that seed schema selection, and core columns rendered
+            beside the schema. See ``vanna.capabilities.schema_graph.knowledge``.
     """
 
     def __init__(
@@ -131,6 +168,8 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         verified_examples_only: bool = False,
         observability_provider: Optional["ObservabilityProvider"] = None,
         count_tokens: Optional[Callable[[str], int]] = None,
+        schema_threshold: Optional[int] = None,
+        knowledge: Optional["SchemaKnowledge"] = None,
     ) -> None:
         self.catalog = catalog
         self.example_store = example_store
@@ -143,6 +182,9 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         self.verified_examples_only = verified_examples_only
         self.observability_provider = observability_provider
         self.count_tokens = count_tokens
+        #: None keeps the catalog's own default (SCHEMA_FULL_TEXT_THRESHOLD).
+        self.schema_threshold = schema_threshold
+        self.knowledge = knowledge
 
     # ------------------------------------------------------------------
     # LlmContextEnhancer interface
@@ -181,12 +223,14 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         instructions = await self._safe(
             "instructions", self._instruction_items, context
         )
-        examples = await self._safe(
-            "examples", self._example_items, context, user_message
-        )
-        schema_text, schema_tables = await self._safe(
+        schema_text, schema_tables, schema_info = await self._safe(
             "schema", self._schema_section, context, user_message
-        ) or ("", [])
+        ) or ("", [], {})
+        # After the schema, so that when only part of it is shown, examples
+        # about the tables that *are* shown can be preferred.
+        examples = await self._safe(
+            "examples", self._example_items, context, user_message, schema_info
+        )
         memories = await self._safe(
             "memories", self._memory_items, context, user_message
         )
@@ -260,6 +304,8 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
             return None
 
         result = assemble(sections, self.budget, count_tokens=self.count_tokens)
+        if schema_info:
+            result.metadata["schema"] = schema_info
         await self._record_metrics(result)
         return result
 
@@ -287,30 +333,57 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
         )
         return [f"- {i.text}" for i in instructions]
 
-    async def _example_items(self, context, question: str) -> List[str]:
+    async def _example_items(
+        self, context, question: str, schema_info: Optional[dict] = None
+    ) -> List[str]:
         if self.example_store is None:
             return []
+        selected = (schema_info or {}).get("table_names") or []
+        # Re-ranking by table only means something when the schema shown is a
+        # selection: with the whole schema in view every example "overlaps".
+        rerank = (schema_info or {}).get("strategy") == "search" and bool(selected)
         hits = await self.example_store.search(
             context,
             question,
-            limit=self.max_examples,
+            limit=self.max_examples * (EXAMPLE_CANDIDATE_FACTOR if rerank else 1),
             verified_only=self.verified_examples_only,
             data_source_id=self.data_source_id,
         )
+        if rerank:
+            from ...capabilities.schema_graph.knowledge import overlap, tables_in_sql
+
+            # Stable sort: among examples touching equally many shown tables,
+            # the search's own relevance order stands.
+            hits = sorted(
+                hits,
+                key=lambda h: -overlap(tables_in_sql(h.example.sql), selected),
+            )[: self.max_examples]
         return [
             f"Question: {h.example.question}\nSQL:\n{h.example.sql}" for h in hits
         ]
 
     async def _schema_section(self, context, question: str):
         if self.catalog is None:
-            return "", []
+            return "", [], {}
+        kwargs = {}
+        if self.schema_threshold is not None:
+            kwargs["threshold"] = self.schema_threshold
+        hints = await self._knowledge_call("table_hints", [], context, question)
+        if hints:
+            kwargs["seed_tables"] = hints
         schema_context = await self.catalog.get_context(
-            context, question, data_source_id=self.data_source_id
+            context, question, data_source_id=self.data_source_id, **kwargs
         )
         if not schema_context.text:
-            return "", []
+            return "", [], {}
 
         text = schema_context.text
+        core = await self._knowledge_call(
+            "core_columns", {}, context, schema_context.tables
+        )
+        core_block = _render_core_columns(core, schema_context.tables)
+        if core_block:
+            text = f"{text.rstrip()}\n\n{core_block}\n"
         if schema_context.is_partial:
             # Tell the model the schema is partial. Otherwise a missing table
             # looks like a non-existent one, and it invents a name instead of
@@ -321,7 +394,28 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
                 "question. If the table you need is absent, say so rather than "
                 "guessing a name.)\n\n" + text
             )
-        return text, schema_context.table_names
+        info = {
+            "strategy": schema_context.strategy,
+            "table_names": list(schema_context.table_names),
+            "bridge_tables": list(schema_context.bridge_tables),
+            "hinted_tables": list(schema_context.hinted_tables),
+            "included_tables": schema_context.included_tables,
+            "total_tables": schema_context.total_tables,
+            "core_columns": {t: list(c) for t, c in (core or {}).items()},
+        }
+        return text, schema_context.table_names, info
+
+    async def _knowledge_call(self, method: str, empty, *args):
+        """Ask the knowledge hook, degrading to *empty* on absence or failure."""
+        if self.knowledge is None:
+            return empty
+        try:
+            return await getattr(self.knowledge, method)(*args) or empty
+        except Exception as e:
+            logger.warning(
+                "Knowledge source %r failed; continuing without it: %s", method, e
+            )
+            return empty
 
     async def _memory_items(self, context, question: str) -> List[str]:
         if self.agent_memory is None:
@@ -371,7 +465,7 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
                 e,
                 exc_info=True,
             )
-            return [] if source != "schema" else ("", [])
+            return [] if source != "schema" else ("", [], {})
 
     async def _record_metrics(self, result) -> None:
         provider = self.observability_provider

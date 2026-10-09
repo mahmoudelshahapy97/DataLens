@@ -93,7 +93,7 @@ services:
       #    `FATAL: sorry, too many clients already`, which takes sign-in down with
       #    it, because authentication needs the control plane.
       #
-      #    Every default here was measured with tools/load_probe.py, 27 concurrent
+      #    Every default here was measured with backend/tools/load_probe.py, 27 concurrent
       #    users over nine workspaces:
       #
       #      APP_POOL_MAX 16 -> 8      mean wait per acquisition 0.09ms -> 164ms.
@@ -124,6 +124,10 @@ services:
       # avoid. Python's default is cpu_count+4, which relates to nothing here.
       VANNA_THREAD_POOL_MAX: ${VANNA_THREAD_POOL_MAX:-32}
 
+      # How long an idle per-workspace runtime is kept before it is rebuilt. Same
+      # story as VANNA_ALLOW_ANONYMOUS below: documented and read, never passed in.
+      VANNA_TENANT_RUNTIME_TTL_SECONDS: ${VANNA_TENANT_RUNTIME_TTL_SECONDS:-1800}
+
       # -- Access. Platform admins create and delete workspaces and administer any of
       #    them. Workspace-level admins are rows in the directory instead.
       #
@@ -144,6 +148,12 @@ services:
       # anywhere else -- and refused outright in multi-tenant mode.
       VANNA_PUBLIC_USER_DIRECTORY: ${VANNA_PUBLIC_USER_DIRECTORY:-true}
 
+      # No authentication at all. Documented in .env.example and read by
+      # config.py, but it used to be absent here -- and with no `env_file:` on this
+      # service, a variable that is not named is a variable the container never
+      # sees. Setting it in .env appeared to do nothing.
+      VANNA_ALLOW_ANONYMOUS: ${VANNA_ALLOW_ANONYMOUS:-false}
+
       # -- Storage. On a named volume, so a rebuild keeps the catalog and knowledge.
       VANNA_DATA_DIR: /data
       VANNA_KNOWLEDGE_DIR: /data/knowledge
@@ -162,7 +172,7 @@ services:
       # requests rebuild a runtime, which showed up as a p99 of 5.0s against 3.5s
       # with a large cache. It is what fits an 80 budget at four workers. If your
       # server has room, raise THIS AND THE BUDGET TOGETHER after checking
-      # `SHOW max_connections` and measuring with tools/load_probe.py; raising it
+      # `SHOW max_connections` and measuring with backend/tools/load_probe.py; raising it
       # alone just moves the ceiling above the budget and earns a warning.
       VANNA_MAX_TENANT_RUNTIMES: ${VANNA_MAX_TENANT_RUNTIMES:-2}
 
@@ -189,7 +199,7 @@ services:
       #    imports the files under /app, once, under an advisory lock, and says so
       #    in the log. After that the catalog is authoritative and a restart does
       #    not reinstate the files -- the bootstrap only ever fills an EMPTY
-      #    catalog. Re-import deliberately with tools/import_config_files.py.
+      #    catalog. Re-import deliberately with backend/tools/import_config_files.py.
       VANNA_CONFIG_SOURCE: ${VANNA_CONFIG_SOURCE:-database}
       VANNA_CONFIG_BOOTSTRAP: ${VANNA_CONFIG_BOOTSTRAP:-true}
       # Four workers, four caches. This bounds how long an edit takes to reach the
@@ -204,6 +214,10 @@ services:
       # gets worse rather than the stack failing, so check the effective backend on
       # /api/vanna/v2/schema when answers degrade for no obvious reason.
       VANNA_INDEX_BACKEND: ${VANNA_INDEX_BACKEND:-qdrant}
+      # Schemas rendering larger than this many characters get search-selected
+      # tables instead of the whole schema. 0 forces search everywhere -- the
+      # "large warehouse" mode of backend/evals/sql_accuracy.py.
+      VANNA_SCHEMA_FULL_TEXT_THRESHOLD: ${VANNA_SCHEMA_FULL_TEXT_THRESHOLD:-30000}
       # Served by the ../../vector_db stack over the shared sandbox network, not by
       # a service in this file -- `qdrant` is that stack's service name, which
       # Compose registers as an alias on every network it joins. See the note where
@@ -246,6 +260,7 @@ services:
       VANNA_OIDC_CLIENT_SECRET: ${VANNA_OIDC_CLIENT_SECRET:-}
       VANNA_OIDC_ROLE_CLAIM: ${VANNA_OIDC_ROLE_CLAIM:-}
       VANNA_OIDC_AUTO_PROVISION_TENANT: ${VANNA_OIDC_AUTO_PROVISION_TENANT:-}
+      VANNA_OIDC_SCOPES: ${VANNA_OIDC_SCOPES:-openid email profile}
 
       # -- Mail. With no host, messages are written to the log instead of sent, so
       #    the reset and invitation flows are exercisable without a mail server.

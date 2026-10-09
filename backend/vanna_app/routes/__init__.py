@@ -62,6 +62,13 @@ class Deps:
     mailer: Any = None
     login_throttle: Any = None
     oidc: Any = None
+    #: ReportStore. Absent when there is no control plane (demo mode), which is
+    #: why `routes/reports.py` answers 404 rather than 500 when it is None.
+    reports: Any = None
+    #: Lineage is derived from rows the system already keeps -- see
+    #: `vanna_app/lineage.py` -- so this is a service, not a store.
+    lineage: Any = None
+    compliance: Any = None
 
     @property
     def runtime_for(self) -> RuntimeProvider:
@@ -169,8 +176,19 @@ class Deps:
             require_full_session(user)
         return user
 
-    async def tool_context(self, user: Any, *, conversation_id: str = "portal") -> Any:
-        """A ``ToolContext`` for the caller, for catalog and runner calls."""
+    async def tool_context(
+        self, user: Any, *, conversation_id: str = "portal", data_source: str = ""
+    ) -> Any:
+        """A ``ToolContext`` for the caller, for catalog and runner calls.
+
+        ``data_source`` travels in ``metadata`` because ``ToolContext`` has no
+        field for it. The catalog store reads it there when a record does not
+        name its own: a scan whose tables carry no data source was previously
+        written under the literal string ``"default"``, while every reader
+        resolves the workspace's real source id -- so the rows existed and
+        nothing could find them. Annotating a table answered "not in this
+        workspace's catalog" for a table plainly listed on the screen.
+        """
         from vanna.core.tool import ToolContext
 
         return ToolContext(
@@ -179,6 +197,7 @@ class Deps:
             request_id=str(uuid.uuid4()),
             tenant_id=user.tenant_id,
             agent_memory=self.agent_memory,
+            metadata={"data_source_id": data_source} if data_source else {},
         )
 
     def client_ip(self, request: Request) -> str:
@@ -197,8 +216,12 @@ def register_all(app: Any, deps: Deps) -> None:
         dashboards,
         data,
         domains,
+        governance,
         grants,
         instructions,
+        memories,
+        overview,
+        reports,
         workspace,
         writes,
     )
@@ -207,10 +230,17 @@ def register_all(app: Any, deps: Deps) -> None:
     workspace.register(app, deps)
     data.register(app, deps)
     dashboards.register(app, deps)
+    # After dashboards: a report is a schedule over a dashboard, and reading this
+    # file top to bottom should introduce the thing before the thing that points
+    # at it.
+    reports.register(app, deps)
+    governance.register(app, deps)
     writes.register(app, deps)
     grants.register(app, deps)
     domains.register(app, deps)
     catalog.register(app, deps)
     instructions.register(app, deps)
     admin.register(app, deps)
+    memories.register(app, deps)
+    overview.register(app, deps)
     config.register(app, deps)

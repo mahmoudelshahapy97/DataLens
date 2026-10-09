@@ -177,7 +177,12 @@ def register(app: Any, deps: Deps) -> None:
         """End this session. Idempotent."""
         token = request.cookies.get(settings.session_cookie, "")
         if token and deps.accounts is not None:
-            await deps.accounts.delete_session(token)
+            # Not `delete_session`, which is the account screen's "end that other
+            # session" and takes (email, session_id). The two shared a name, so
+            # this call raised TypeError and the row was never deleted -- the
+            # cookie was cleared in the browser and the session stayed valid on
+            # the server, which is the opposite of what signing out means.
+            await deps.accounts.end_session_by_token(token)
         response.delete_cookie(settings.session_cookie, path="/")
         return {"signed_out": True}
 

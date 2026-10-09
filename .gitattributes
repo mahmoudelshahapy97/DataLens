@@ -1,0 +1,35 @@
+# Line endings for the files where they are load-bearing.
+#
+# Deliberately narrow. A blanket `* text=auto` is the right long-term answer, but
+# adding it here would renormalise most of the tree in one commit and bury this
+# refactor's diff, so it is left for its own change.
+#
+# These two paths must stay byte-identical: the dashboard export inlines the
+# backend copy, the page loads the frontend one, and
+# backend/tests/test_dashboard_export.py asserts they match. They are the same
+# bytes today, but the invariant currently holds only because both happen to get
+# the same treatment from whatever core.autocrlf is set to locally. Pinning both
+# to LF makes that explicit rather than incidental -- a checkout that produced CRLF
+# for one and LF for the other would fail the suite for a reason nobody would
+# think to look for.
+backend/vanna/dashboards/vendor/tile-figure.js  text eol=lf
+frontend/public/assets/shared/tile-figure.js    text eol=lf
+
+# Generated SQL, replayed by psql. Kept LF so a diff after regenerating shows only
+# what actually changed -- a whole-file line-ending flip hides the real edit.
+database/migrations/*.sql   text eol=lf
+database/seed/*.sql         text eol=lf
+database/sql_schema.sql     text eol=lf
+
+# Semantic manifests and their build output. `projects/demo` and `projects/chinook`
+# once differed by nothing but CRLF, which is how a byte-for-byte duplicate went
+# unnoticed long enough to make nine tables invisible.
+backend/projects/**/*.yml   text eol=lf
+backend/projects/**/*.json  text eol=lf
+
+# Binary, never touched.
+*.png   binary
+*.webp  binary
+*.mp4   binary
+*.webm  binary
+*.ico   binary

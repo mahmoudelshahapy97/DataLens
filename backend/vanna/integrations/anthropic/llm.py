@@ -209,8 +209,11 @@ class AnthropicLlmService(LlmService):
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            # Anthropic requires max_tokens; default if not provided
-            "max_tokens": request.max_tokens if request.max_tokens is not None else 512,
+            # Anthropic requires max_tokens. The fallback only applies to callers
+            # using this service directly; an Agent always sets it from
+            # AgentConfig.max_tokens. It was 512, which silently truncated any
+            # answer longer than a short paragraph.
+            "max_tokens": request.max_tokens if request.max_tokens is not None else 4096,
             "temperature": request.temperature,
         }
         if tools_payload:

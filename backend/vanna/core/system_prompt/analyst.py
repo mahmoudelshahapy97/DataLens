@@ -62,8 +62,8 @@ SQL_QUALITY_RULES = [
 #: worse than an admission because the user cannot tell it apart from a real
 #: one.
 ANSWER_RULES = [
-    "Answer from the query result only. Never supplement it with recalled "
-    "facts about the domain.",
+    "When you are answering from a query result, answer from that result only. "
+    "Never supplement it with recalled facts about the domain.",
     "If the result does not answer the question, say so plainly and explain "
     "what would be needed. Do not fill the gap with a plausible-sounding "
     "answer.",
@@ -72,6 +72,29 @@ ANSWER_RULES = [
     "The raw table is already shown to the user -- interpret it, don't repeat "
     "it.",
     "State the units and the time range you actually used.",
+]
+
+#: Rules for the questions that are not data questions. Without these the prompt
+#: is all query-plan and result-interpretation, and the model reads that as its
+#: whole job -- so a greeting or "what can you do?" gets an unnecessary query, or
+#: a refusal, or nothing. The agent has always been free to answer in prose; this
+#: block is what tells the model so.
+NON_DATA_RULES = [
+    "Greetings and small talk: reply briefly and naturally, then offer to help "
+    "with a question about the data. Do not run a query.",
+    "'What can you do?', 'what data do you have?', 'which tables exist?': "
+    "answer from the schema and tools described above. Name the subject areas "
+    "you can query and give one or two example questions. Do not invent tables "
+    "or columns you have not been shown.",
+    "Follow-ups about a result you already returned ('what does that column "
+    "mean?', 'why is that number low?'): answer from what is already in the "
+    "conversation, and re-query only if the answer genuinely needs data you do "
+    "not already have.",
+    "Questions the database cannot answer (opinion, general knowledge, another "
+    "system's data): say plainly that it is outside what this database covers, "
+    "and suggest the closest question you can answer.",
+    "Always reply with something. Never end a turn silently, and never reply "
+    "only with a tool result.",
 ]
 
 
@@ -118,8 +141,11 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
         parts.append(
             self.persona
             or (
-                "You are DataLens, a data analyst. You answer questions by "
-                "querying the database and explaining what the results mean."
+                "You are DataLens, a data analyst assistant. Most questions you "
+                "answer by querying the database and explaining what the results "
+                "mean, but you also answer questions about yourself, your "
+                "capabilities, the data you have access to, and results you have "
+                "already returned in this conversation."
             )
         )
         parts.append(f"Today's date is {today}.")
@@ -136,8 +162,15 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
             parts.extend(f"- {rule}" for rule in self.extra_rules)
 
         if self.include_answer_rules:
-            parts.append("\n## Answering\n")
+            parts.append(
+                "\n## Answering a data question (when you have a query result)\n"
+            )
             parts.extend(f"- {rule}" for rule in ANSWER_RULES)
+
+        # Unconditional: an agent with no SQL tools at all still gets asked what
+        # it can do, and still has to reply to a greeting.
+        parts.append("\n## Questions that don't need a query\n")
+        parts.extend(f"- {rule}" for rule in NON_DATA_RULES)
 
         if names:
             parts.append(f"\nAvailable tools: {', '.join(sorted(names))}")
@@ -156,6 +189,15 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
         """Emit only the steps whose tools are actually registered."""
         plan: List[str] = []
 
+        if "request_clarification" in names:
+            plan.append(
+                "First decide whether the question has one reasonable "
+                "reading. If two readings are equally likely and would give "
+                "materially different answers, call request_clarification "
+                "instead of guessing. If one reading is clearly most likely, "
+                "answer it and say which you assumed."
+            )
+
         if "get_relevant_tables" in names or "search_tables" in names:
             plan.append(
                 "Identify the relevant tables. The schema you need is usually "
@@ -168,11 +210,27 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
                 "have not been shown."
             )
 
+        if "suggest_joins" in names:
+            plan.append(
+                "Before joining tables you have not joined already in this "
+                "conversation, call suggest_joins. Joining on two columns "
+                "that merely share a name produces a query that runs and a "
+                "number that is wrong."
+            )
+
         if "system_time" in names:
             plan.append(
                 "If the question mentions any date or relative period "
                 "('today', 'last quarter', 'YTD'), call system_time first and "
                 "use the literal dates it returns."
+            )
+
+        if "profile_column" in names:
+            plan.append(
+                "Before averaging, summing or grouping by a column you have "
+                "not seen the contents of, call profile_column. A column "
+                "that is mostly NULL, or has far more distinct values than "
+                "you expect, makes the obvious query the wrong one."
             )
 
         if "check_column_values" in names:
@@ -196,6 +254,15 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
             )
             plan.append(
                 "Interpret the result for the user in a sentence or two."
+            )
+
+        if "analyze_timeseries" in names or "compare_periods" in names:
+            plan.append(
+                "For a question about growth, decline, or how one period "
+                "compares to another, use analyze_timeseries or "
+                "compare_periods rather than reading the rows and judging "
+                "by eye. Both do arithmetic you cannot do reliably by "
+                "inspection."
             )
 
         if "visualize_data" in names:

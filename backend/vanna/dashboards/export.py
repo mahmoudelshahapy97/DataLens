@@ -202,7 +202,8 @@ _CSS = """
   --bg:#f8fafc; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
   --warn:#b45309; --bad:#dc2626; }
 @media (prefers-color-scheme: dark) { :root {
-  --bg:#0b1120; --card:#111827; --ink:#e5e7eb; --muted:#94a3b8; --line:#1f2937; } }
+  --bg:#0b1120; --card:#111827; --ink:#e5e7eb; --muted:#94a3b8; --line:#1f2937;
+  --warn:#fbbf24; --bad:#f87171; } }
 * { box-sizing:border-box; }
 body { margin:0; padding:28px 20px 60px; background:var(--bg); color:var(--ink);
   font:15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }

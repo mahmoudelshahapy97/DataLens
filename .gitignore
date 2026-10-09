@@ -81,7 +81,11 @@ pnpm-debug.log*
 .yarn/
 .pnpm-store/
 
-# React build
+# React build.
+#
+# Deliberately NOT anchored, unlike the upload directories above: these have to
+# match at any depth because the one that matters is `frontend/dist/`. Nothing in
+# this repository has source in a directory called `build` or `dist`.
 build/
 dist/
 .next/
@@ -153,11 +157,17 @@ docker-compose.override.yml
 # Uploads / Generated Files
 # ============================================
 
-uploads/
-media/
-staticfiles/
-tmp/
-temp/
+# Anchored, all of them. Unanchored `data/` once hid
+# `backend/vanna/components/rich/data/`, and unanchored `models/` hid 23
+# `backend/projects/*/models/metadata.yml` -- see the notes on those rules. `media/`
+# was the same bug waiting to happen: it matched the real source directory
+# `frontend/public/media/`, so anything added there was silently ignored. These are
+# root-level scratch and upload directories; a leading slash is what says so.
+/uploads/
+/media/
+/staticfiles/
+/tmp/
+/temp/
 
 # ============================================
 # ML / AI
@@ -240,3 +250,6 @@ coverage.xml
 # database (chinook, northwind, pagila and friends), so the names are fictional.
 # Point this repository at a real warehouse and the export stops being safe to
 # commit: regenerate with `make qa-json` and re-add the `qa*.json` rule.
+
+# Execution-accuracy reports from backend/evals/sql_accuracy.py
+backend/evals/results/

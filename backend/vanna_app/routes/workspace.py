@@ -251,10 +251,19 @@ def register(app: Any, deps: Deps) -> None:
         from vanna.capabilities.schema_catalog import SchemaScanner
 
         runtime = await deps.runtime_for_request(user, request)
-        context = await deps.tool_context(user)
+        # Naming the source matters: without it the scan files every table under
+        # "default" and the annotation routes, which resolve the real id, cannot
+        # find any of them.
+        context = await deps.tool_context(user, data_source=runtime.data_source)
         try:
+            # `data_source_id` as well as the context: the scanner stamps every
+            # table and relationship with it, defaulting to "default", and the
+            # store honours the record's own value over the context's. Without
+            # it every rescan filed the whole database under "default" -- rows
+            # no reader looks up -- and the catalog the agent reads never changed.
+            # `Platform._prepare_tenant` has always passed it; this route did not.
             report = await SchemaScanner(runtime.runner, dialect=runtime.dialect).scan(
-                context, runtime.catalog
+                context, runtime.catalog, data_source_id=runtime.data_source
             )
         except Exception as exc:
             logger.error("Rescan failed for %s: %s", user.tenant_id, exc)
@@ -271,6 +280,7 @@ def register(app: Any, deps: Deps) -> None:
             "tables_scanned": report.tables_scanned,
             "columns_profiled": report.columns_profiled,
             "relationships_found": report.relationships_found,
+            "relationships_inferred": report.relationships_inferred,
             "duration_ms": report.duration_ms,
             "errors": report.errors,
         }
@@ -581,4 +591,9 @@ def register(app: Any, deps: Deps) -> None:
                 }
                 for name, tokens in result.section_tokens.items()
             ],
+            # How the schema section was chosen: full or search, which tables
+            # the join tree added as bridges, which a glossary term or metric
+            # pulled in, and the core columns shown. "Why did it not see table
+            # X" is answered here.
+            "schema": (getattr(result, "metadata", None) or {}).get("schema"),
         }

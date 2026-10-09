@@ -22,12 +22,31 @@
  *   table   a `table` trace
  *
  * `text` is the exception and has no figure; it is prose, and prose is markup.
+ *
+ * TWO COPIES, DELIBERATELY, AND THEY MUST MATCH BYTE FOR BYTE:
+ *
+ *   frontend/public/assets/shared/tile-figure.js   the original, loaded by app.js
+ *   backend/vanna/dashboards/vendor/tile-figure.js the copy the export inlines
+ *
+ * The backend image carries no Node, so it cannot build this; it reads the copy at
+ * `dashboards/export.py`. `backend/tests/test_dashboard_export.py` asserts the two
+ * are identical, so editing one and not the other fails the suite rather than
+ * shipping an export that draws a different chart than the screen. To resync after
+ * editing the original:  make plotly-bundle
  */
 
 /** Plotly's own palette is fine, but the first two colours must not be red/green. */
 export const PALETTE = [
   '#4f46e5', '#ea7317', '#059669', '#dc2626',
   '#0891b2', '#7c3aed', '#a16207', '#db2777',
+];
+
+/** Same hues, brightened for a dark background -- PALETTE's own values are
+ * tuned against white and read as muddy on #111827. Same order, so a series
+ * keeps its identity across a theme toggle. */
+export const PALETTE_DARK = [
+  '#818cf8', '#fb923c', '#34d399', '#f87171',
+  '#22d3ee', '#a78bfa', '#facc15', '#f472b6',
 ];
 
 /** Coerce a cell to a number, or null. Dates, labels and NULLs all land here. */
@@ -251,11 +270,12 @@ function chartFigure(tile, columns, rows, { dark, height, otherLabel }) {
     );
   }
 
+  const palette = dark ? PALETTE_DARK : PALETTE;
   const shape = (name, xs, ys, index) => {
-    const colour = PALETTE[index % PALETTE.length];
+    const colour = palette[index % palette.length];
     if (type === 'pie') {
       return { type: 'pie', labels: xs, values: ys, name,
-               marker: { colors: PALETTE } };
+               marker: { colors: palette } };
     }
     if (type === 'scatter') {
       return { type: 'scatter', mode: 'markers', x: xs, y: ys, name,
@@ -355,7 +375,7 @@ function baseLayout({ dark, height, circular, showlegend }) {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     font: { color: dark ? '#e5e7eb' : '#0f172a' },
-    colorway: PALETTE,
+    colorway: dark ? PALETTE_DARK : PALETTE,
   };
 }
 

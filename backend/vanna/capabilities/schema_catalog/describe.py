@@ -25,6 +25,7 @@ def describe_schema(
     relationships: Optional[Iterable[RelationshipMetadata]] = None,
     *,
     include_columns: bool = True,
+    bridge_tables: Iterable[str] = (),
 ) -> str:
     """Render tables and their join paths as structured plain text.
 
@@ -32,22 +33,39 @@ def describe_schema(
     each table, so the model sees the join graph as a whole. That framing
     matters for multi-hop questions: a per-table view makes each edge look
     local, while the graph view makes the path from A to C through B visible.
+
+    *bridge_tables* are marked join-only: they are in the prompt because the
+    join tree between the relevant tables runs through them, and a model that
+    is not told so tends to select from them.
     """
     if not tables:
         return ""
 
+    bridges = set(bridge_tables)
     lines: List[str] = []
     for table in sorted(tables, key=lambda t: t.qualified_name):
-        lines.append(table.describe(include_columns=include_columns))
+        text = table.describe(include_columns=include_columns)
+        if table.qualified_name in bridges:
+            head, _, rest = text.partition("\n")
+            text = (
+                f"{head} (join-only: connects the tables relevant to this "
+                "question)" + (f"\n{rest}" if rest else "")
+            )
+        lines.append(text)
         lines.append("")
 
-    rel_list = list(relationships or [])
+    rel_list = [r for r in (relationships or []) if _usable(r)]
     if rel_list:
         lines.append("### Relationships (join paths)")
         lines.extend(r.describe() for r in sorted(rel_list, key=lambda r: r.name))
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _usable(relationship: object) -> bool:
+    """Rejected and low-confidence inferred joins never reach the prompt."""
+    return bool(getattr(relationship, "is_usable", True))
 
 
 def describe_table_names(tables: Sequence[TableMetadata]) -> str:

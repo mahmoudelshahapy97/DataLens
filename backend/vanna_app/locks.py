@@ -32,6 +32,16 @@ logger = logging.getLogger("vanna.locks")
 KEY_MIGRATE = 0x5641_4E4E_4D49_4752  # "VANNMIGR"
 KEY_SEED = 0x5641_4E4E_5345_4544     # "VANNSEED"
 KEY_CONFIG = 0x5641_4E4E_434F_4E46    # "VANNCONF"
+KEY_REPORTS = 0x5641_4E4E_5250_5254  # "VANNRPRT"
+"""Materialising due report runs.
+
+Its own key rather than sharing one: this is taken every tick, forever, and a
+scheduler pass holding the seeding lock would block a worker that is trying to
+start. Note that only *materialising* is serialised -- turning a due schedule
+into exactly one queued run. Executing those runs is not, and must not be:
+every worker claims from the queue with SKIP LOCKED, which is what lets four
+workers share the load without four of them sending the same email.
+"""
 
 
 @contextmanager

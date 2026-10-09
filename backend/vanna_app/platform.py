@@ -50,6 +50,56 @@ def current_question() -> str:
     return _CURRENT_QUESTION.get("")
 
 
+def _question_for(context: Any) -> str:
+    """What to record as the question behind this SQL.
+
+    A chat turn has one, captured by the lifecycle hook. Everything else that
+    runs SQL through this tool does not -- a dashboard tile, a scheduled report,
+    a cube drill -- and those were stored with an empty question. They are the
+    *majority*: of 6,340 rows in one workspace, 6,075 had none, so the History
+    screen ("every question asked in this workspace") was mostly page after page
+    of "(no question recorded)" and the real questions were buried in it.
+
+    So label them by where they came from. The conversation id already says:
+    ``dashboard:<id>`` for a tile, ``export`` for a download. This follows the
+    convention the export path set with ``[export] <title>`` rather than
+    inventing a second one, and it keeps them in the record -- they cost tokens
+    and touch data, so dropping them would be worse than labelling them.
+    """
+    question = current_question()
+    if question:
+        return question
+
+    conversation = str(getattr(context, "conversation_id", "") or "")
+    if conversation.startswith("dashboard:"):
+        return f"[dashboard] {conversation.split(':', 1)[1]}"
+    if conversation.startswith("report:"):
+        return f"[report] {conversation.split(':', 1)[1]}"
+    if conversation in ("export", "domains", "portal"):
+        return f"[{conversation}]"
+    return ""
+
+
+def _usage_fields() -> Dict[str, Any]:
+    """Model, tokens and cost for the request being recorded, or nothing.
+
+    Empty when the provider reported no usage (the mock service, or a model
+    whose response carries none) -- the columns then stay NULL, which is
+    honest, rather than becoming a confident zero.
+    """
+    from .llm import consume_usage
+
+    usage = consume_usage()
+    if not usage:
+        return {}
+    return {
+        "model": usage["model"] or None,
+        "prompt_tokens": usage["prompt_tokens"] or None,
+        "completion_tokens": usage["completion_tokens"] or None,
+        "cost_usd": usage["cost_usd"],
+    }
+
+
 def question_capture_hook() -> Any:
     """Lifecycle hook that remembers the question being answered."""
     from vanna.core.lifecycle import LifecycleHook
@@ -57,6 +107,11 @@ def question_capture_hook() -> Any:
     class QuestionCaptureHook(LifecycleHook):
         async def before_message(self, user: Any, message: str) -> Optional[str]:
             _CURRENT_QUESTION.set(message or "")
+            # Zero the usage total too: without this, a second question in the
+            # same task would be charged the first one's tokens as well.
+            from .llm import reset_usage
+
+            reset_usage()
             return None  # never modifies the message
 
     return QuestionCaptureHook()
@@ -137,13 +192,24 @@ def recording_run_sql_tool(
                     user_id=getattr(context.user, "id", ""),
                     conversation_id=context.conversation_id,
                     request_id=context.request_id,
-                    question=current_question(),
+                    question=_question_for(context),
                     sql=getattr(args, "sql", "") or "",
                     status=status,
                     error=(result.error or None),
                     row_count=row_count,
                     truncated=bool(meta.get("truncated")),
                     execution_ms=meta.get("execution_ms"),
+                    # What answering this cost. The tool knows the SQL and its
+                    # outcome but not the model's price, so the metering
+                    # middleware leaves its running total on a ContextVar and
+                    # this reads it -- exactly how `current_question()` gets
+                    # here from the lifecycle hook.
+                    #
+                    # It has to be pulled in at *write* time rather than pushed
+                    # from the middleware: the LLM answers before the agent
+                    # calls this tool, so an UPDATE from there would run against
+                    # a row that does not exist yet.
+                    **_usage_fields(),
                 ),
             )
 
@@ -153,6 +219,50 @@ def recording_run_sql_tool(
 # ----------------------------------------------------------------------
 # Policy
 # ----------------------------------------------------------------------
+
+
+def _install_turn_nodes(agent: Any, llm: Any, settings: Any) -> None:
+    """Extend the agent's turn graph with the optional reasoning steps.
+
+    Done after construction rather than by passing ``turn_graph=``, because the
+    three built-in nodes are bound methods on the agent -- there is no graph to
+    extend until it exists.
+
+    Both nodes cost a model call when they fire, and those calls are metered
+    and billed like any other. Neither is wired unless its setting says so.
+    """
+    from vanna.core.agent.graph import TurnGraph
+
+    from .agent_nodes import CriticNode, PlannerNode
+
+    critic = (
+        CriticNode(llm, max_retries=settings.max_critic_retries)
+        if settings.enable_critic and settings.max_critic_retries > 0
+        else None
+    )
+    planner = PlannerNode(llm) if settings.enable_planner else None
+    if critic is None and planner is None:
+        return
+
+    base = agent._default_turn_graph()
+    nodes = list(base.nodes)
+    edges = base.edges
+
+    if critic is not None:
+        nodes.append(critic)
+        # `llm_turn` sends a finished answer to `agent.answer_node`, so pointing
+        # that at the critic is what puts it on the edge. Its own static edge is
+        # where a critic out of retries falls through to.
+        agent.answer_node = critic.name
+        edges[critic.name] = "answer"
+
+    entry = base.entry
+    if planner is not None:
+        nodes.append(planner)
+        entry = planner.name
+        edges[planner.name] = base.entry
+
+    agent.turn_graph = TurnGraph(nodes, entry=entry, edges=edges)
 
 
 def policy_for_user(read_only: Any, settings: Any, tenant: Dict[str, Any]) -> Optional[Any]:
@@ -376,6 +486,9 @@ class Platform:
         domain_store: Any = None,
         datasource_registry: Any = None,
         config_store: Any = None,
+        #: The control plane itself, for the stores this builds rather than
+        #: receives. Agent memory is the only one so far.
+        app_db: Any = None,
     ) -> None:
         from vanna.core.generation import LocalGenerationStore
         from vanna.core.llm import DelegatingLlmService
@@ -469,7 +582,11 @@ class Platform:
         )
         self.conversations = conversation_store
         self.dashboards = dashboard_store
-        self.memory = _build_memory()
+        # Persistent when there is a control plane to persist into, which is
+        # every real deployment. It used to be an in-process stub unconditionally
+        # -- `Memory ✗` in the chat's own status line, and `/memories` empty
+        # however much the agent had been used.
+        self.memory = _build_memory(app_db)
         self.session_properties: Dict[str, str] = {}
 
         # Records model, tokens and cost for every LLM call. Set by `wiring` after
@@ -869,15 +986,32 @@ class Platform:
         from vanna.core.system_prompt import AnalystSystemPromptBuilder
         from vanna.integrations.local import MemoryConversationStore
         from vanna.servers.base import ChatHandler
+        from .chat_commands import DataLensWorkflow
         from vanna.tools import (
+            AnalyzeTimeseriesTool,
+            CalculatorTool,
+            ComparePeriodsTool,
             CheckColumnValuesTool,
+            CheckCoreColumnsTool,
+            ListKnownValuesTool,
+            ProfileColumnTool,
+            RequestClarificationTool,
+            SearchKnowledgeTool,
+            SearchQueryHistoryTool,
+            SuggestJoinsTool,
             SystemTimeTool,
             TIME_FUNCTION_NAMES,
             ValidateSqlTool,
             VisualizeDataTool,
             create_schema_tools,
         )
+        from vanna.tools.agent_memory import (
+            SaveQuestionToolArgsTool,
+            SaveTextMemoryTool,
+            SearchSavedCorrectToolUsesTool,
+        )
 
+        from .knowledge_links import WorkspaceKnowledge, manifest_of
         from .limits import build_limit_hooks
 
         settings = self.settings
@@ -973,6 +1107,40 @@ class Platform:
         registry.register_local_tool(SystemTimeTool(), [])
         registry.register_local_tool(VisualizeDataTool(), [])
 
+        # Memory. Registered only now that there is somewhere for it to go:
+        # these were absent, so the agent could neither look up how a similar
+        # question was answered before nor record how this one was -- and the
+        # chat's own status line said `Memory ✗`, because `has_memory` is
+        # computed from whether these two tools exist rather than from the
+        # store.
+        #
+        # They read `ToolContext.agent_memory`, which is the per-workspace store
+        # `_build_memory` provides, so there is nothing to pass here.
+        registry.register_local_tool(SearchSavedCorrectToolUsesTool(), [])
+        registry.register_local_tool(SaveQuestionToolArgsTool(), [])
+        registry.register_local_tool(SaveTextMemoryTool(), [])
+
+        # Four services already on Platform with no tool exposing them. Each
+        # registers with [] (no access-group gate): search_knowledge and
+        # list_known_values return exactly what the enhancers already inject
+        # unasked, and search_query_history filters to the caller's own rows
+        # itself rather than via a scope argument (`access_groups` attaches to
+        # a tool name, not its arguments).
+        registry.register_local_tool(CalculatorTool(), [])
+        registry.register_local_tool(
+            SearchKnowledgeTool(self.examples, self.instructions), []
+        )
+        registry.register_local_tool(
+            SearchQueryHistoryTool(self.generations, catalog), []
+        )
+        if self.values is not None:
+            # Platform.values is optional; an unconditional registration would
+            # AttributeError inside execute(), which the registry swallows
+            # into an undiagnosable "Execution failed".
+            registry.register_local_tool(
+                ListKnownValuesTool(self.values, catalog), []
+            )
+
         write_service = None
         if write_runner is not None and self.grants is not None:
             from vanna.core.write.approval import WriteApprovalMode
@@ -1007,6 +1175,39 @@ class Platform:
         for tool in create_schema_tools(catalog):
             registry.register_local_tool(tool, [])
 
+        # `catalog`, not `self.catalog`: join paths must be narrowed by the same
+        # grant filtering and semantic wrapping every other schema read goes
+        # through, or the tool would suggest a join through a table the caller
+        # is not allowed to see.
+        registry.register_local_tool(
+            SuggestJoinsTool(catalog, data_source_id=data_source), []
+        )
+
+        # `runner` for the live aggregate, `catalog` for the facts the scanner
+        # already captured -- a column profiled at scan time costs no round trip.
+        registry.register_local_tool(
+            ProfileColumnTool(runner, catalog=catalog, data_source_id=data_source), []
+        )
+
+        # Both run model-written SQL and declare `sql_argument_fields`, so the
+        # same policy that guards run_sql guards them -- registering them here,
+        # beside it, rather than with the catalog tools they resemble.
+        registry.register_local_tool(AnalyzeTimeseriesTool(runner), [])
+        registry.register_local_tool(ComparePeriodsTool(runner), [])
+
+        # No dependencies at all: it puts a question to the user and ends the
+        # turn. Available to every role -- a viewer's question is as likely to
+        # be ambiguous as an admin's.
+        registry.register_local_tool(RequestClarificationTool(), [])
+
+        # self.catalog rather than the (possibly semantic-wrapped) `catalog`
+        # above: core columns are a control-plane curation concept, same as
+        # the annotations `routes/catalog.py` reaches for `deps.platform.catalog`
+        # to reach, not part of the general SchemaCatalog interface.
+        registry.register_local_tool(
+            CheckCoreColumnsTool(self.catalog, data_source_id=data_source), []
+        )
+
         hooks = build_limit_hooks(
             self.counters,
             daily_quota=limits.daily_quota,
@@ -1036,6 +1237,19 @@ class Platform:
                             # scope the whole time.
                             data_source_id=data_source,
                             budget=BudgetPolicy(total_tokens=120_000),
+                            schema_threshold=self.settings.schema_full_text_threshold,
+                            # Glossary terms and cube metrics seed the search
+                            # path's table selection; core columns are shown
+                            # beside the schema instead of behind a tool call.
+                            # `self.catalog` for core columns for the same
+                            # reason CheckCoreColumnsTool takes it.
+                            knowledge=WorkspaceKnowledge(
+                                tenant_id=tenant_id,
+                                data_source_id=data_source,
+                                domains=self.domains,
+                                catalog_store=self.catalog,
+                                manifest=manifest_of(catalog),
+                            ),
                         ),
                         catalog=catalog,
                         store=self.values,
@@ -1055,7 +1269,10 @@ class Platform:
             lifecycle_hooks=hooks,
             error_recovery_strategy=SqlRepairStrategy(catalog=catalog),
             audit_logger=self.audit_logger,
+            workflow_handler=DataLensWorkflow(),
         )
+
+        _install_turn_nodes(agent, self.llm, settings)
 
         logger.info("Built runtime for %s -> %s (%s)", tenant_id, data_source, dialect)
 
@@ -1462,13 +1679,29 @@ class Platform:
         self._runtimes.clear()
 
 
-def _build_memory() -> Any:
-    """In-memory agent memory, partitioned per tenant.
+def _build_memory(app_db: Any = None) -> Any:
+    """Agent memory, partitioned per tenant.
+
+    Backed by the control plane when there is one, so what the agent learns
+    outlives the request that taught it. Without a database -- the demo and the
+    tests -- it falls back to the in-process stub below, which is honest about
+    being empty rather than pretending to remember.
 
     The partition wrapper is what keeps one workspace's saved patterns out of
     another's retrieval, independent of whether the backing store filters.
     """
     from vanna.capabilities.agent_memory import AgentMemory, TenantPartitionedAgentMemory
+
+    if app_db is not None:
+        from .memory_store import PostgresAgentMemory
+
+        # A factory, not an instance: the wrapper calls it once per workspace and
+        # requires each result to be independent. Pinning the tenant at
+        # construction is what makes that true here -- the rows live in shared
+        # tables, but a store built for one workspace cannot query another's.
+        return TenantPartitionedAgentMemory(
+            lambda tenant: PostgresAgentMemory(app_db, tenant_id=tenant)
+        )
 
     class EphemeralMemory(AgentMemory):
         """Non-persistent memory, so a restart starts clean."""

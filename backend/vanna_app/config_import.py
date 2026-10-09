@@ -1,7 +1,7 @@
 """Loading the configuration files under ``backend/`` into the catalog.
 
 The one-way bridge from the files to the database. It runs from
-``tools/import_config_files.py``, from ``tools/seed_database.py``, and at boot when
+``backend/tools/import_config_files.py``, from ``backend/tools/seed_database.py``, and at boot when
 ``VANNA_CONFIG_BOOTSTRAP`` is set and the catalog is empty -- which is what makes
 ``docker compose up`` on a fresh volume work without a manual step.
 
@@ -218,7 +218,7 @@ def import_files(
     """Import every configuration file under ``root``. Returns what happened.
 
     Synchronous, and that is deliberate. This runs from ``create_app`` before
-    there is an event loop and from ``tools/`` scripts that have none, over a few
+    there is an event loop and from ``backend/tools/`` scripts that have none, over a few
     dozen small files exactly once -- so it takes ``AppDatabase``'s synchronous
     route. Wrapping the async store in ``asyncio.run`` here would bind that
     store's semaphore to a loop that is about to be thrown away, and the loop

@@ -50,6 +50,16 @@ def current_request_id() -> str:
     return request_id_var.get()
 
 
+def current_tenant_id() -> str:
+    """The workspace this request is about, or "" outside a request.
+
+    Read by the audit writer: the library's event model carries no tenant, so
+    without this every agent audit row was stored against an empty workspace and
+    the per-workspace reader matched none of them.
+    """
+    return tenant_id_var.get()
+
+
 def bind_identity(tenant_id: str = "", user_id: str = "") -> None:
     """Attach the resolved identity to this request's log context.
 

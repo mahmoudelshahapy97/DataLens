@@ -1,0 +1,321 @@
+{
+  "role": "admin",
+  "email": "qa.admin@example.com",
+  "tenant": "chinook",
+  "offered": [
+    {
+      "to": "/ask",
+      "label": "Ask"
+    },
+    {
+      "to": "/schema",
+      "label": "Schema"
+    },
+    {
+      "to": "/history",
+      "label": "History"
+    },
+    {
+      "to": "/saved",
+      "label": "Saved queries"
+    },
+    {
+      "to": "/dashboards",
+      "label": "Dashboards"
+    },
+    {
+      "to": "/reports",
+      "label": "Reports"
+    },
+    {
+      "to": "/cubes",
+      "label": "Metrics"
+    },
+    {
+      "to": "/account",
+      "label": "Account"
+    },
+    {
+      "to": "/console/overview",
+      "label": "Overview"
+    },
+    {
+      "to": "/console/permissions",
+      "label": "Permissions"
+    },
+    {
+      "to": "/console/masking",
+      "label": "Masking"
+    },
+    {
+      "to": "/console/audit",
+      "label": "Audit"
+    },
+    {
+      "to": "/console/access-log",
+      "label": "Access log"
+    },
+    {
+      "to": "/console/approvals",
+      "label": "Approvals"
+    },
+    {
+      "to": "/console/lineage",
+      "label": "Lineage"
+    },
+    {
+      "to": "/console/members",
+      "label": "Members"
+    },
+    {
+      "to": "/console/billing",
+      "label": "Billing"
+    },
+    {
+      "to": "/console/usage",
+      "label": "Cost"
+    },
+    {
+      "to": "/console/review",
+      "label": "Review queue"
+    },
+    {
+      "to": "/console/verified",
+      "label": "Verified examples"
+    },
+    {
+      "to": "/console/domains",
+      "label": "Business domains"
+    },
+    {
+      "to": "/console/rules",
+      "label": "Instructions"
+    },
+    {
+      "to": "/console/library",
+      "label": "Starter library"
+    },
+    {
+      "to": "/console/starters",
+      "label": "Starter questions"
+    }
+  ],
+  "visited": [
+    {
+      "to": "/ask",
+      "label": "Ask",
+      "state": null,
+      "chars": 419
+    },
+    {
+      "to": "/schema",
+      "label": "Schema",
+      "state": null,
+      "chars": 427
+    },
+    {
+      "to": "/history",
+      "label": "History",
+      "state": null,
+      "chars": 12590
+    },
+    {
+      "to": "/saved",
+      "label": "Saved queries",
+      "state": null,
+      "chars": 5839
+    },
+    {
+      "to": "/dashboards",
+      "label": "Dashboards",
+      "state": null,
+      "chars": 2068
+    },
+    {
+      "to": "/reports",
+      "label": "Reports",
+      "state": null,
+      "chars": 803
+    },
+    {
+      "to": "/cubes",
+      "label": "Metrics",
+      "state": null,
+      "chars": 174
+    },
+    {
+      "to": "/account",
+      "label": "Account",
+      "state": null,
+      "chars": 1147
+    },
+    {
+      "to": "/console/overview",
+      "label": "Overview",
+      "state": null,
+      "chars": 717
+    },
+    {
+      "to": "/console/permissions",
+      "label": "Permissions",
+      "state": null,
+      "chars": 871
+    },
+    {
+      "to": "/console/masking",
+      "label": "Masking",
+      "state": null,
+      "chars": 2678
+    },
+    {
+      "to": "/console/audit",
+      "label": "Audit",
+      "state": null,
+      "chars": 6076
+    },
+    {
+      "to": "/console/access-log",
+      "label": "Access log",
+      "state": null,
+      "chars": 6368
+    },
+    {
+      "to": "/console/approvals",
+      "label": "Approvals",
+      "state": null,
+      "chars": 187
+    },
+    {
+      "to": "/console/lineage",
+      "label": "Lineage",
+      "state": null,
+      "chars": 1370
+    },
+    {
+      "to": "/console/members",
+      "label": "Members",
+      "state": null,
+      "chars": 290
+    },
+    {
+      "to": "/console/billing",
+      "label": "Billing",
+      "state": null,
+      "chars": 667
+    },
+    {
+      "to": "/console/usage",
+      "label": "Cost",
+      "state": null,
+      "chars": 226
+    },
+    {
+      "to": "/console/review",
+      "label": "Review queue",
+      "state": null,
+      "chars": 6273
+    },
+    {
+      "to": "/console/verified",
+      "label": "Verified examples",
+      "state": null,
+      "chars": 2572
+    },
+    {
+      "to": "/console/domains",
+      "label": "Business domains",
+      "state": null,
+      "chars": 196
+    },
+    {
+      "to": "/console/rules",
+      "label": "Instructions",
+      "state": null,
+      "chars": 5328
+    },
+    {
+      "to": "/console/library",
+      "label": "Starter library",
+      "state": null,
+      "chars": 8967
+    },
+    {
+      "to": "/console/starters",
+      "label": "Starter questions",
+      "state": null,
+      "chars": 415
+    }
+  ],
+  "ask": {
+    "asked": {
+      "text": "What are the top 5 genres by number of tracks?",
+      "rows": 26,
+      "complete": false,
+      "timedOut": false
+    },
+    "followed": {
+      "text": "Which of those genres earned the most revenue?",
+      "rows": 26,
+      "complete": true,
+      "timedOut": false
+    }
+  },
+  "probes": [
+    {
+      "route": "/console/overview",
+      "inNav": true,
+      "state": null,
+      "chars": 717,
+      "refusals": [],
+      "verdict": "page rendered with data"
+    },
+    {
+      "route": "/console/members",
+      "inNav": true,
+      "state": null,
+      "chars": 291,
+      "refusals": [],
+      "verdict": "page rendered with data"
+    },
+    {
+      "route": "/console/permissions",
+      "inNav": true,
+      "state": null,
+      "chars": 871,
+      "refusals": [],
+      "verdict": "page rendered with data"
+    },
+    {
+      "route": "/console/workspaces",
+      "inNav": false,
+      "state": null,
+      "chars": 173,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/tenants"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    },
+    {
+      "route": "/console/datasources",
+      "inNav": false,
+      "state": null,
+      "chars": 160,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/tenants/chinook/datasources"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    }
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failed": [
+    "401 GET /api/vanna/v2/me",
+    "404 GET /api/vanna/v2/admin/tenants/chinook/spend",
+    "404 GET /api/vanna/v2/admin/tenants",
+    "404 GET /api/vanna/v2/admin/tenants/chinook/datasources"
+  ]
+}

@@ -115,6 +115,7 @@ export class PlotlyChart extends LitElement {
 
   private plotlyDiv?: HTMLElement;
   private resizeObserver?: ResizeObserver;
+  private resizeFrame?: number;
 
   firstUpdated() {
     this.plotlyDiv = this.shadowRoot?.querySelector('.plotly-div') as HTMLElement;
@@ -125,18 +126,27 @@ export class PlotlyChart extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.resizeObserver?.disconnect();
+    if (this.resizeFrame !== undefined) cancelAnimationFrame(this.resizeFrame);
   }
 
   private _setupResizeObserver() {
     if (!this.plotlyDiv) return;
 
+    // Coalesced into a single rAF per frame, not called on every tick: a
+    // 200ms grid-collapse animation fires roughly a dozen ResizeObserver
+    // ticks per chart, and an eight-tile dashboard was turning one sidebar
+    // toggle into ~96 uncoalesced `Plotly.relayout` calls.
     this.resizeObserver = new ResizeObserver(() => {
-      if (this.plotlyDiv && this.data.length > 0 && plotlyPromise) {
-        const width = this.plotlyDiv.offsetWidth;
-        // Already resolved by the time a chart exists to resize; awaited rather
-        // than assumed so a resize can never race the first load.
-        plotlyPromise.then((Plotly) => Plotly.relayout(this.plotlyDiv!, { width }));
-      }
+      if (this.resizeFrame !== undefined) cancelAnimationFrame(this.resizeFrame);
+      this.resizeFrame = requestAnimationFrame(() => {
+        this.resizeFrame = undefined;
+        if (this.plotlyDiv && this.data.length > 0 && plotlyPromise) {
+          const width = this.plotlyDiv.offsetWidth;
+          // Already resolved by the time a chart exists to resize; awaited
+          // rather than assumed so a resize can never race the first load.
+          plotlyPromise.then((Plotly) => Plotly.relayout(this.plotlyDiv!, { width }));
+        }
+      });
     });
 
     this.resizeObserver.observe(this.plotlyDiv);

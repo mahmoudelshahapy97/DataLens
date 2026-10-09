@@ -1,0 +1,17 @@
+# Dependencies for mock_component_backend.py -- the standalone FastAPI mock that
+# streams every rich component, for working on the front-end without a database,
+# an LLM key or the real stack.
+#
+#   pip install -r backend/tools/requirements.txt
+#   python backend/tools/mock_component_backend.py
+#
+# Nothing else in tools/ needs its own install: the rest either drive the running
+# app over HTTP with `requests`, or import `vanna`/`vanna_app` from source, both of
+# which backend/requirements.txt already covers.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+
+# `vanna` itself is imported from source -- the scripts put `backend/` on sys.path
+# rather than installing anything. There is no package to install.

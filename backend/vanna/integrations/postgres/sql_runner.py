@@ -220,6 +220,36 @@ class PostgresRunner(BaseSqlRunner):
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Failed returning connection to pool: %s", e)
 
+    def explain_sql(self, sql: str) -> str:
+        """The planner's output, inside the same rolled-back read-only
+        transaction ``dry_run_sql`` uses.
+
+        Without ``ANALYZE``, so the query is planned but never executed --
+        the row counts are the planner's estimates, which is what makes
+        this safe to run on a query nobody has decided to pay for yet.
+        """
+        pool = self._get_pool()
+        conn = pool.acquire()
+        broken = False
+        try:
+            conn.set_session(readonly=True, autocommit=False)
+            with conn.cursor() as cursor:
+                cursor.execute(f"EXPLAIN {sql}")
+                rows = cursor.fetchall()
+            conn.rollback()
+            return "\n".join(str(row[0]) for row in rows)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                broken = True
+            raise
+        finally:
+            try:
+                pool.release(conn, broken=broken)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("Failed returning connection to pool: %s", e)
+
     def _execute_sync(self, sql: str, timeout_seconds: int) -> pd.DataFrame:
         """Execute *sql* on a pooled connection. Runs on a worker thread.
 

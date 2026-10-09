@@ -287,7 +287,7 @@ class InstructionLibrary:
             raise InstructionContentError(
                 "The configuration catalog holds no baseline instructions "
                 "(kind='instruction_baseline'). Import them with "
-                "`python tools/import_config_files.py`, or set "
+                "`python backend/tools/import_config_files.py`, or set "
                 "VANNA_CONFIG_SOURCE=disk to read them from instructions/."
             )
 

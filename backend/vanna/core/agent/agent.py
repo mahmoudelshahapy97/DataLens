@@ -5,9 +5,10 @@ This module provides the main Agent class that orchestrates the interaction
 between LLM services, tools, and conversation storage.
 """
 
+import time
 import traceback
 import uuid
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from vanna.components import (
     UiComponent,
@@ -17,6 +18,7 @@ from vanna.components import (
     TaskTrackerUpdateComponent,
     ChatInputUpdateComponent,
     StatusCardComponent,
+    ComponentLifecycle,
     Task,
 )
 from .config import AgentConfig
@@ -26,7 +28,14 @@ from vanna.core.llm import LlmService
 from vanna.core.system_prompt import SystemPromptBuilder
 from vanna.core.storage import Conversation, Message
 from vanna.core.llm import LlmMessage, LlmRequest, LlmResponse
-from vanna.core.tool import ToolCall, ToolContext, ToolResult, ToolSchema
+from vanna.core.tool import END_TURN, ToolCall, ToolContext, ToolResult, ToolSchema
+
+from .graph import (
+    END as GRAPH_END,
+    CallableTurnNode,
+    TurnGraph,
+    TurnState,
+)
 from vanna.core.user import User
 from vanna.core.registry import ToolRegistry
 from vanna.core.system_prompt import DefaultSystemPromptBuilder
@@ -49,6 +58,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 logger.info("Loaded vanna.core.agent.agent module")
+
+#: How much streamed text to accumulate before emitting a frame, and how long to
+#: wait before flushing a short one anyway. Per-token frames are mostly protocol
+#: overhead and make the client re-render the bubble hundreds of times; these
+#: values keep the answer visibly growing without that cost.
+_STREAM_FLUSH_CHARS = 24
+_STREAM_FLUSH_SECONDS = 0.08
 
 if TYPE_CHECKING:
     pass
@@ -98,6 +114,7 @@ class Agent:
         conversation_filters: List[ConversationFilter] = [],
         observability_provider: Optional[ObservabilityProvider] = None,
         audit_logger: Optional[AuditLogger] = None,
+        turn_graph: Optional[TurnGraph] = None,
     ):
         self.llm_service = llm_service
         self.tool_registry = tool_registry
@@ -132,6 +149,22 @@ class Agent:
         self.conversation_filters = conversation_filters
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
+
+        # None means the three built-in nodes, which reproduce the tool loop
+        # this class used to run inline. Supplying a graph is how a planner, a
+        # critic or a clarification step is added -- see `_default_turn_graph`
+        # and `TurnGraph.insert_after`.
+        self.turn_graph = turn_graph
+
+        # Where `llm_turn` sends an answer the model considers finished.
+        #
+        # `insert_after` rewires *static* edges, which is enough for a node that
+        # is skipped but not for one that must sit between two nodes naming each
+        # other. A step that has to see the answer before the user does -- a
+        # critic -- is put here, and forwards to "answer" when it is satisfied.
+        # One attribute rather than a general label-resolution layer: this is
+        # the only edge in the built-in graph anything has needed to intercept.
+        self.answer_node = "answer"
 
         # Wire audit logger into tool registry
         if self.audit_logger and self.config.audit_config.enabled:
@@ -169,9 +202,7 @@ class Agent:
                 # An enforced limit working as designed. Logged at INFO without a
                 # stack trace -- an ERROR with a traceback for every user who hits
                 # their quota trains everyone to ignore the error log.
-                logger.info(
-                    "Refused (conversation_id=%s): %s", conversation_id, e
-                )
+                logger.info("Refused (conversation_id=%s): %s", conversation_id, e)
             else:
                 # Log full stack trace
                 stack_trace = traceback.format_exc()
@@ -671,416 +702,29 @@ class Agent:
         )
 
         # Process with tool loop
-        tool_iterations = 0
+        # The turn itself is a graph now. Everything above is the prologue that
+        # builds its state; everything below is the epilogue that persists the
+        # result. Passing no graph gives the three nodes that reproduce the
+        # loop this used to be, so behaviour is unchanged by default.
+        state = TurnState(
+            user=user,
+            conversation=conversation,
+            context=context,
+            tool_schemas=tool_schemas,
+            system_prompt=system_prompt,
+            config=self.config,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            ui_features_available=ui_features_available,
+            request=request,
+        )
 
-        while tool_iterations < self.config.max_tool_iterations:
-            if self.config.include_thinking_indicators and tool_iterations == 0:
-                # TODO: Yield thinking indicator
-                pass
+        graph = self.turn_graph or self._default_turn_graph()
+        async for component in graph.run(state):
+            yield component
 
-            # Get LLM response
-            if self.config.stream_responses:
-                response = await self._handle_streaming_response(request)
-            else:
-                response = await self._send_llm_request(request)
-
-            # Handle tool calls
-            if response.is_tool_call():
-                tool_iterations += 1
-
-                # First, add the assistant message with tool_calls to the conversation
-                # This is required for OpenAI API - tool messages must follow assistant messages with tool_calls
-                assistant_message = Message(
-                    role="assistant",
-                    content=response.content or "",  # Ensure content is not None
-                    tool_calls=response.tool_calls,
-                )
-                conversation.add_message(assistant_message)
-
-                if response.content is not None:
-                    # Yield any partial content from the assistant before tool execution
-                    has_tool_invocation_message_in_chat = (
-                        self.config.ui_features.can_user_access_feature(
-                            UiFeature.UI_FEATURE_SHOW_TOOL_INVOCATION_MESSAGE_IN_CHAT,
-                            user,
-                        )
-                    )
-                    if has_tool_invocation_message_in_chat:
-                        yield UiComponent(
-                            rich_component=RichTextComponent(
-                                content=response.content, markdown=True
-                            ),
-                            simple_component=SimpleTextComponent(text=response.content),
-                        )
-
-                        # Update status to executing tools
-                        yield UiComponent(  # type: ignore
-                            rich_component=StatusBarUpdateComponent(
-                                status="working",
-                                message="Executing tools...",
-                                detail=f"Running {len(response.tool_calls or [])} tools",
-                            )
-                        )
-                    else:
-                        # Yield as a status update instead
-                        yield UiComponent(  # type: ignore
-                            rich_component=StatusBarUpdateComponent(
-                                status="working", message=response.content, detail=""
-                            )
-                        )
-
-                # Collect all tool results first
-                tool_results = []
-                for i, tool_call in enumerate(response.tool_calls or []):
-                    # Add task for this tool execution
-                    tool_task = Task(
-                        title=f"Execute {tool_call.name}",
-                        description=f"Running tool with provided arguments",
-                        status="in_progress",
-                    )
-
-                    has_tool_names_access = (
-                        self.config.ui_features.can_user_access_feature(
-                            UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, user
-                        )
-                    )
-
-                    # Audit UI feature access check
-                    if (
-                        self.audit_logger
-                        and self.config.audit_config.enabled
-                        and self.config.audit_config.log_ui_feature_checks
-                    ):
-                        await self.audit_logger.log_ui_feature_access(
-                            user=user,
-                            feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_NAMES,
-                            access_granted=has_tool_names_access,
-                            required_groups=self.config.ui_features.feature_group_access.get(
-                                UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, []
-                            ),
-                            conversation_id=conversation.id,
-                            request_id=request_id,
-                        )
-
-                    if has_tool_names_access:
-                        yield UiComponent(  # type: ignore
-                            rich_component=TaskTrackerUpdateComponent.add_task(
-                                tool_task
-                            )
-                        )
-
-                    response_str = response.content
-
-                    # Use primitive StatusCard instead of semantic ToolExecutionComponent
-                    tool_status_card = StatusCardComponent(
-                        title=f"Executing {tool_call.name}",
-                        status="running",
-                        description=f"Running tool with {len(tool_call.arguments)} arguments",
-                        icon="⚙️",
-                        metadata=tool_call.arguments,
-                    )
-
-                    has_tool_args_access = (
-                        self.config.ui_features.can_user_access_feature(
-                            UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, user
-                        )
-                    )
-
-                    # Audit UI feature access check
-                    if (
-                        self.audit_logger
-                        and self.config.audit_config.enabled
-                        and self.config.audit_config.log_ui_feature_checks
-                    ):
-                        await self.audit_logger.log_ui_feature_access(
-                            user=user,
-                            feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS,
-                            access_granted=has_tool_args_access,
-                            required_groups=self.config.ui_features.feature_group_access.get(
-                                UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, []
-                            ),
-                            conversation_id=conversation.id,
-                            request_id=request_id,
-                        )
-
-                    if has_tool_args_access:
-                        yield UiComponent(
-                            rich_component=tool_status_card,
-                            simple_component=SimpleTextComponent(
-                                text=response_str or ""
-                            ),
-                        )
-
-                    # Run before_tool hooks with observability
-                    tool = await self.tool_registry.get_tool(tool_call.name)
-                    if tool:
-                        for hook in self.lifecycle_hooks:
-                            hook_span = None
-                            if self.observability_provider:
-                                hook_span = (
-                                    await self.observability_provider.create_span(
-                                        "agent.hook.before_tool",
-                                        attributes={
-                                            "hook": hook.__class__.__name__,
-                                            "tool": tool_call.name,
-                                        },
-                                    )
-                                )
-
-                            await hook.before_tool(tool, context)
-
-                            if self.observability_provider and hook_span:
-                                await self.observability_provider.end_span(hook_span)
-                                if hook_span.duration_ms():
-                                    await self.observability_provider.record_metric(
-                                        "agent.hook.duration",
-                                        hook_span.duration_ms() or 0,
-                                        "ms",
-                                        tags={
-                                            "hook": hook.__class__.__name__,
-                                            "phase": "before_tool",
-                                            "tool": tool_call.name,
-                                        },
-                                    )
-
-                    # Execute tool with observability
-                    tool_exec_span = None
-                    if self.observability_provider:
-                        tool_exec_span = await self.observability_provider.create_span(
-                            "agent.tool.execute",
-                            attributes={
-                                "tool": tool_call.name,
-                                "arg_count": len(tool_call.arguments),
-                            },
-                        )
-
-                    result = await self.tool_registry.execute(tool_call, context)
-
-                    # Give the recovery strategy a chance to retry a failed
-                    # tool before the error goes back to the model. Without
-                    # this the strategy is inert -- it was accepted by the
-                    # constructor and documented as an extension point but
-                    # never consulted, so integrators' retry logic silently
-                    # did nothing.
-                    if not result.success and self.error_recovery_strategy:
-                        result = await self._attempt_tool_recovery(
-                            tool_call, context, result
-                        )
-
-                    if self.observability_provider and tool_exec_span:
-                        tool_exec_span.set_attribute("success", result.success)
-                        if not result.success:
-                            tool_exec_span.set_attribute(
-                                "error", result.error or "unknown"
-                            )
-                        await self.observability_provider.end_span(tool_exec_span)
-                        if tool_exec_span.duration_ms():
-                            await self.observability_provider.record_metric(
-                                "agent.tool.duration",
-                                tool_exec_span.duration_ms() or 0,
-                                "ms",
-                                tags={
-                                    "tool": tool_call.name,
-                                    "success": str(result.success),
-                                },
-                            )
-
-                    # Run after_tool hooks with observability
-                    for hook in self.lifecycle_hooks:
-                        hook_span = None
-                        if self.observability_provider:
-                            hook_span = await self.observability_provider.create_span(
-                                "agent.hook.after_tool",
-                                attributes={
-                                    "hook": hook.__class__.__name__,
-                                    "tool": tool_call.name,
-                                },
-                            )
-
-                        modified_result = await hook.after_tool(result)
-                        if modified_result is not None:
-                            result = modified_result
-
-                        if self.observability_provider and hook_span:
-                            hook_span.set_attribute(
-                                "modified_result", modified_result is not None
-                            )
-                            await self.observability_provider.end_span(hook_span)
-                            if hook_span.duration_ms():
-                                await self.observability_provider.record_metric(
-                                    "agent.hook.duration",
-                                    hook_span.duration_ms() or 0,
-                                    "ms",
-                                    tags={
-                                        "hook": hook.__class__.__name__,
-                                        "phase": "after_tool",
-                                        "tool": tool_call.name,
-                                    },
-                                )
-
-                    # Update status card to show completion
-                    final_status = "success" if result.success else "error"
-                    final_description = (
-                        f"Tool completed successfully"
-                        if result.success
-                        else f"Tool failed: {result.error or 'Unknown error'}"
-                    )
-
-                    has_tool_args_access_2 = (
-                        self.config.ui_features.can_user_access_feature(
-                            UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, user
-                        )
-                    )
-
-                    # Audit UI feature access check
-                    if (
-                        self.audit_logger
-                        and self.config.audit_config.enabled
-                        and self.config.audit_config.log_ui_feature_checks
-                    ):
-                        await self.audit_logger.log_ui_feature_access(
-                            user=user,
-                            feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS,
-                            access_granted=has_tool_args_access_2,
-                            required_groups=self.config.ui_features.feature_group_access.get(
-                                UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, []
-                            ),
-                            conversation_id=conversation.id,
-                            request_id=request_id,
-                        )
-
-                    if has_tool_args_access_2:
-                        yield UiComponent(
-                            rich_component=tool_status_card.set_status(
-                                final_status, final_description
-                            ),
-                            simple_component=SimpleTextComponent(
-                                text=final_description
-                            ),
-                        )
-
-                    has_tool_names_access_2 = (
-                        self.config.ui_features.can_user_access_feature(
-                            UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, user
-                        )
-                    )
-
-                    # Audit UI feature access check
-                    if (
-                        self.audit_logger
-                        and self.config.audit_config.enabled
-                        and self.config.audit_config.log_ui_feature_checks
-                    ):
-                        await self.audit_logger.log_ui_feature_access(
-                            user=user,
-                            feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_NAMES,
-                            access_granted=has_tool_names_access_2,
-                            required_groups=self.config.ui_features.feature_group_access.get(
-                                UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, []
-                            ),
-                            conversation_id=conversation.id,
-                            request_id=request_id,
-                        )
-
-                    if has_tool_names_access_2:
-                        # Update tool task to completed
-                        yield UiComponent(  # type: ignore
-                            rich_component=TaskTrackerUpdateComponent.update_task(
-                                tool_task.id,
-                                status="completed",
-                                detail=f"Tool {'completed successfully' if result.success else 'return an error'}",
-                            )
-                        )
-
-                    # Yield tool result
-                    if result.ui_component:
-                        # For errors, check if user has access to see error details
-                        if not result.success:
-                            has_tool_error_access = (
-                                self.config.ui_features.can_user_access_feature(
-                                    UiFeature.UI_FEATURE_SHOW_TOOL_ERROR, user
-                                )
-                            )
-
-                            # Audit UI feature access check
-                            if (
-                                self.audit_logger
-                                and self.config.audit_config.enabled
-                                and self.config.audit_config.log_ui_feature_checks
-                            ):
-                                await self.audit_logger.log_ui_feature_access(
-                                    user=user,
-                                    feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_ERROR,
-                                    access_granted=has_tool_error_access,
-                                    required_groups=self.config.ui_features.feature_group_access.get(
-                                        UiFeature.UI_FEATURE_SHOW_TOOL_ERROR, []
-                                    ),
-                                    conversation_id=conversation.id,
-                                    request_id=request_id,
-                                )
-
-                            if has_tool_error_access:
-                                yield result.ui_component
-                        else:
-                            # Success results are always shown if they exist
-                            yield result.ui_component
-
-                    # Collect tool result data
-                    tool_results.append(
-                        {
-                            "tool_call_id": tool_call.id,
-                            "content": (
-                                result.result_for_llm
-                                if result.success
-                                else result.error or "Tool execution failed"
-                            ),
-                        }
-                    )
-
-                # Add tool responses to conversation
-                # For APIs that need all tool results in one message, this helps
-                for tool_result in tool_results:
-                    tool_response_message = Message(
-                        role="tool",
-                        content=tool_result["content"],
-                        tool_call_id=tool_result["tool_call_id"],
-                    )
-                    conversation.add_message(tool_response_message)
-
-                # Rebuild request with tool responses
-                request = await self._build_llm_request(
-                    conversation, tool_schemas, user, system_prompt
-                )
-            else:
-                # Update status to idle and set completion message
-                yield UiComponent(  # type: ignore
-                    rich_component=StatusBarUpdateComponent(
-                        status="idle",
-                        message="Response complete",
-                        detail="Ready for next message",
-                    )
-                )
-
-                # Update chat input placeholder
-                yield UiComponent(  # type: ignore
-                    rich_component=ChatInputUpdateComponent(
-                        placeholder="Ask a follow-up question...", disabled=False
-                    )
-                )
-
-                # Yield final text response
-                if response.content:
-                    # Add assistant response to conversation
-                    conversation.add_message(
-                        Message(role="assistant", content=response.content)
-                    )
-                    yield UiComponent(
-                        rich_component=RichTextComponent(
-                            content=response.content, markdown=True
-                        ),
-                        simple_component=SimpleTextComponent(text=response.content),
-                    )
-                break
+        # Read back out into the name the rest of this method already uses.
+        tool_iterations = state.iterations
 
         # Check if we hit the tool iteration limit
         if tool_iterations >= self.config.max_tool_iterations:
@@ -1229,8 +873,7 @@ You can:
                 action = await strategy.handle_tool_error(error, context, attempt)
             except Exception as e:
                 logger.error(
-                    f"Error recovery strategy raised for tool "
-                    f"'{tool_call.name}': {e}",
+                    f"Error recovery strategy raised for tool '{tool_call.name}': {e}",
                     exc_info=True,
                 )
                 return result
@@ -1436,8 +1079,23 @@ You can:
 
         return response
 
-    async def _handle_streaming_response(self, request: LlmRequest) -> LlmResponse:
-        """Handle streaming response from LLM."""
+    async def _stream_llm_response(
+        self, request: LlmRequest, holder: Dict[str, Any]
+    ) -> AsyncGenerator[UiComponent, None]:
+        """Stream an LLM response, emitting the text as it arrives.
+
+        This used to be ``_handle_streaming_response``, an ``async def`` that
+        drained the provider stream and returned one reassembled response. The
+        SSE endpoint therefore emitted nothing until the whole turn finished --
+        the transport streamed, the agent did not.
+
+        It is a generator now so it can ``yield`` text components into the tool
+        loop, which is itself a generator: sub-iteration preserves emission order
+        against the status and task components the loop yields, and inherits the
+        consumer's backpressure. Async generators cannot return a value, so the
+        reassembled ``LlmResponse`` and the streamed component's id are handed
+        back through ``holder``.
+        """
         # Apply before_llm_request middlewares with observability
         for middleware in self.llm_middlewares:
             mw_span = None
@@ -1468,6 +1126,15 @@ You can:
 
         accumulated_content = ""
         accumulated_tool_calls = []
+        # Carried through so the reassembled response below is not missing what
+        # the provider reported: usage arrives once, on the terminal chunk, and
+        # dropping it meant no streamed answer could ever be costed.
+        accumulated_usage = None
+        accumulated_model = None
+        # Same story as usage: the provider reports why it stopped on the terminal
+        # chunk, and dropping it here made a max_tokens truncation indistinguishable
+        # from a finished answer.
+        accumulated_finish_reason = None
 
         # Create span for streaming
         stream_span = None
@@ -1477,13 +1144,53 @@ You can:
                 attributes={"model": getattr(self.llm_service, "model", "unknown")},
             )
 
+        # One component id for the whole answer, patched in place. Deltas are
+        # coalesced rather than emitted per token: SSE framing costs ~100 bytes
+        # per frame for ~4 bytes of payload, and the client re-renders the bubble
+        # on every update.
+        stream_id = str(uuid.uuid4())
+        emitted = False
+        flushed_len = 0
+        last_flush = time.monotonic()
+
         async for chunk in self.llm_service.stream_request(request):
             if chunk.content:
                 accumulated_content += chunk.content
-                # Could yield intermediate TextChunk here
+
+                pending = len(accumulated_content) - flushed_len
+                due = pending >= _STREAM_FLUSH_CHARS or (
+                    pending > 0
+                    and time.monotonic() - last_flush >= _STREAM_FLUSH_SECONDS
+                )
+                if due:
+                    # simple_component stays None on every delta: simple clients
+                    # have no lifecycle notion and would append one bubble per
+                    # flush. They get a single text payload at reconciliation.
+                    yield UiComponent(
+                        rich_component=RichTextComponent(
+                            id=stream_id,
+                            content=accumulated_content,
+                            markdown=True,
+                            lifecycle=(
+                                ComponentLifecycle.UPDATE
+                                if emitted
+                                else ComponentLifecycle.CREATE
+                            ),
+                        )
+                    )
+                    emitted = True
+                    flushed_len = len(accumulated_content)
+                    last_flush = time.monotonic()
 
             if chunk.tool_calls:
                 accumulated_tool_calls.extend(chunk.tool_calls)
+
+            if getattr(chunk, "usage", None):
+                accumulated_usage = chunk.usage
+            if getattr(chunk, "model", None):
+                accumulated_model = chunk.model
+            if getattr(chunk, "finish_reason", None):
+                accumulated_finish_reason = chunk.finish_reason
 
         # End streaming span
         if self.observability_provider and stream_span:
@@ -1498,8 +1205,12 @@ You can:
         response = LlmResponse(
             content=accumulated_content if accumulated_content else None,
             tool_calls=accumulated_tool_calls if accumulated_tool_calls else None,
+            finish_reason=accumulated_finish_reason,
+            usage=accumulated_usage,
+            # `model` is not a field on LlmResponse, so it rides in metadata;
+            # the metering middleware looks there too.
+            metadata={"model": accumulated_model} if accumulated_model else {},
         )
-
         # Apply after_llm_response middlewares with observability
         for middleware in self.llm_middlewares:
             mw_span = None
@@ -1528,4 +1239,656 @@ You can:
                         },
                     )
 
-        return response
+        holder["response"] = response
+        holder["text_component_id"] = stream_id if emitted else None
+
+    # ------------------------------------------------------------------
+    # The default turn graph
+    #
+    # These three reproduce the tool loop this class used to run inline:
+    #
+    #     llm_turn --(tool calls)--> tools --> llm_turn
+    #         |
+    #         +--(no tool calls)--> answer --> END
+    #
+    # They stay methods rather than becoming TurnNode subclasses because their
+    # bodies reach for a dozen collaborators on self -- the registry, the audit
+    # logger, the UI feature gates, the recovery strategy. CallableTurnNode
+    # adapts them, so the graph sees nodes and the code sees the agent it has
+    # always seen. A node added later has no such history and should subclass
+    # TurnNode directly.
+    #
+    # Each unpacks the state into locals of the same name, runs the code that
+    # used to be in the loop, and writes back what the next node needs. The
+    # unpacking is not decoration: it is what let this move happen without
+    # editing 570 lines of working code.
+    # ------------------------------------------------------------------
+
+    async def _node_llm_turn(self, state: TurnState):
+        """Call the model, then branch on whether it asked for a tool.
+
+        The budget check at the top is the old ``while`` condition. Exhausting
+        it ends the turn here; the caller reports it, exactly as the code after
+        the loop used to.
+        """
+        if state.iterations >= self.config.max_tool_iterations:
+            state.goto = GRAPH_END
+            return
+
+        request = state.request
+        if request is None:
+            # A node before this one cleared it because it changed the history
+            # -- a critic appending its critique, say. Rebuilding here rather
+            # than making that node do it keeps the knowledge of how a request
+            # is assembled in one place.
+            request = await self._build_llm_request(
+                state.conversation,
+                state.tool_schemas,
+                state.user,
+                state.system_prompt,
+            )
+        tool_iterations = state.iterations
+
+        if self.config.include_thinking_indicators and tool_iterations == 0:
+            # TODO: Yield thinking indicator
+            pass
+
+        # Get LLM response. streamed_id is reset every iteration so the
+        # second round of prose gets its own bubble instead of patching the
+        # first round's.
+        streamed_id: Optional[str] = None
+        if self.config.stream_responses:
+            holder: Dict[str, Any] = {}
+            async for stream_component in self._stream_llm_response(request, holder):
+                yield stream_component
+            response = holder["response"]
+            streamed_id = holder.get("text_component_id")
+        else:
+            response = await self._send_llm_request(request)
+
+        # Did the provider stop because it ran out of room? Anthropic reports
+        # "max_tokens", OpenAI "length". Either way the text is cut off and any
+        # tool arguments may be structurally incomplete.
+        truncated = (response.finish_reason or "").lower() in {
+            "max_tokens",
+            "length",
+        }
+
+        state.response = response
+        state.streamed_id = streamed_id
+        state.truncated = truncated
+        state.goto = "tools" if response.is_tool_call() else self.answer_node
+
+    async def _node_tools(self, state: TurnState):
+        """Execute the tool calls, then hand back to the model."""
+        request = state.request
+        response = state.response
+        streamed_id = state.streamed_id
+        truncated = state.truncated
+        tool_iterations = state.iterations
+        conversation = state.conversation
+        tool_schemas = state.tool_schemas
+        user = state.user
+        system_prompt = state.system_prompt
+        context = state.context
+        request_id = state.request_id
+        conversation_id = state.conversation_id
+        ui_features_available = state.ui_features_available
+
+        if truncated:
+            # Executing half-parsed arguments is the worse failure: it can
+            # run a truncated SQL string. Stop and say so instead.
+            logger.warning(
+                "LLM response truncated mid-tool-call "
+                f"(finish_reason={response.finish_reason!r}, "
+                f"iteration={tool_iterations}) -- not executing"
+            )
+            yield UiComponent(  # type: ignore
+                rich_component=StatusBarUpdateComponent(
+                    status="warning",
+                    message="Response truncated",
+                    detail="The model ran out of room composing the next step.",
+                )
+            )
+            truncation_notice = (
+                "⚠️ I ran out of room while composing the next step, so I "
+                "stopped rather than run an incomplete query. Ask me to "
+                "continue, or try a narrower question."
+            )
+            yield UiComponent(
+                rich_component=RichTextComponent(
+                    content=truncation_notice, markdown=True
+                ),
+                simple_component=SimpleTextComponent(text=truncation_notice),
+            )
+            yield UiComponent(  # type: ignore
+                rich_component=ChatInputUpdateComponent(
+                    placeholder="Ask a narrower question...", disabled=False
+                )
+            )
+            state.iterations = tool_iterations
+            state.goto = GRAPH_END
+            return
+
+        tool_iterations += 1
+
+        # First, add the assistant message with tool_calls to the conversation
+        # This is required for OpenAI API - tool messages must follow assistant messages with tool_calls
+        assistant_message = Message(
+            role="assistant",
+            content=response.content or "",  # Ensure content is not None
+            tool_calls=response.tool_calls,
+        )
+        conversation.add_message(assistant_message)
+
+        if response.content is not None:
+            # Yield any partial content from the assistant before tool execution
+            has_tool_invocation_message_in_chat = (
+                self.config.ui_features.can_user_access_feature(
+                    UiFeature.UI_FEATURE_SHOW_TOOL_INVOCATION_MESSAGE_IN_CHAT,
+                    user,
+                )
+            )
+            if has_tool_invocation_message_in_chat:
+                # Anthropic streams tool arguments as input_json_delta,
+                # which never reaches text_stream -- so anything already
+                # on screen is real prose, not half-formed JSON. Patch it
+                # rather than yielding a second copy.
+                yield UiComponent(
+                    rich_component=RichTextComponent(
+                        id=streamed_id or str(uuid.uuid4()),
+                        content=response.content,
+                        markdown=True,
+                        lifecycle=(
+                            ComponentLifecycle.UPDATE
+                            if streamed_id
+                            else ComponentLifecycle.CREATE
+                        ),
+                    ),
+                    simple_component=SimpleTextComponent(text=response.content),
+                )
+
+                # Update status to executing tools
+                yield UiComponent(  # type: ignore
+                    rich_component=StatusBarUpdateComponent(
+                        status="working",
+                        message="Executing tools...",
+                        detail=f"Running {len(response.tool_calls or [])} tools",
+                    )
+                )
+            else:
+                # This preamble belongs in the status bar, not the
+                # transcript -- but streaming already put it on screen,
+                # because you cannot know a response is a tool call until
+                # it ends. Take it back.
+                if streamed_id:
+                    yield UiComponent(  # type: ignore
+                        rich_component=RichTextComponent(
+                            id=streamed_id,
+                            content=response.content,
+                            markdown=True,
+                            lifecycle=ComponentLifecycle.REMOVE,
+                        )
+                    )
+                # Yield as a status update instead
+                yield UiComponent(  # type: ignore
+                    rich_component=StatusBarUpdateComponent(
+                        status="working", message=response.content, detail=""
+                    )
+                )
+
+        # Collect all tool results first
+        tool_results = []
+        for i, tool_call in enumerate(response.tool_calls or []):
+            # Add task for this tool execution
+            tool_task = Task(
+                title=f"Execute {tool_call.name}",
+                description=f"Running tool with provided arguments",
+                status="in_progress",
+            )
+
+            has_tool_names_access = self.config.ui_features.can_user_access_feature(
+                UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, user
+            )
+
+            # Audit UI feature access check
+            if (
+                self.audit_logger
+                and self.config.audit_config.enabled
+                and self.config.audit_config.log_ui_feature_checks
+            ):
+                await self.audit_logger.log_ui_feature_access(
+                    user=user,
+                    feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_NAMES,
+                    access_granted=has_tool_names_access,
+                    required_groups=self.config.ui_features.feature_group_access.get(
+                        UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, []
+                    ),
+                    conversation_id=conversation.id,
+                    request_id=request_id,
+                )
+
+            if has_tool_names_access:
+                yield UiComponent(  # type: ignore
+                    rich_component=TaskTrackerUpdateComponent.add_task(tool_task)
+                )
+
+            response_str = response.content
+
+            # Use primitive StatusCard instead of semantic ToolExecutionComponent
+            tool_status_card = StatusCardComponent(
+                title=f"Executing {tool_call.name}",
+                status="running",
+                description=f"Running tool with {len(tool_call.arguments)} arguments",
+                icon="⚙️",
+                metadata=tool_call.arguments,
+            )
+
+            has_tool_args_access = self.config.ui_features.can_user_access_feature(
+                UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, user
+            )
+
+            # Audit UI feature access check
+            if (
+                self.audit_logger
+                and self.config.audit_config.enabled
+                and self.config.audit_config.log_ui_feature_checks
+            ):
+                await self.audit_logger.log_ui_feature_access(
+                    user=user,
+                    feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS,
+                    access_granted=has_tool_args_access,
+                    required_groups=self.config.ui_features.feature_group_access.get(
+                        UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, []
+                    ),
+                    conversation_id=conversation.id,
+                    request_id=request_id,
+                )
+
+            if has_tool_args_access:
+                yield UiComponent(
+                    rich_component=tool_status_card,
+                    simple_component=SimpleTextComponent(text=response_str or ""),
+                )
+
+            # Run before_tool hooks with observability
+            tool = await self.tool_registry.get_tool(tool_call.name)
+            if tool:
+                for hook in self.lifecycle_hooks:
+                    hook_span = None
+                    if self.observability_provider:
+                        hook_span = await self.observability_provider.create_span(
+                            "agent.hook.before_tool",
+                            attributes={
+                                "hook": hook.__class__.__name__,
+                                "tool": tool_call.name,
+                            },
+                        )
+
+                    await hook.before_tool(tool, context)
+
+                    if self.observability_provider and hook_span:
+                        await self.observability_provider.end_span(hook_span)
+                        if hook_span.duration_ms():
+                            await self.observability_provider.record_metric(
+                                "agent.hook.duration",
+                                hook_span.duration_ms() or 0,
+                                "ms",
+                                tags={
+                                    "hook": hook.__class__.__name__,
+                                    "phase": "before_tool",
+                                    "tool": tool_call.name,
+                                },
+                            )
+
+            # Execute tool with observability
+            tool_exec_span = None
+            if self.observability_provider:
+                tool_exec_span = await self.observability_provider.create_span(
+                    "agent.tool.execute",
+                    attributes={
+                        "tool": tool_call.name,
+                        "arg_count": len(tool_call.arguments),
+                    },
+                )
+
+            result = await self.tool_registry.execute(tool_call, context)
+
+            # Give the recovery strategy a chance to retry a failed
+            # tool before the error goes back to the model. Without
+            # this the strategy is inert -- it was accepted by the
+            # constructor and documented as an extension point but
+            # never consulted, so integrators' retry logic silently
+            # did nothing.
+            if not result.success and self.error_recovery_strategy:
+                result = await self._attempt_tool_recovery(tool_call, context, result)
+
+            if self.observability_provider and tool_exec_span:
+                tool_exec_span.set_attribute("success", result.success)
+                if not result.success:
+                    tool_exec_span.set_attribute("error", result.error or "unknown")
+                await self.observability_provider.end_span(tool_exec_span)
+                if tool_exec_span.duration_ms():
+                    await self.observability_provider.record_metric(
+                        "agent.tool.duration",
+                        tool_exec_span.duration_ms() or 0,
+                        "ms",
+                        tags={
+                            "tool": tool_call.name,
+                            "success": str(result.success),
+                        },
+                    )
+
+            # Run after_tool hooks with observability
+            for hook in self.lifecycle_hooks:
+                hook_span = None
+                if self.observability_provider:
+                    hook_span = await self.observability_provider.create_span(
+                        "agent.hook.after_tool",
+                        attributes={
+                            "hook": hook.__class__.__name__,
+                            "tool": tool_call.name,
+                        },
+                    )
+
+                modified_result = await hook.after_tool(result)
+                if modified_result is not None:
+                    result = modified_result
+
+                if self.observability_provider and hook_span:
+                    hook_span.set_attribute(
+                        "modified_result", modified_result is not None
+                    )
+                    await self.observability_provider.end_span(hook_span)
+                    if hook_span.duration_ms():
+                        await self.observability_provider.record_metric(
+                            "agent.hook.duration",
+                            hook_span.duration_ms() or 0,
+                            "ms",
+                            tags={
+                                "hook": hook.__class__.__name__,
+                                "phase": "after_tool",
+                                "tool": tool_call.name,
+                            },
+                        )
+
+            # Update status card to show completion
+            final_status = "success" if result.success else "error"
+            final_description = (
+                f"Tool completed successfully"
+                if result.success
+                else f"Tool failed: {result.error or 'Unknown error'}"
+            )
+
+            has_tool_args_access_2 = self.config.ui_features.can_user_access_feature(
+                UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, user
+            )
+
+            # Audit UI feature access check
+            if (
+                self.audit_logger
+                and self.config.audit_config.enabled
+                and self.config.audit_config.log_ui_feature_checks
+            ):
+                await self.audit_logger.log_ui_feature_access(
+                    user=user,
+                    feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS,
+                    access_granted=has_tool_args_access_2,
+                    required_groups=self.config.ui_features.feature_group_access.get(
+                        UiFeature.UI_FEATURE_SHOW_TOOL_ARGUMENTS, []
+                    ),
+                    conversation_id=conversation.id,
+                    request_id=request_id,
+                )
+
+            if has_tool_args_access_2:
+                yield UiComponent(
+                    rich_component=tool_status_card.set_status(
+                        final_status, final_description
+                    ),
+                    simple_component=SimpleTextComponent(text=final_description),
+                )
+
+            has_tool_names_access_2 = self.config.ui_features.can_user_access_feature(
+                UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, user
+            )
+
+            # Audit UI feature access check
+            if (
+                self.audit_logger
+                and self.config.audit_config.enabled
+                and self.config.audit_config.log_ui_feature_checks
+            ):
+                await self.audit_logger.log_ui_feature_access(
+                    user=user,
+                    feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_NAMES,
+                    access_granted=has_tool_names_access_2,
+                    required_groups=self.config.ui_features.feature_group_access.get(
+                        UiFeature.UI_FEATURE_SHOW_TOOL_NAMES, []
+                    ),
+                    conversation_id=conversation.id,
+                    request_id=request_id,
+                )
+
+            if has_tool_names_access_2:
+                # Update tool task to completed
+                yield UiComponent(  # type: ignore
+                    rich_component=TaskTrackerUpdateComponent.update_task(
+                        tool_task.id,
+                        status="completed",
+                        detail=f"Tool {'completed successfully' if result.success else 'return an error'}",
+                    )
+                )
+
+            # Yield tool result
+            if result.ui_component:
+                # For errors, check if user has access to see error details
+                if not result.success:
+                    has_tool_error_access = (
+                        self.config.ui_features.can_user_access_feature(
+                            UiFeature.UI_FEATURE_SHOW_TOOL_ERROR, user
+                        )
+                    )
+
+                    # Audit UI feature access check
+                    if (
+                        self.audit_logger
+                        and self.config.audit_config.enabled
+                        and self.config.audit_config.log_ui_feature_checks
+                    ):
+                        await self.audit_logger.log_ui_feature_access(
+                            user=user,
+                            feature_name=UiFeature.UI_FEATURE_SHOW_TOOL_ERROR,
+                            access_granted=has_tool_error_access,
+                            required_groups=self.config.ui_features.feature_group_access.get(
+                                UiFeature.UI_FEATURE_SHOW_TOOL_ERROR, []
+                            ),
+                            conversation_id=conversation.id,
+                            request_id=request_id,
+                        )
+
+                    if has_tool_error_access:
+                        yield result.ui_component
+                else:
+                    # Success results are always shown if they exist
+                    yield result.ui_component
+
+            # Collect tool result data
+            tool_results.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "content": (
+                        result.result_for_llm
+                        if result.success
+                        else result.error or "Tool execution failed"
+                    ),
+                    # Only a successful tool may end the turn. A failure
+                    # that ended it would strand the user with no answer
+                    # and no error to act on.
+                    "end_turn": bool(result.success and result.metadata.get(END_TURN)),
+                }
+            )
+
+        # Add tool responses to conversation
+        # For APIs that need all tool results in one message, this helps
+        for tool_result in tool_results:
+            tool_response_message = Message(
+                role="tool",
+                content=tool_result["content"],
+                tool_call_id=tool_result["tool_call_id"],
+            )
+            conversation.add_message(tool_response_message)
+
+        # A tool may end the turn rather than hand control back to
+        # the model. `request_clarification` has just put a question to
+        # the user, and the next thing that should happen is the user
+        # answering it -- not another LLM call, which would compose a
+        # reply to the assistant's own question.
+        #
+        # The tool messages above are appended first either way: an
+        # assistant message carrying tool_calls with no matching tool
+        # results is rejected by the provider on the next turn.
+        if any(entry.get("end_turn") for entry in tool_results):
+            yield UiComponent(  # type: ignore
+                rich_component=StatusBarUpdateComponent(
+                    status="idle",
+                    message="Waiting for your reply",
+                    detail="Ready for next message",
+                )
+            )
+            yield UiComponent(  # type: ignore
+                rich_component=ChatInputUpdateComponent(
+                    placeholder="Choose an option, or rephrase your question...",
+                    disabled=False,
+                )
+            )
+            state.iterations = tool_iterations
+            state.goto = GRAPH_END
+            return
+
+        # Rebuild request with tool responses
+        request = await self._build_llm_request(
+            conversation, tool_schemas, user, system_prompt
+        )
+
+        state.iterations = tool_iterations
+        state.request = request
+        state.goto = "llm_turn"
+
+    async def _node_answer(self, state: TurnState):
+        """Emit the final answer and end the turn."""
+        response = state.response
+        streamed_id = state.streamed_id
+        truncated = state.truncated
+        tool_iterations = state.iterations
+        conversation = state.conversation
+        user = state.user
+        context = state.context
+        request_id = state.request_id
+        conversation_id = state.conversation_id
+        ui_features_available = state.ui_features_available
+
+        # Update status to idle and set completion message
+        yield UiComponent(  # type: ignore
+            rich_component=StatusBarUpdateComponent(
+                status="idle",
+                message="Response complete",
+                detail="Ready for next message",
+            )
+        )
+
+        # Update chat input placeholder
+        yield UiComponent(  # type: ignore
+            rich_component=ChatInputUpdateComponent(
+                placeholder="Ask a follow-up question...", disabled=False
+            )
+        )
+
+        # Yield final text response
+        if response.content:
+            # Add assistant response to conversation
+            conversation.add_message(
+                Message(role="assistant", content=response.content)
+            )
+            # If the answer was streamed, this is the reconciliation:
+            # same id, full text, plus the simple payload the deltas
+            # withheld. Otherwise it is the original create path.
+            yield UiComponent(
+                rich_component=RichTextComponent(
+                    id=streamed_id or str(uuid.uuid4()),
+                    content=response.content,
+                    markdown=True,
+                    lifecycle=(
+                        ComponentLifecycle.UPDATE
+                        if streamed_id
+                        else ComponentLifecycle.CREATE
+                    ),
+                ),
+                simple_component=SimpleTextComponent(text=response.content),
+            )
+
+            if truncated:
+                # A separate component rather than text appended to the
+                # answer, so it does not end up in the message saved above
+                # and fed back on the next turn.
+                cutoff_notice = (
+                    "⚠️ This answer was cut off at the response length "
+                    "limit -- ask me to continue and I'll pick up where I "
+                    "left off."
+                )
+                yield UiComponent(
+                    rich_component=RichTextComponent(
+                        content=cutoff_notice, markdown=True
+                    ),
+                    simple_component=SimpleTextComponent(text=cutoff_notice),
+                )
+        else:
+            # No content and no tool call. Without this the turn ends with
+            # status-bar updates and nothing in the transcript, which reads
+            # to the user as a hang. The empty turn is deliberately not
+            # written to the conversation: an empty assistant message in
+            # history degrades the next call.
+            logger.warning(
+                "LLM returned empty content with no tool calls "
+                f"(finish_reason={response.finish_reason!r}, "
+                f"iteration={tool_iterations})"
+            )
+            if streamed_id:
+                # Cannot normally happen -- content only accumulates --
+                # but leaving a half-written bubble next to the fallback
+                # would be worse than one extra frame.
+                yield UiComponent(  # type: ignore
+                    rich_component=RichTextComponent(
+                        id=streamed_id,
+                        content="",
+                        markdown=True,
+                        lifecycle=ComponentLifecycle.REMOVE,
+                    )
+                )
+            empty_notice = (
+                "I wasn't able to produce an answer for that. Could you "
+                "rephrase the question, or add a bit more detail?"
+            )
+            yield UiComponent(
+                rich_component=RichTextComponent(content=empty_notice, markdown=True),
+                simple_component=SimpleTextComponent(text=empty_notice),
+            )
+        state.goto = GRAPH_END
+        return
+
+    def _default_turn_graph(self) -> TurnGraph:
+        """The graph a turn runs when the caller supplied none.
+
+        Built per turn rather than cached on the instance: it is cheap, and a
+        graph that outlived a request would be shared mutable state across
+        concurrent turns of the same workspace.
+        """
+        return TurnGraph(
+            [
+                CallableTurnNode("llm_turn", self._node_llm_turn),
+                CallableTurnNode("tools", self._node_tools),
+                CallableTurnNode("answer", self._node_answer),
+            ],
+            entry="llm_turn",
+            edges={"llm_turn": GRAPH_END, "tools": "llm_turn", "answer": GRAPH_END},
+        )

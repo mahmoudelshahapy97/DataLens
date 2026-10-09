@@ -224,6 +224,73 @@
   .stat { display: inline-block; margin-inline-end: 18px; }
   .stat b { display: block; font-size: 1.15rem; }
 
+  /* -- the overview and the audit trail -------------------------------- */
+
+  /* auto-fit rather than a fixed count: the tile row is five wide for a
+     platform admin and four for a workspace admin, and neither should have to
+     know about the other. */
+  .kpi-row {
+    display: grid; gap: 12px; margin-bottom: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  }
+  .kpi {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+  }
+  .kpi .k {
+    color: var(--muted); font-size: .6875rem; font-weight: 650;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  /* Tabular figures: a column of counts that shifts sideways as the digits
+     change is hard to compare at a glance, which is the only thing a KPI row
+     is for. */
+  .kpi .v {
+    font-size: 1.6rem; font-weight: 650; margin-top: 5px; line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+  }
+  .kpi .n { color: var(--muted); font-size: .75rem; margin-top: 3px; }
+
+  .split {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+  /* <plotly-chart> sizes itself to layout.height, but it measures after the
+     first paint -- without a floor here the card collapses to its padding and
+     the chart is drawn into nothing. */
+  .chart-card plotly-chart { display: block; min-height: 240px; }
+
+  .bar {
+    height: 8px; border-radius: 999px; background: var(--surface-2);
+    overflow: hidden; margin-top: 8px;
+  }
+  .bar > span { display: block; height: 100%; background: var(--good); }
+
+  .feed { list-style: none; margin: 0; padding: 0; }
+  .feed li { border-bottom: 1px solid var(--border); }
+  .feed li:last-child { border-bottom: 0; }
+  .feed button {
+    width: 100%; text-align: start; background: transparent; border: 0;
+    padding: 9px 2px; cursor: pointer; font: inherit; color: inherit;
+    display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  }
+  .feed button:hover .action { color: var(--primary); }
+  .feed .action { font-weight: 600; }
+  .feed .when { margin-inline-start: auto; color: var(--muted); font-size: .75rem; }
+
+  .filters {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+    margin-bottom: 14px;
+  }
+  .filters > div { display: flex; flex-direction: column; }
+  .filters label { margin: 0 0 4px; }
+  .filters select, .filters input { width: auto; min-width: 150px; }
+  .filters .check { flex-direction: row; align-items: center; gap: 7px; padding-bottom: 8px; }
+  .filters .check label { margin: 0; }
+
+  table.data tr.expandable { cursor: pointer; }
+  table.data tr.expandable:hover td { background: var(--surface-2); }
+  table.data tr.detail td { padding-top: 0; }
+
   /* Right-to-left. The interface mirrors; SQL, identifiers and connection
      strings do not -- they read left-to-right in every language. */
   [dir="rtl"] pre,

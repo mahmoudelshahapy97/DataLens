@@ -230,14 +230,57 @@ class RelationshipMetadata(BaseModel):
     tenant_id: str = "default"
     data_source_id: str = "default"
 
+    # -- Provenance. A declared foreign key is a fact; a join inferred from
+    #    column naming is a guess until somebody confirms it, and the two must
+    #    not look alike to the model or to the join-path finder.
+    origin: str = Field(
+        default="declared",
+        description="declared (a foreign key or curated relationship) | "
+        "inferred (guessed by the scanner from column names and types)",
+    )
+    confidence: Optional[float] = Field(
+        default=None,
+        description="Inferred relationships only: 0-1, how sure the scanner is.",
+    )
+    review_status: str = Field(
+        default="accepted",
+        description="accepted | proposed | rejected. Declared relationships are "
+        "accepted; inferred ones start proposed until an admin decides.",
+    )
+
+    @property
+    def is_usable(self) -> bool:
+        """Whether this edge may reach a prompt or a join path.
+
+        Accepted edges always; rejected never; a proposed (unreviewed) inferred
+        edge only when the scanner was confident -- a workspace whose database
+        declares no foreign keys at all should not have to review every join
+        before the agent can see any.
+        """
+        if self.review_status == "rejected":
+            return False
+        if self.review_status == "accepted":
+            return True
+        return (self.confidence or 0.0) >= INFERRED_MIN_CONFIDENCE
+
+    @property
+    def is_unconfirmed(self) -> bool:
+        return self.origin == "inferred" and self.review_status != "accepted"
+
     def describe(self) -> str:
         line = (
             f"- {self.from_table}.{self.from_column} -> "
             f"{self.to_table}.{self.to_column} ({self.join_type})"
         )
+        if self.is_unconfirmed:
+            line += " [inferred from column names, not a declared foreign key]"
         if self.description:
             line += f" -- {self.description}"
         return line
+
+
+#: Confidence at which an unreviewed inferred relationship is used anyway.
+INFERRED_MIN_CONFIDENCE = 0.8
 
 
 class SchemaContext(BaseModel):
@@ -254,6 +297,22 @@ class SchemaContext(BaseModel):
     char_count: int = 0
     total_tables: int = 0
     included_tables: int = 0
+    bridge_tables: List[str] = Field(
+        default_factory=list,
+        description="Search strategy only: tables added because the join tree "
+        "connecting the selected tables runs through them.",
+    )
+    hinted_tables: List[str] = Field(
+        default_factory=list,
+        description="Tables added because the question named a business term, "
+        "metric or table linked to them.",
+    )
+    tables: List[TableMetadata] = Field(
+        default_factory=list,
+        exclude=True,
+        description="The selected tables themselves, for callers that annotate "
+        "the rendered text (core columns). Not serialized.",
+    )
 
     @property
     def is_partial(self) -> bool:
@@ -268,6 +327,7 @@ class ScanReport(BaseModel):
     columns_profiled: int = 0
     categories_found: int = 0
     relationships_found: int = 0
+    relationships_inferred: int = 0
     duration_ms: float = 0.0
     errors: List[str] = Field(default_factory=list)
 
@@ -278,6 +338,8 @@ class ScanReport(BaseModel):
             f"enum-like columns and {self.relationships_found} relationships "
             f"in {self.duration_ms / 1000:.1f}s"
         )
+        if self.relationships_inferred:
+            line += f" ({self.relationships_inferred} of them inferred)"
         if self.errors:
             line += f" ({len(self.errors)} errors)"
         return line

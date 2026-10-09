@@ -1,0 +1,426 @@
+{
+  "total": 1222899,
+  "video": "/mnt/c/Users/User/Desktop/text-to-sql-multi-tenant/best/vanna/artifacts/ask-demo/ask-full.webm",
+  "segments": [
+    {
+      "kind": "nav",
+      "from": 1,
+      "to": 5410,
+      "label": "sign in"
+    },
+    {
+      "kind": "typing",
+      "from": 8225,
+      "to": 10329,
+      "label": "Which 5 customers spent the most in total?"
+    },
+    {
+      "kind": "waiting",
+      "from": 10329,
+      "to": 81674,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 81694,
+      "to": 88769,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 88787,
+      "to": 90574,
+      "label": "Which countries are they from?"
+    },
+    {
+      "kind": "waiting",
+      "from": 90574,
+      "to": 104267,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 104284,
+      "to": 112034,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 112392,
+      "to": 114219,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 114228,
+      "to": 116624,
+      "label": "What are the top 5 genres by number of tracks?"
+    },
+    {
+      "kind": "waiting",
+      "from": 116624,
+      "to": 145299,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 145318,
+      "to": 152745,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 152770,
+      "to": 155548,
+      "label": "Now rank those same genres by revenue instead."
+    },
+    {
+      "kind": "waiting",
+      "from": 155548,
+      "to": 173989,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 174009,
+      "to": 181880,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 182206,
+      "to": 184024,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 184034,
+      "to": 186353,
+      "label": "How many invoices were issued in each year?"
+    },
+    {
+      "kind": "waiting",
+      "from": 186353,
+      "to": 241583,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 241617,
+      "to": 249129,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 249175,
+      "to": 252246,
+      "label": "Which of those years had the highest total revenue?"
+    },
+    {
+      "kind": "waiting",
+      "from": 252246,
+      "to": 275278,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 275293,
+      "to": 283603,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 284014,
+      "to": 285838,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 285860,
+      "to": 288520,
+      "label": "Who are the top 5 artists by number of albums?"
+    },
+    {
+      "kind": "waiting",
+      "from": 288520,
+      "to": 376688,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 376708,
+      "to": 384992,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 385017,
+      "to": 387335,
+      "label": "How many tracks does each of them have?"
+    },
+    {
+      "kind": "waiting",
+      "from": 387335,
+      "to": 417763,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 417775,
+      "to": 428010,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 428385,
+      "to": 430209,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 430219,
+      "to": 432953,
+      "label": "What is the average invoice total by country?"
+    },
+    {
+      "kind": "waiting",
+      "from": 432953,
+      "to": 494182,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 494196,
+      "to": 501722,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 501743,
+      "to": 504449,
+      "label": "Which of those countries has the fewest invoices?"
+    },
+    {
+      "kind": "waiting",
+      "from": 504449,
+      "to": 523799,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 523821,
+      "to": 531272,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 531535,
+      "to": 533362,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 533373,
+      "to": 536172,
+      "label": "List the 5 longest tracks with their album names."
+    },
+    {
+      "kind": "waiting",
+      "from": 536172,
+      "to": 580699,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 580714,
+      "to": 588720,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 588763,
+      "to": 590735,
+      "label": "What genre is each of them?"
+    },
+    {
+      "kind": "waiting",
+      "from": 590735,
+      "to": 636144,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 636170,
+      "to": 644158,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 644440,
+      "to": 646272,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 646283,
+      "to": 648965,
+      "label": "How much revenue did each sales support agent generate?"
+    },
+    {
+      "kind": "waiting",
+      "from": 648965,
+      "to": 772642,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 772664,
+      "to": 780991,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 781050,
+      "to": 784147,
+      "label": "Which one of them handles the most customers?"
+    },
+    {
+      "kind": "waiting",
+      "from": 784148,
+      "to": 799132,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 799174,
+      "to": 807986,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 808376,
+      "to": 810215,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 810230,
+      "to": 812480,
+      "label": "Which playlists have the most tracks?"
+    },
+    {
+      "kind": "waiting",
+      "from": 812480,
+      "to": 928308,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 928332,
+      "to": 936112,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 936133,
+      "to": 938672,
+      "label": "What is the total playing time of the biggest one?"
+    },
+    {
+      "kind": "waiting",
+      "from": 938672,
+      "to": 1001594,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 1001619,
+      "to": 1009791,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 1010162,
+      "to": 1011992,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 1012006,
+      "to": 1014585,
+      "label": "What are the 5 best selling tracks by quantity sold?"
+    },
+    {
+      "kind": "waiting",
+      "from": 1014585,
+      "to": 1098524,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 1098539,
+      "to": 1106747,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 1106765,
+      "to": 1108885,
+      "label": "Which albums are those tracks from?"
+    },
+    {
+      "kind": "waiting",
+      "from": 1108885,
+      "to": 1134102,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 1134131,
+      "to": 1143280,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "nav",
+      "from": 1143764,
+      "to": 1145622,
+      "label": "new conversation"
+    },
+    {
+      "kind": "typing",
+      "from": 1145632,
+      "to": 1148000,
+      "label": "How many customers are there in each country?"
+    },
+    {
+      "kind": "waiting",
+      "from": 1148000,
+      "to": 1185364,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 1185380,
+      "to": 1193342,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 1193372,
+      "to": 1196464,
+      "label": "Show only the countries with more than 4 customers."
+    },
+    {
+      "kind": "waiting",
+      "from": 1196464,
+      "to": 1211787,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 1211807,
+      "to": 1220016,
+      "label": "Follow-up result"
+    }
+  ]
+}

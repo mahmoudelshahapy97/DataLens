@@ -20,7 +20,7 @@ database/
 ```
 
 `migrations/` is hand-written and is the source of truth for the schema. The other
-two are **generated**, by `tools/export_sql_schema.py`, and rebuilding an empty
+two are **generated**, by `backend/tools/export_sql_schema.py`, and rebuilding an empty
 database from them is two commands:
 
 ```bash
@@ -80,8 +80,8 @@ is a step to forget.
 3. Do not renumber an existing file. The version is recorded in the ledger of every
    database that has run it, so changing it means the migration runs twice.
 
-`tests/test_migrations.py` covers discovery, ordering and the lock, and
-`tests/test_concurrent_boot.py` covers several replicas booting at once. Both run
+`backend/tests/test_migrations.py` covers discovery, ordering and the lock, and
+`backend/tests/test_concurrent_boot.py` covers several replicas booting at once. Both run
 without a database except where marked `integration`.
 
 ## The configuration catalog
@@ -105,7 +105,7 @@ files ──import──▶ config_files ──▶ ConfigStore + cache ──▶
 ```
 
 Once an administrator has edited a cube through the API, the files are the stale
-copy. `tools/import_config_files.py` overwrites the catalog from them, so running
+copy. `backend/tools/import_config_files.py` overwrites the catalog from them, so running
 it after that is a deliberate act, not a routine one — and the boot-time bootstrap
 only ever fills an **empty** catalog, so a restart cannot do it by accident.
 
@@ -113,9 +113,9 @@ Three commands:
 
 | | |
 |---|---|
-| `python tools/seed_database.py` | migrate, import, regenerate this directory |
-| `python tools/import_config_files.py --dry-run` | what would change, without writing |
-| `python tools/export_sql_schema.py` | regenerate `sql_schema.sql` and `seed/` |
+| `python backend/tools/seed_database.py` | migrate, import, regenerate this directory |
+| `python backend/tools/import_config_files.py --dry-run` | what would change, without writing |
+| `python backend/tools/export_sql_schema.py` | regenerate `sql_schema.sql` and `seed/` |
 
 ### What is not in here, and why
 

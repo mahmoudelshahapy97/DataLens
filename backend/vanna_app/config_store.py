@@ -561,7 +561,7 @@ class PostgresConfigStore:
     # -- boot and CLI paths --------------------------------------------
     #
     # The importer runs before there is an event loop -- from `create_app`, and
-    # from `tools/` -- and it runs *once*, over a few dozen small files. These
+    # from `backend/tools/` -- and it runs *once*, over a few dozen small files. These
     # take the synchronous route through `AppDatabase` for that reason.
     #
     # It matters more than it looks: an `asyncio.Semaphore` binds itself to the

@@ -10,7 +10,6 @@
   "chat.helpful": "Helpful",
   "chat.notHelpful": "Not helpful",
   "chat.thanks": "Thanks for the feedback",
-
   "status.sending": "Sending message...",
   "status.working": "Generating response",
   "status.sent": "Question sent, working on the answer",
@@ -23,5 +22,12 @@
   "status.unreachable": "Unable to reach server",
   "status.sendFailed": "Failed to send message",
   "status.unknownError": "Unknown error",
-  "status.seeResponse": "See the response area."
+  "status.seeResponse": "See the response area.",
+  "cmd.title": "Commands",
+  "cmd.help": "What this assistant can do",
+  "cmd.status": "Connection, tools and memory status",
+  "cmd.setup": "What's configured and what's missing",
+  "cmd.memorise": "Save something for it to remember",
+  "cmd.memories": "Recent things it has remembered",
+  "cmd.delete": "Forget one memory by id"
 }

@@ -1,5 +1,0 @@
-schema_version: 1
-name: chinook
-dialect: postgres
-fanout_guard: warn
-description: Semantic layer over the chinook sample database.

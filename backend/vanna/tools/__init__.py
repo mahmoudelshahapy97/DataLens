@@ -1,20 +1,5 @@
 """Built-in tool implementations."""
 
-from .file_system import (
-    CommandResult,
-    FileSystem,
-    ListFilesTool,
-    LocalFileSystem,
-    ReadFileTool,
-    SearchFilesTool,
-    WriteFileTool,
-    create_file_system_tools,
-)
-from .python import (
-    PipInstallTool,
-    RunPythonFileTool,
-    create_python_tools,
-)
 from .propose_write import (
     ConfirmWriteArgs,
     ConfirmWriteTool,
@@ -37,21 +22,18 @@ from .dashboard import (
     create_dashboard_tools,
 )
 from .visualize_data import VisualizeDataTool
+from .calculator import CalculatorArgs, CalculatorTool
+from .knowledge import SearchKnowledgeArgs, SearchKnowledgeTool
+from .query_history import SearchQueryHistoryArgs, SearchQueryHistoryTool
+from .value_dictionary import ListKnownValuesArgs, ListKnownValuesTool
+from .core_columns import CheckCoreColumnsArgs, CheckCoreColumnsTool
+from .joins import SuggestJoinsArgs, SuggestJoinsTool
+from .profile import ProfileColumnArgs, ProfileColumnTool
+from .timeseries import AnalyzeTimeseriesArgs, AnalyzeTimeseriesTool
+from .compare import ComparePeriodsArgs, ComparePeriodsTool
+from .clarify import RequestClarificationArgs, RequestClarificationTool
 
 __all__ = [
-    # File system
-    "FileSystem",
-    "LocalFileSystem",
-    "ListFilesTool",
-    "SearchFilesTool",
-    "ReadFileTool",
-    "WriteFileTool",
-    "create_file_system_tools",
-    "CommandResult",
-    # Python tools
-    "RunPythonFileTool",
-    "PipInstallTool",
-    "create_python_tools",
     # SQL
     "RunSqlTool",
     "CheckColumnValuesTool",
@@ -61,7 +43,21 @@ __all__ = [
     "SearchTablesTool",
     "GetTableSchemaTool",
     "create_schema_tools",
+    "SuggestJoinsArgs",
+    "SuggestJoinsTool",
+    "ProfileColumnArgs",
+    "ProfileColumnTool",
+    # Analysis over results
+    "AnalyzeTimeseriesArgs",
+    "AnalyzeTimeseriesTool",
+    "ComparePeriodsArgs",
+    "ComparePeriodsTool",
+    # Asking the user
+    "RequestClarificationArgs",
+    "RequestClarificationTool",
     "ColumnValuesArgs",
+    "CheckCoreColumnsArgs",
+    "CheckCoreColumnsTool",
     # Determinism / time
     "SystemTimeTool",
     "SystemTimeArgs",
@@ -76,4 +72,13 @@ __all__ = [
     "ConfirmWriteTool",
     "ProposeWriteTool",
     "create_write_tools",
+    # Additional tools over existing services
+    "CalculatorArgs",
+    "CalculatorTool",
+    "SearchKnowledgeArgs",
+    "SearchKnowledgeTool",
+    "SearchQueryHistoryArgs",
+    "SearchQueryHistoryTool",
+    "ListKnownValuesArgs",
+    "ListKnownValuesTool",
 ]

@@ -54,13 +54,15 @@ pymysql==1.2.0
 oracledb==4.0.2
 duckdb==1.5.5
 clickhouse-connect==1.7.1
+# vanna/integrations/mssql/sql_runner.py imports this directly; it was missing
+# here, so MSSQL support had no installable dependency for it.
+pyodbc==5.3.0
 
 # -- vector retrieval --------------------------------------------------------
 qdrant-client==1.19.0
 
 # -- the library's own dependencies ------------------------------------------
 pydantic==2.13.4
-click==8.4.2
 pandas==2.3.3
 httpx==0.28.1
 PyYAML==6.0.3
@@ -70,4 +72,3 @@ sqlparse==0.6.0
 sqlglot==30.17.0
 sqlalchemy==2.0.52
 requests==2.34.2
-db-dtypes==1.7.1

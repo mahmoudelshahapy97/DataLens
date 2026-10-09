@@ -12,6 +12,7 @@ import {
   api,
   applyTheme,
   esc,
+  relative,
   roveFocus,
   setAuthFailureHandler,
   setHeaderProvider,
@@ -26,7 +27,7 @@ const THEME_KEY   = 'vanna.theme';
 
 let identity = null;
 let me = null;
-let tab = 'review';
+let tab = 'overview';
 let scope = null;                      // tenant currently being administered
 let cache = { examples: [], instructions: [], packs: [], tenants: [], users: [], starters: [], datasources: [], engines: [] };
 
@@ -119,11 +120,15 @@ function toast(message) {
 
 function tabsFor() {
   const list = [];
+  // Every admin gets the overview and the audit trail: both surfaces scope
+  // themselves server-side, so there is nothing to hide behind a tier here.
+  list.push(['overview', t('tab.overview')]);
   if (me && me.is_platform_admin) list.push(['tenants', t('tab.tenants')]);
   if (me && me.is_platform_admin) list.push(['accounts', t('tab.accounts')]);
   list.push(['members', t('tab.members')]);
   list.push(['permissions', t('tab.permissions')]);
   list.push(['billing', t('tab.billing')]);
+  list.push(['audit', t('tab.audit')]);
   list.push(['review', t('tab.review')]);
   list.push(['verified', t('tab.verified')]);
   list.push(['domains', t('tab.domains')]);
@@ -152,6 +157,9 @@ function paintTabs() {
 roveFocus(el('tabs'), 'button[role="tab"]');
 
 function showTab(next) {
+  // Without this the 30-second poll keeps firing against a panel that is no
+  // longer on screen, and stacks another one every time the tab is revisited.
+  if (next !== 'overview') stopAutoRefresh();
   tab = next;
   paintTabs();
   render();
@@ -256,6 +264,8 @@ function wireScopePicker() {
 function render() {
   const target = el('content');
 
+  if (tab === 'overview') return renderOverview(target);
+  if (tab === 'audit')    return renderAudit(target);
   if (tab === 'tenants')  return renderTenants(target);
   if (tab === 'accounts') return renderAccounts(target);
   if (tab === 'members')  return renderMembers(target);
@@ -268,6 +278,708 @@ function render() {
   if (tab === 'rules')    return renderRules(target);
   if (tab === 'library')  return renderLibrary(target);
   return renderAdd(target);
+}
+
+// -- overview --------------------------------------------------------------
+//
+// The landing tab. Every number on it was already being collected -- the
+// console simply never asked -- so this is a screen over existing data rather
+// than new measurement.
+//
+// It fetches its own payload rather than reading `cache`, like renderBilling
+// and renderPermissions do: refresh() reloads that on every tab switch, and the
+// overview wants a different window and a different workspace from the one the
+// rest of the console is scoped to.
+
+/** Handle of the 30-second poll, when auto-refresh is on. */
+let overviewTimer = null;
+
+//: `tenant` is null until the first paint decides: a platform admin starts on
+//: the whole platform, everybody else on the only workspace they can see.
+let overviewState = { tenant: null, days: 30, auto: false };
+
+function stopAutoRefresh() {
+  if (overviewTimer) { clearInterval(overviewTimer); overviewTimer = null; }
+}
+
+function dashTenant() {
+  if (overviewState.tenant === null) {
+    overviewState.tenant = me && me.is_platform_admin ? '' : scope;
+  }
+  return overviewState.tenant;
+}
+
+/** Locale-aware integers. A KPI row of raw digits is hard to read at a glance. */
+function num(value) {
+  return new Intl.NumberFormat(locale).format(Number(value) || 0);
+}
+
+/**
+ * A workspace row's counts.
+ *
+ * `list_tenants_with_usage` nests them under `usage` rather than putting them
+ * beside `id` and `name`. Every field defaults to 0 here so one accessor covers
+ * both that and a row the endpoint omitted them from.
+ */
+function usageOf(workspace) {
+  const usage = (workspace && workspace.usage) || {};
+  return {
+    questions: Number(usage.questions) || 0,
+    succeeded: Number(usage.succeeded) || 0,
+    liked: Number(usage.liked) || 0,
+    disliked: Number(usage.disliked) || 0,
+    members: Number(usage.members) || 0,
+    active_users: Number(usage.active_users) || 0,
+    last_activity: usage.last_activity || null,
+  };
+}
+
+/** A rate of `null` is "nothing was asked", which is not the same as zero. */
+function pct(rate) {
+  return rate === null || rate === undefined ? '—' : `${(rate * 100).toFixed(1)}%`;
+}
+
+function usd(dollars) {
+  if (dollars === null || dollars === undefined) return '—';
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' })
+    .format(Number(dollars) || 0);
+}
+
+function kpiCard(key, value, note) {
+  return `
+    <div class="kpi">
+      <div class="k">${esc(t(key))}</div>
+      <div class="v">${esc(value)}</div>
+      ${note ? `<div class="n">${esc(note)}</div>` : ''}
+    </div>`;
+}
+
+/**
+ * Put a Plotly figure in a card.
+ *
+ * Two things this has to get right, both of which fail silently otherwise.
+ *
+ * `data` and `layout` are element *properties*, not attributes -- the component
+ * takes objects, and an attribute would arrive as the string "[object Object]".
+ *
+ * And they may only be assigned once the element has upgraded. Setting a
+ * property on a custom element the browser has not defined yet creates an own
+ * property that shadows the accessor the class installs a moment later, so the
+ * chart renders empty with nothing in the console to say why.
+ */
+async function mountChart(hostId, data, layout) {
+  if (!el(hostId)) return;
+  await customElements.whenDefined('plotly-chart');
+
+  const host = el(hostId);
+  if (!host) return;              // the tab was repainted while we waited
+
+  const chart = document.createElement('plotly-chart');
+  chart.theme = document.documentElement.getAttribute('data-theme') === 'dark'
+    ? 'dark' : 'light';
+  chart.data = data;
+  chart.layout = {
+    height: 240,
+    margin: { t: 12, r: 12, b: 34, l: 46 },
+    // The card already paints a surface; an opaque plot background would sit on
+    // it as a lighter rectangle in dark mode and a darker one in light.
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    showlegend: false,
+    ...layout,
+  };
+  host.replaceChildren(chart);
+}
+
+/** The palette, read from the stylesheet so the charts follow the theme. */
+function chartColors() {
+  const style = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => (style.getPropertyValue(name) || fallback).trim();
+  return {
+    primary: read('--primary', '#4f46e5'),
+    good: read('--good', '#059669'),
+    bad: read('--bad', '#dc2626'),
+    muted: read('--muted', '#64748b'),
+    border: read('--border', '#e2e8f0'),
+  };
+}
+
+function dashScopePicker() {
+  // Only a platform admin can look past their own workspace; for anybody else
+  // there is nothing to pick and the server would refuse the attempt anyway.
+  if (!me.is_platform_admin) return '';
+  const tenant = dashTenant();
+  return `
+    <div>
+      <label for="dash-scope">${esc(t('ov.workspace'))}</label>
+      <select id="dash-scope">
+        <option value="" ${tenant === '' ? 'selected' : ''}>${esc(t('ov.allWorkspaces'))}</option>
+        ${cache.tenants.map((ws) => (
+          `<option value="${esc(ws.id)}" ${ws.id === tenant ? 'selected' : ''}>${esc(ws.name)}</option>`
+        )).join('')}
+      </select>
+    </div>`;
+}
+
+function wireDashScope(repaint) {
+  const picker = el('dash-scope');
+  if (!picker) return;
+  picker.onchange = () => { overviewState.tenant = picker.value; repaint(); };
+}
+
+async function renderOverview(target) {
+  // Repainting is what the poll does, so clear it first: otherwise a refresh
+  // that lands while auto-refresh is on leaves two timers running.
+  stopAutoRefresh();
+
+  const params = new URLSearchParams({ days: String(overviewState.days) });
+  const tenant = dashTenant();
+  if (tenant) params.set('tenant_id', tenant);
+
+  let data;
+  try {
+    data = await api(`/api/vanna/v2/admin/overview?${params}`);
+  } catch (error) {
+    if (tab !== 'overview') return;
+    target.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    return;
+  }
+
+  // Recorded before the guard below. The audit tab builds its filter from this
+  // vocabulary, and dropping a response that already arrived just because the
+  // operator has moved on left that filter with no options at all.
+  overviewActions = data.actions || overviewActions;
+
+  // The console opens on this tab, so its fetch is in flight while the operator
+  // is already clicking somewhere else. Writing the result into #content
+  // regardless would paint the overview over whichever tab they landed on --
+  // and the tab strip would still say they were on that other one. Only the
+  // *painting* is guarded; the data itself is fine to keep.
+  if (tab !== 'overview') return;
+
+  const kpis = data.kpis || {};
+  const platformWide = data.scope === '';
+  const windows = [7, 30, 90];
+
+  target.innerHTML = `
+    <div class="filters">
+      ${dashScopePicker()}
+      <div>
+        <label for="dash-days">${esc(t('ov.window'))}</label>
+        <select id="dash-days">
+          ${windows.map((n) => (
+            `<option value="${n}" ${n === overviewState.days ? 'selected' : ''}>${esc(t('ov.lastDays', { n }))}</option>`
+          )).join('')}
+        </select>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="dash-auto" ${overviewState.auto ? 'checked' : ''} />
+        <label for="dash-auto">${esc(t('ov.autoRefresh'))}</label>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      ${platformWide
+        ? kpiCard('kpi.workspaces', num(kpis.workspaces),
+                  t('ov.activeOf', { n: num(kpis.active_workspaces) }))
+        : kpiCard('kpi.members', num(kpis.members))}
+      ${kpiCard('kpi.questions', num(kpis.questions), t('ov.lastDays', { n: data.window_days }))}
+      ${kpiCard('kpi.successRate', pct(kpis.success_rate),
+                t('ov.ofN', { n: num(kpis.succeeded) }))}
+      ${kpiCard('kpi.activeUsers', num(kpis.active_users))}
+      ${'cost_usd' in kpis ? kpiCard('kpi.spend', usd(kpis.cost_usd)) : ''}
+    </div>
+
+    <div class="split">
+      <div class="card chart-card">
+        <p class="q">${esc(t('ov.questionsPerDay'))}</p>
+        <div id="ov-series"><p class="muted small">${esc(t('common.loading'))}</p></div>
+      </div>
+      <div class="card chart-card">
+        <p class="q">${esc(platformWide ? t('ov.byWorkspace') : t('ov.feedback'))}</p>
+        <div id="ov-breakdown"><p class="muted small">${esc(t('common.loading'))}</p></div>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="card">
+        <p class="q">${esc(t('ov.recentActivity'))}</p>
+        ${renderFeed(data.recent || [])}
+      </div>
+      <div class="card">
+        <p class="q">${esc(t('ov.health'))}</p>
+        ${renderHealth(data, platformWide)}
+      </div>
+    </div>
+
+    ${platformWide ? renderWorkspaceTable(data.workspaces || []) : renderKnowledge(data)}
+  `;
+
+  paintOverviewCharts(data, platformWide);
+
+  wireDashScope(() => renderOverview(target));
+  el('dash-days').onchange = () => {
+    overviewState.days = Number(el('dash-days').value) || 30;
+    renderOverview(target);
+  };
+  el('dash-auto').onchange = () => {
+    overviewState.auto = el('dash-auto').checked;
+    if (overviewState.auto) startAutoRefresh(target); else stopAutoRefresh();
+  };
+  target.querySelectorAll('[data-goto]').forEach((button) => {
+    button.onclick = () => showTab(button.dataset.goto);
+  });
+
+  if (overviewState.auto) startAutoRefresh(target);
+}
+
+function startAutoRefresh(target) {
+  stopAutoRefresh();
+  overviewTimer = setInterval(() => {
+    // The tab can change without showTab being the thing that repaints, and a
+    // poll that outlives its panel writes into a detached node.
+    if (tab !== 'overview') { stopAutoRefresh(); return; }
+    renderOverview(target);
+  }, 30000);
+}
+
+function paintOverviewCharts(data, platformWide) {
+  const colors = chartColors();
+  const series = data.series || [];
+  const days = series.map((row) => row.day);
+
+  mountChart('ov-series', [
+    {
+      type: 'scatter', mode: 'lines', name: t('ov.questions'),
+      x: days, y: series.map((row) => row.questions),
+      line: { color: colors.primary, width: 2 },
+      fill: 'tozeroy', fillcolor: 'rgba(79,70,229,.12)',
+    },
+    {
+      type: 'scatter', mode: 'lines', name: t('ov.succeeded'),
+      x: days, y: series.map((row) => row.succeeded),
+      line: { color: colors.good, width: 1.5, dash: 'dot' },
+    },
+  ], { showlegend: true, legend: { orientation: 'h', y: -0.25 } });
+
+  if (platformWide) {
+    // Busiest first, and only as many as fit: a bar per workspace is unreadable
+    // past a dozen and this panel is a ranking, not an inventory.
+    // `list_tenants_with_usage` nests the counts under `usage`; read at the
+    // top level every one of them is `undefined`, which `num()` renders as a
+    // confident 0 -- indistinguishable from a workspace nobody used.
+    const top = [...(data.workspaces || [])]
+      .sort((a, b) => usageOf(b).questions - usageOf(a).questions)
+      .slice(0, 8)
+      .reverse();
+    mountChart('ov-breakdown', [{
+      type: 'bar', orientation: 'h',
+      y: top.map((ws) => ws.name || ws.id),
+      x: top.map((ws) => usageOf(ws).questions),
+      marker: { color: colors.primary },
+    }], { margin: { t: 12, r: 12, b: 34, l: 120 } });
+    return;
+  }
+
+  const kpis = data.kpis || {};
+  const liked = Number(kpis.liked) || 0;
+  const disliked = Number(kpis.disliked) || 0;
+  const unrated = Math.max(0, (Number(kpis.questions) || 0) - liked - disliked);
+  mountChart('ov-breakdown', [{
+    type: 'bar',
+    x: [t('ov.liked'), t('ov.disliked'), t('ov.unrated')],
+    y: [liked, disliked, unrated],
+    // Green/red is the right reading here -- this is the one chart in the
+    // product where the two colours mean approval and rejection literally.
+    marker: { color: [colors.good, colors.bad, colors.muted] },
+  }], {});
+}
+
+function renderFeed(events) {
+  if (!events.length) return `<p class="muted small">${esc(t('ov.noActivity'))}</p>`;
+  return `
+    <ul class="feed">
+      ${events.map((event) => `
+        <li>
+          <button type="button" data-goto="audit">
+            <span class="action">${esc(event.action)}</span>
+            ${event.target ? `<span class="mono small">${esc(event.target)}</span>` : ''}
+            <span class="muted small">${esc(event.actor_email || '')}</span>
+            <span class="when">${esc(relative(event.created_at, t, locale))}</span>
+          </button>
+        </li>`).join('')}
+    </ul>`;
+}
+
+/** `last_ok` is tri-state, and "never checked" must not read as "fine". */
+function healthTag(lastOk) {
+  if (lastOk === true) return `<span class="tag active">${esc(t('ov.healthOk'))}</span>`;
+  if (lastOk === false) return `<span class="tag inactive">${esc(t('ov.healthFailing'))}</span>`;
+  return `<span class="tag candidate">${esc(t('ov.healthUnknown'))}</span>`;
+}
+
+function renderHealth(data, platformWide) {
+  const sources = data.data_sources;
+  // Omitted rather than empty: this is a platform-admin surface, and a
+  // workspace admin should be told it is not theirs, not shown an empty list
+  // that reads as "no databases".
+  if (!sources) return `<p class="muted small">${esc(t('ov.healthPlatformOnly'))}</p>`;
+  if (!sources.length) {
+    return `<p class="muted small">${esc(platformWide ? t('ov.allHealthy') : t('ov.noSources'))}</p>`;
+  }
+  return `
+    <div class="scroll-x">
+      <table class="data">
+        <thead><tr>
+          ${platformWide ? `<th>${esc(t('ov.workspace'))}</th>` : ''}
+          <th>${esc(t('ov.source'))}</th><th>${esc(t('ov.status'))}</th>
+          <th>${esc(t('ov.checked'))}</th>
+        </tr></thead>
+        <tbody>
+          ${sources.map((source) => `
+            <tr>
+              ${platformWide ? `<td class="mono small">${esc(source.tenant_id)}</td>` : ''}
+              <td class="mono small">${esc(source.label || source.data_source_id)}</td>
+              <td>
+                ${healthTag(source.last_ok)}
+                ${source.last_error ? `<div class="muted small">${esc(source.last_error)}</div>` : ''}
+              </td>
+              <td class="muted small">${source.last_checked_at
+                ? esc(relative(source.last_checked_at, t, locale)) : esc(t('ov.never'))}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderWorkspaceTable(rows) {
+  if (!rows.length) return '';
+  return `
+    <div class="card scroll-x">
+      <p class="q">${esc(t('ov.perWorkspace'))}</p>
+      <table class="data">
+        <thead><tr>
+          <th>${esc(t('ov.workspace'))}</th><th>${esc(t('kpi.members'))}</th>
+          <th>${esc(t('kpi.questions'))}</th><th>${esc(t('kpi.successRate'))}</th>
+          <th>${esc(t('ov.feedback'))}</th><th>${esc(t('ov.lastActivity'))}</th>
+        </tr></thead>
+        <tbody>
+          ${[...rows].sort((a, b) => usageOf(b).questions - usageOf(a).questions).map((ws) => `
+            <tr>
+              <td>
+                ${esc(ws.name || ws.id)}
+                ${ws.is_active === false ? `<span class="tag inactive">${esc(t('ov.inactive'))}</span>` : ''}
+                <div class="mono small muted">${esc(ws.id)}</div>
+              </td>
+              <td>${num(usageOf(ws).members)}</td>
+              <td>${num(usageOf(ws).questions)}</td>
+              <td>${esc(pct(usageOf(ws).questions
+                ? usageOf(ws).succeeded / usageOf(ws).questions : null))}</td>
+              <td class="small">
+                <span style="color:var(--good)">▲ ${num(usageOf(ws).liked)}</span>
+                <span style="color:var(--bad)">▼ ${num(usageOf(ws).disliked)}</span>
+              </td>
+              <td class="muted small">${usageOf(ws).last_activity
+                ? esc(relative(usageOf(ws).last_activity, t, locale)) : esc(t('ov.never'))}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+/**
+ * Verified examples against the review queue.
+ *
+ * Counted from `cache`, which refresh() already loaded -- but that cache
+ * describes the workspace the *console* is scoped to, so the panel is only
+ * shown when the overview happens to be looking at the same one. Showing acme's
+ * review queue under a globex heading is worse than showing nothing.
+ */
+function renderKnowledge(data) {
+  if (data.scope !== scope) return '';
+  const verified = cache.examples.filter((e) => e.status === 'verified').length;
+  const candidates = cache.examples.filter((e) => e.status === 'candidate').length;
+  const total = verified + candidates;
+  return `
+    <div class="card">
+      <p class="q">${esc(t('ov.knowledge'))}</p>
+      <span class="stat"><b>${num(verified)}</b>${esc(t('ov.verified'))}</span>
+      <span class="stat"><b>${num(candidates)}</b>${esc(t('ov.candidates'))}</span>
+      <span class="stat"><b>${num(cache.instructions.length)}</b>${esc(t('ov.instructions'))}</span>
+      <div class="bar"><span style="width:${total ? (verified / total) * 100 : 0}%"></span></div>
+      ${candidates
+        ? `<div class="actions">
+             <button class="act" type="button" data-goto="review">${esc(t('ov.reviewQueue'))}</button>
+           </div>`
+        : ''}
+    </div>`;
+}
+
+// -- audit trail -----------------------------------------------------------
+//
+// `admin_audit` has recorded every privileged mutation since the beginning and
+// nothing ever read it back: the trail was write-only, which is the same as not
+// having one the first time somebody asks what happened.
+//
+// Two logs, because they answer different questions. The admin trail is what
+// operators did to the system; the access log is what the agent did on behalf
+// of users, and which of those attempts were refused.
+
+//: The audit filter's vocabulary, served by the overview rather than hardcoded
+//: here. Populated on the first overview paint, which is the landing tab.
+let overviewActions = [];
+
+/** Fetch the action vocabulary if nothing has painted the overview yet. */
+async function ensureActions() {
+  if (overviewActions.length) return;
+  try {
+    // days=1 -- this call is only wanted for `actions`, and there is no reason
+    // to make the database roll up a month to answer it.
+    const params = new URLSearchParams({ days: '1' });
+    const tenant = dashTenant();
+    if (tenant) params.set('tenant_id', tenant);
+    const body = await api(`/api/vanna/v2/admin/overview?${params}`);
+    overviewActions = body.actions || [];
+  } catch (error) {
+    // A filter with no options is a usable screen; a blank tab is not.
+    console.warn('Could not load the audit action list', error);
+  }
+}
+
+let auditState = {
+  view: 'admin', action: '', actor: '', limit: 100, denied: false, expanded: null,
+};
+
+/** The workspace the audit tab is reading, following the overview's picker. */
+function auditTenant() {
+  return dashTenant();
+}
+
+function auditQuery() {
+  const params = new URLSearchParams({ limit: String(auditState.limit) });
+  const tenant = auditTenant();
+  if (tenant) params.set('tenant_id', tenant);
+  if (auditState.view === 'admin') {
+    if (auditState.action) params.set('action', auditState.action);
+    if (auditState.actor) params.set('actor_email', auditState.actor);
+  } else if (auditState.denied) {
+    params.set('denied_only', 'true');
+  }
+  return params;
+}
+
+async function renderAudit(target) {
+  await ensureActions();
+  const adminView = auditState.view === 'admin';
+
+  // The access log is per-workspace by nature -- there is no platform-wide
+  // reading of it -- so "all workspaces" falls back to the console's own scope,
+  // and the panel says which workspace it is showing rather than implying all.
+  const accessTenant = auditTenant() || scope;
+
+  let rows = [];
+  let failure = '';
+  try {
+    const params = auditQuery();
+    if (!adminView) params.set('tenant_id', accessTenant);
+    const path = adminView ? 'audit' : 'access-log';
+    const body = await api(`/api/vanna/v2/admin/${path}?${params}`);
+    rows = body.events || [];
+  } catch (error) {
+    failure = error.message;
+  }
+
+  // Same race as the overview: this awaits, and the tab can change under it.
+  if (tab !== 'audit') return;
+
+  target.innerHTML = `
+    <div class="actions" style="margin:0 0 14px">
+      <button class="act ${adminView ? 'primary' : ''}" type="button" data-view="admin">
+        ${esc(t('audit.adminActions'))}
+      </button>
+      <button class="act ${adminView ? '' : 'primary'}" type="button" data-view="access">
+        ${esc(t('audit.accessLog'))}
+      </button>
+    </div>
+
+    ${adminView ? '' : `<div class="banner">${esc(t('audit.accessScope', { workspace: accessTenant }))}</div>`}
+
+    <div class="filters">
+      ${dashScopePicker()}
+      ${adminView ? `
+        <div>
+          <label for="audit-action">${esc(t('audit.action'))}</label>
+          <select id="audit-action">
+            <option value="">${esc(t('audit.allActions'))}</option>
+            ${overviewActions.map((action) => (
+              `<option value="${esc(action)}" ${action === auditState.action ? 'selected' : ''}>${esc(action)}</option>`
+            )).join('')}
+          </select>
+        </div>
+        <div>
+          <label for="audit-actor">${esc(t('audit.actor'))}</label>
+          <input id="audit-actor" type="search" value="${esc(auditState.actor)}"
+                 placeholder="${esc(t('audit.actorHint'))}" />
+        </div>` : `
+        <div class="check">
+          <input type="checkbox" id="audit-denied" ${auditState.denied ? 'checked' : ''} />
+          <label for="audit-denied">${esc(t('audit.deniedOnly'))}</label>
+        </div>`}
+      <div>
+        <label for="audit-limit">${esc(t('audit.limit'))}</label>
+        <select id="audit-limit">
+          ${[50, 100, 250, 500].map((n) => (
+            `<option value="${n}" ${n === auditState.limit ? 'selected' : ''}>${n}</option>`
+          )).join('')}
+        </select>
+      </div>
+      <div class="check">
+        <button class="act" type="button" id="audit-reset">${esc(t('audit.reset'))}</button>
+        ${adminView
+          ? `<button class="act" type="button" id="audit-export">${esc(t('audit.export'))}</button>`
+          : ''}
+      </div>
+    </div>
+
+    ${failure
+      ? `<div class="empty">${esc(failure)}</div>`
+      : (adminView ? adminTable(rows) : accessTable(rows))}
+  `;
+
+  target.querySelectorAll('[data-view]').forEach((button) => {
+    button.onclick = () => {
+      auditState.view = button.dataset.view;
+      auditState.expanded = null;
+      renderAudit(target);
+    };
+  });
+  wireDashScope(() => renderAudit(target));
+
+  const action = el('audit-action');
+  if (action) action.onchange = () => { auditState.action = action.value; renderAudit(target); };
+
+  const actor = el('audit-actor');
+  if (actor) {
+    actor.onchange = () => { auditState.actor = actor.value.trim(); renderAudit(target); };
+  }
+
+  const denied = el('audit-denied');
+  if (denied) denied.onchange = () => { auditState.denied = denied.checked; renderAudit(target); };
+
+  el('audit-limit').onchange = () => {
+    auditState.limit = Number(el('audit-limit').value) || 100;
+    renderAudit(target);
+  };
+  el('audit-reset').onclick = () => {
+    auditState = { ...auditState, action: '', actor: '', denied: false, expanded: null };
+    renderAudit(target);
+  };
+  const exporter = el('audit-export');
+  if (exporter) exporter.onclick = () => exportAudit();
+
+  target.querySelectorAll('tr.expandable').forEach((row) => {
+    row.onclick = () => {
+      auditState.expanded = auditState.expanded === row.dataset.key ? null : row.dataset.key;
+      renderAudit(target);
+    };
+  });
+}
+
+/** The expanded JSON under a row, or nothing. */
+function detailRow(key, span, payload) {
+  if (auditState.expanded !== key) return '';
+  return `
+    <tr class="detail">
+      <td colspan="${span}"><pre>${esc(JSON.stringify(payload ?? {}, null, 2))}</pre></td>
+    </tr>`;
+}
+
+function adminTable(rows) {
+  if (!rows.length) return `<div class="empty">${esc(t('audit.none'))}</div>`;
+  return `
+    <div class="card scroll-x">
+      <table class="data">
+        <thead><tr>
+          <th>${esc(t('audit.time'))}</th><th>${esc(t('audit.actor'))}</th>
+          <th>${esc(t('audit.action'))}</th><th>${esc(t('ov.workspace'))}</th>
+          <th>${esc(t('audit.target'))}</th><th>${esc(t('audit.ip'))}</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((event) => `
+            <tr class="expandable" data-key="${esc(event.id)}">
+              <td class="muted small" title="${esc(event.created_at || '')}">
+                ${esc(relative(event.created_at, t, locale))}
+              </td>
+              <td class="small">${esc(event.actor_email || '—')}</td>
+              <td><span class="mono small">${esc(event.action)}</span></td>
+              <td class="mono small">${esc(event.tenant_id || '—')}</td>
+              <td class="mono small">${esc(event.target || '—')}</td>
+              <td class="mono small muted">${esc(event.actor_ip || '—')}</td>
+            </tr>
+            ${detailRow(event.id, 6, event.details)}`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function accessTable(rows) {
+  if (!rows.length) return `<div class="empty">${esc(t('audit.none'))}</div>`;
+  return `
+    <div class="card scroll-x">
+      <table class="data">
+        <thead><tr>
+          <th>${esc(t('audit.time'))}</th><th>${esc(t('audit.actor'))}</th>
+          <th>${esc(t('audit.event'))}</th><th>${esc(t('audit.tool'))}</th>
+          <th>${esc(t('audit.outcome'))}</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((event) => `
+            <tr class="expandable" data-key="${esc(event.event_id)}">
+              <td class="muted small" title="${esc(event.created_at || '')}">
+                ${esc(relative(event.created_at, t, locale))}
+              </td>
+              <td class="small">${esc(event.user_email || '—')}</td>
+              <td class="mono small">${esc(event.event_type || '—')}</td>
+              <td class="mono small">${esc(event.tool_name || '—')}</td>
+              <td>${event.access_granted === false
+                ? `<span class="tag inactive">${esc(t('audit.denied'))}</span>`
+                : `<span class="tag active">${esc(t('audit.granted'))}</span>`}</td>
+            </tr>
+            ${detailRow(event.event_id, 5, event.payload)}`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+/**
+ * Download the trail as a spreadsheet.
+ *
+ * Fetched and handed over as a blob rather than opened in a new tab: the export
+ * carries the same filters as the table, and going through the normal fetch
+ * path means a refusal arrives as a message instead of a blank window.
+ */
+async function exportAudit() {
+  const tenant = auditTenant();
+  try {
+    const response = await fetch(`/api/vanna/v2/admin/audit.csv?${auditQuery()}`, {
+      credentials: 'include',
+      headers: tenant ? { 'X-Tenant-Id': tenant } : {},
+    });
+    if (!response.ok) throw new Error(`${response.status}`);
+
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `audit-${tenant || 'platform'}.csv`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast(t('audit.exported'));
+  } catch (error) {
+    toast(t('audit.exportFailed'));
+    console.error('CSV export failed', error);
+  }
 }
 
 // -- workspaces ------------------------------------------------------------

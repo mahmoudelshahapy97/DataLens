@@ -1,0 +1,228 @@
+{
+  "total": 1080607,
+  "video": "/mnt/c/Users/User/Desktop/text-to-sql-multi-tenant/best/vanna/artifacts/roles/admin/ask-full.webm",
+  "segments": [
+    {
+      "kind": "nav",
+      "from": 1,
+      "to": 16295,
+      "label": "sign in"
+    },
+    {
+      "kind": "showing",
+      "from": 18599,
+      "to": 21349,
+      "label": "sidebar"
+    },
+    {
+      "kind": "page",
+      "from": 21350,
+      "to": 53640,
+      "label": "/ask"
+    },
+    {
+      "kind": "page",
+      "from": 53640,
+      "to": 86070,
+      "label": "/schema"
+    },
+    {
+      "kind": "page",
+      "from": 86070,
+      "to": 118174,
+      "label": "/history"
+    },
+    {
+      "kind": "page",
+      "from": 118174,
+      "to": 150595,
+      "label": "/saved"
+    },
+    {
+      "kind": "page",
+      "from": 150595,
+      "to": 183009,
+      "label": "/dashboards"
+    },
+    {
+      "kind": "page",
+      "from": 183010,
+      "to": 215550,
+      "label": "/reports"
+    },
+    {
+      "kind": "page",
+      "from": 215550,
+      "to": 247768,
+      "label": "/cubes"
+    },
+    {
+      "kind": "page",
+      "from": 247768,
+      "to": 280250,
+      "label": "/account"
+    },
+    {
+      "kind": "page",
+      "from": 280251,
+      "to": 314130,
+      "label": "/console/overview"
+    },
+    {
+      "kind": "page",
+      "from": 314130,
+      "to": 346651,
+      "label": "/console/permissions"
+    },
+    {
+      "kind": "page",
+      "from": 346651,
+      "to": 379084,
+      "label": "/console/masking"
+    },
+    {
+      "kind": "page",
+      "from": 379085,
+      "to": 411522,
+      "label": "/console/audit"
+    },
+    {
+      "kind": "page",
+      "from": 411522,
+      "to": 443931,
+      "label": "/console/access-log"
+    },
+    {
+      "kind": "page",
+      "from": 443931,
+      "to": 476334,
+      "label": "/console/approvals"
+    },
+    {
+      "kind": "page",
+      "from": 476335,
+      "to": 508815,
+      "label": "/console/lineage"
+    },
+    {
+      "kind": "page",
+      "from": 508815,
+      "to": 541227,
+      "label": "/console/members"
+    },
+    {
+      "kind": "page",
+      "from": 541228,
+      "to": 573624,
+      "label": "/console/billing"
+    },
+    {
+      "kind": "page",
+      "from": 573624,
+      "to": 606026,
+      "label": "/console/usage"
+    },
+    {
+      "kind": "page",
+      "from": 606027,
+      "to": 638428,
+      "label": "/console/review"
+    },
+    {
+      "kind": "page",
+      "from": 638429,
+      "to": 670855,
+      "label": "/console/verified"
+    },
+    {
+      "kind": "page",
+      "from": 670855,
+      "to": 703291,
+      "label": "/console/domains"
+    },
+    {
+      "kind": "page",
+      "from": 703292,
+      "to": 735899,
+      "label": "/console/rules"
+    },
+    {
+      "kind": "page",
+      "from": 735900,
+      "to": 768351,
+      "label": "/console/library"
+    },
+    {
+      "kind": "page",
+      "from": 768351,
+      "to": 800772,
+      "label": "/console/starters"
+    },
+    {
+      "kind": "typing",
+      "from": 803162,
+      "to": 805195,
+      "label": "What are the top 5 genres by number of tracks?"
+    },
+    {
+      "kind": "waiting",
+      "from": 805195,
+      "to": 871634,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 871678,
+      "to": 878917,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 878929,
+      "to": 881308,
+      "label": "Which of those genres earned the most revenue?"
+    },
+    {
+      "kind": "waiting",
+      "from": 881308,
+      "to": 896946,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 896983,
+      "to": 903395,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "probe",
+      "from": 903675,
+      "to": 938787,
+      "label": "/console/overview"
+    },
+    {
+      "kind": "probe",
+      "from": 938787,
+      "to": 973576,
+      "label": "/console/members"
+    },
+    {
+      "kind": "probe",
+      "from": 973576,
+      "to": 1008496,
+      "label": "/console/permissions"
+    },
+    {
+      "kind": "probe",
+      "from": 1008496,
+      "to": 1043333,
+      "label": "/console/workspaces"
+    },
+    {
+      "kind": "probe",
+      "from": 1043334,
+      "to": 1078101,
+      "label": "/console/datasources"
+    }
+  ]
+}

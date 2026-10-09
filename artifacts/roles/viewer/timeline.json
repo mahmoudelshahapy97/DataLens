@@ -1,0 +1,132 @@
+{
+  "total": 525290,
+  "video": "/mnt/c/Users/User/Desktop/text-to-sql-multi-tenant/best/vanna/artifacts/roles/viewer/ask-full.webm",
+  "segments": [
+    {
+      "kind": "nav",
+      "from": 1,
+      "to": 16446,
+      "label": "sign in"
+    },
+    {
+      "kind": "showing",
+      "from": 18588,
+      "to": 21328,
+      "label": "sidebar"
+    },
+    {
+      "kind": "page",
+      "from": 21328,
+      "to": 53591,
+      "label": "/ask"
+    },
+    {
+      "kind": "page",
+      "from": 53591,
+      "to": 86021,
+      "label": "/schema"
+    },
+    {
+      "kind": "page",
+      "from": 86021,
+      "to": 118101,
+      "label": "/history"
+    },
+    {
+      "kind": "page",
+      "from": 118101,
+      "to": 150534,
+      "label": "/saved"
+    },
+    {
+      "kind": "page",
+      "from": 150534,
+      "to": 182937,
+      "label": "/dashboards"
+    },
+    {
+      "kind": "page",
+      "from": 182937,
+      "to": 215343,
+      "label": "/reports"
+    },
+    {
+      "kind": "page",
+      "from": 215344,
+      "to": 247911,
+      "label": "/cubes"
+    },
+    {
+      "kind": "page",
+      "from": 247911,
+      "to": 280304,
+      "label": "/account"
+    },
+    {
+      "kind": "typing",
+      "from": 282665,
+      "to": 284690,
+      "label": "What are the top 5 genres by number of tracks?"
+    },
+    {
+      "kind": "waiting",
+      "from": 284690,
+      "to": 311401,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 311411,
+      "to": 316785,
+      "label": "Question result"
+    },
+    {
+      "kind": "typing",
+      "from": 316792,
+      "to": 318798,
+      "label": "Which of those genres earned the most revenue?"
+    },
+    {
+      "kind": "waiting",
+      "from": 318798,
+      "to": 342913,
+      "label": "model working"
+    },
+    {
+      "kind": "showing",
+      "from": 342927,
+      "to": 348597,
+      "label": "Follow-up result"
+    },
+    {
+      "kind": "probe",
+      "from": 348752,
+      "to": 383542,
+      "label": "/console/overview"
+    },
+    {
+      "kind": "probe",
+      "from": 383543,
+      "to": 418418,
+      "label": "/console/members"
+    },
+    {
+      "kind": "probe",
+      "from": 418418,
+      "to": 453175,
+      "label": "/console/permissions"
+    },
+    {
+      "kind": "probe",
+      "from": 453175,
+      "to": 487960,
+      "label": "/console/workspaces"
+    },
+    {
+      "kind": "probe",
+      "from": 487960,
+      "to": 522786,
+      "label": "/console/datasources"
+    }
+  ]
+}

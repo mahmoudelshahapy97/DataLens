@@ -46,7 +46,15 @@ def register(app: Any, deps: Deps) -> None:
         the endpoint genuinely does not exist for it.
         """
         user = await deps.caller(request)
-        runtime = await deps.runtime_for(user)
+        # `runtime_for` takes a tenant id. This passed the whole User, which
+        # travelled as far as a SQL parameter before psycopg2 refused to adapt
+        # it -- so every request to this surface was a 500, for everyone.
+        #
+        # `runtime_for_request` rather than `runtime_for(user.tenant_id)`: a
+        # pending write belongs to the database it was proposed against, and
+        # resolving the workspace default instead would show an approver a queue
+        # from a different database than the one they are looking at.
+        runtime = await deps.runtime_for_request(user, request)
         service = getattr(runtime, "write_service", None)
         if service is None:
             raise HTTPException(

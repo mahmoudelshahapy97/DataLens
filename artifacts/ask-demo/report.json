@@ -1,0 +1,203 @@
+{
+  "base": "http://127.0.0.1:3000",
+  "tenant": "chinook",
+  "account": "demo@example.com",
+  "results": [
+    {
+      "n": 1,
+      "question": {
+        "text": "Which 5 customers spent the most in total?",
+        "rows": 28,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Which countries are they from?",
+        "rows": 38,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 2,
+      "question": {
+        "text": "What are the top 5 genres by number of tracks?",
+        "rows": 22,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Now rank those same genres by revenue instead.",
+        "rows": 45,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 3,
+      "question": {
+        "text": "How many invoices were issued in each year?",
+        "rows": 22,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Which of those years had the highest total revenue?",
+        "rows": 32,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 4,
+      "question": {
+        "text": "Who are the top 5 artists by number of albums?",
+        "rows": 23,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "How many tracks does each of them have?",
+        "rows": 35,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 5,
+      "question": {
+        "text": "What is the average invoice total by country?",
+        "rows": 47,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Which of those countries has the fewest invoices?",
+        "rows": 65,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 6,
+      "question": {
+        "text": "List the 5 longest tracks with their album names.",
+        "rows": 16,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "What genre is each of them?",
+        "rows": 26,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 7,
+      "question": {
+        "text": "How much revenue did each sales support agent generate?",
+        "rows": 29,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Which one of them handles the most customers?",
+        "rows": 37,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 8,
+      "question": {
+        "text": "Which playlists have the most tracks?",
+        "rows": 26,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "What is the total playing time of the biggest one?",
+        "rows": 38,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 9,
+      "question": {
+        "text": "What are the 5 best selling tracks by quantity sold?",
+        "rows": 30,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Which albums are those tracks from?",
+        "rows": 42,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    },
+    {
+      "n": 10,
+      "question": {
+        "text": "How many customers are there in each country?",
+        "rows": 43,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      },
+      "followUp": {
+        "text": "Show only the countries with more than 4 customers.",
+        "rows": 56,
+        "sawRunSql": false,
+        "complete": false,
+        "timedOut": false,
+        "chars": 0
+      }
+    }
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "failed": [
+    "401 GET /api/vanna/v2/me"
+  ]
+}

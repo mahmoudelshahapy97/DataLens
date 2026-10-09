@@ -1,0 +1,171 @@
+{
+  "role": "viewer",
+  "email": "qa.viewer@example.com",
+  "tenant": "chinook",
+  "offered": [
+    {
+      "to": "/ask",
+      "label": "Ask"
+    },
+    {
+      "to": "/schema",
+      "label": "Schema"
+    },
+    {
+      "to": "/history",
+      "label": "History"
+    },
+    {
+      "to": "/saved",
+      "label": "Saved queries"
+    },
+    {
+      "to": "/dashboards",
+      "label": "Dashboards"
+    },
+    {
+      "to": "/reports",
+      "label": "Reports"
+    },
+    {
+      "to": "/cubes",
+      "label": "Metrics"
+    },
+    {
+      "to": "/account",
+      "label": "Account"
+    }
+  ],
+  "visited": [
+    {
+      "to": "/ask",
+      "label": "Ask",
+      "state": null,
+      "chars": 373
+    },
+    {
+      "to": "/schema",
+      "label": "Schema",
+      "state": null,
+      "chars": 399
+    },
+    {
+      "to": "/history",
+      "label": "History",
+      "state": null,
+      "chars": 12655
+    },
+    {
+      "to": "/saved",
+      "label": "Saved queries",
+      "state": null,
+      "chars": 5439
+    },
+    {
+      "to": "/dashboards",
+      "label": "Dashboards",
+      "state": null,
+      "chars": 2054
+    },
+    {
+      "to": "/reports",
+      "label": "Reports",
+      "state": null,
+      "chars": 792
+    },
+    {
+      "to": "/cubes",
+      "label": "Metrics",
+      "state": null,
+      "chars": 174
+    },
+    {
+      "to": "/account",
+      "label": "Account",
+      "state": null,
+      "chars": 1570
+    }
+  ],
+  "ask": {
+    "asked": {
+      "text": "What are the top 5 genres by number of tracks?",
+      "rows": 6,
+      "complete": true,
+      "timedOut": false
+    },
+    "followed": {
+      "text": "Which of those genres earned the most revenue?",
+      "rows": 8,
+      "complete": true,
+      "timedOut": false
+    }
+  },
+  "probes": [
+    {
+      "route": "/console/overview",
+      "inNav": false,
+      "state": null,
+      "chars": 194,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/overview?days=30&tenant_id=chinook"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    },
+    {
+      "route": "/console/members",
+      "inNav": false,
+      "state": null,
+      "chars": 135,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/tenants/chinook/users"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    },
+    {
+      "route": "/console/permissions",
+      "inNav": false,
+      "state": null,
+      "chars": 184,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/tenants/chinook/grants?role=analyst"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    },
+    {
+      "route": "/console/workspaces",
+      "inNav": false,
+      "state": null,
+      "chars": 173,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/tenants"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    },
+    {
+      "route": "/console/datasources",
+      "inNav": false,
+      "state": null,
+      "chars": 160,
+      "refusals": [
+        "404 GET /api/vanna/v2/admin/tenants/chinook/datasources"
+      ],
+      "verdict": "chrome shown, data refused (404)"
+    }
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failed": [
+    "401 GET /api/vanna/v2/me",
+    "404 GET /api/vanna/v2/admin/overview?days=30&tenant_id=chinook",
+    "404 GET /api/vanna/v2/admin/tenants/chinook/users",
+    "404 GET /api/vanna/v2/admin/tenants/chinook/grants?role=analyst",
+    "404 GET /api/vanna/v2/admin/tenants",
+    "404 GET /api/vanna/v2/admin/tenants/chinook/datasources"
+  ]
+}

@@ -202,6 +202,24 @@ class Settings:
     tenant_runtime_ttl_seconds: int = 1800
     generation_retention_days: int = 365
 
+    # -- reports -------------------------------------------------------
+    #: Whether a scheduled report may be mailed to an address that is not a
+    #: member of the workspace. Off, and the default is the whole point: a report
+    #: renders with one member's permissions, so a schedule that can mail anybody
+    #: is a way to hand those permissions to anybody. Turning this on is a
+    #: deliberate decision that the deployment's recipients are trusted.
+    report_allow_external_recipients: bool = False
+    #: Hosts a report webhook may post to. Empty means "no allow-list", and the
+    #: outbound guard then falls back to refusing private and link-local
+    #: addresses after resolving the name -- weaker, because DNS can answer
+    #: differently when the request is actually made. A deployment that knows its
+    #: endpoints should list them.
+    webhook_allowed_hosts: Tuple[str, ...] = ()
+    #: How long a run's stored artifact is kept. The bytes are the bulk of the
+    #: row; that a run *happened* outlives them in `generations` and
+    #: `admin_audit`, which is what an investigation reads.
+    report_run_retention_days: int = 90
+
     # -- capabilities --------------------------------------------------
     allow_writes: bool = False
     #: Ceiling on rows one approved change may touch, across all its steps.
@@ -213,7 +231,30 @@ class Settings:
     #: against have probably not moved.
     write_confirmation_ttl_seconds: int = 900
     scan_on_start: bool = True
+
+    # -- answer checking -------------------------------------------------
+    #: Check each data answer against the question before the user sees it.
+    #:
+    #: Costs one extra model call per turn that ran a query, and a second full
+    #: turn when it rejects. Those calls are metered and billed like any other,
+    #: so this is a real change to a workspace's bill -- which is why it is a
+    #: setting and not a constant.
+    enable_critic: bool = True
+    #: How many times the critic may send one turn back. Two rejections of the
+    #: same answer usually means the critic and the analyst disagree about the
+    #: question rather than that the answer is improving.
+    max_critic_retries: int = 1
+    #: Draft an approach before answering a multi-step question. Off: it costs
+    #: a model call on every turn it fires, and unlike the critic there is no
+    #: cheap signal for when it is worth it.
+    enable_planner: bool = False
+
     index_backend: str = "lexical"
+    #: Rendered-schema size (characters) above which the prompt carries only
+    #: the tables search picks instead of the whole schema. Mostly a tuning
+    #: and evaluation knob: 0 forces the search path on every schema, which is
+    #: how ``evals/sql_accuracy.py`` simulates a large warehouse on Chinook.
+    schema_full_text_threshold: int = 30_000
     project_dir: str = ""
     projects_dir: str = ""
 
@@ -385,13 +426,28 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         generation_retention_days=_number(
             env, "VANNA_GENERATION_RETENTION_DAYS", 365, minimum=0
         ),
+        report_allow_external_recipients=_flag(
+            env, "VANNA_REPORT_ALLOW_EXTERNAL_RECIPIENTS", False
+        ),
+        webhook_allowed_hosts=tuple(
+            host.lower() for host in _list(env, "VANNA_WEBHOOK_ALLOWED_HOSTS")
+        ),
+        report_run_retention_days=_number(
+            env, "VANNA_REPORT_RUN_RETENTION_DAYS", 90, minimum=0
+        ),
         allow_writes=_flag(env, "VANNA_ALLOW_WRITES", False),
         max_write_rows=_number(env, "VANNA_MAX_WRITE_ROWS", 50, minimum=1),
+        enable_critic=_flag(env, "VANNA_ENABLE_CRITIC", True),
+        max_critic_retries=_number(env, "VANNA_MAX_CRITIC_RETRIES", 1, minimum=0),
+        enable_planner=_flag(env, "VANNA_ENABLE_PLANNER", False),
         write_confirmation_ttl_seconds=_number(
             env, "VANNA_WRITE_CONFIRMATION_TTL_SECONDS", 900, minimum=30
         ),
         scan_on_start=_flag(env, "VANNA_SCAN_ON_START", True),
         index_backend=_text(env, "VANNA_INDEX_BACKEND", "lexical"),
+        schema_full_text_threshold=_number(
+            env, "VANNA_SCHEMA_FULL_TEXT_THRESHOLD", 30_000, minimum=0
+        ),
         project_dir=_text(env, "VANNA_PROJECT_DIR"),
         projects_dir=_text(env, "VANNA_PROJECTS_DIR"),
         config_source=_text(env, "VANNA_CONFIG_SOURCE", "disk").lower(),

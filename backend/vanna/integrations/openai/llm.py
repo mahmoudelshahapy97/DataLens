@@ -24,6 +24,30 @@ from vanna.core.llm import (
 from vanna.core.tool import ToolCall, ToolSchema
 
 
+#: Model families that renamed ``max_tokens`` to ``max_completion_tokens`` and
+#: reject the old spelling outright with a 400.
+#:
+#: This is not cosmetic. ``AgentConfig.max_tokens`` defaults to 4096 and is
+#: forwarded on every request, so against one of these models *every* call
+#: fails -- the chat cannot answer a single question. The default model here is
+#: ``gpt-5``, which is one of them.
+#:
+#: Matched by prefix rather than an exact list, so a point release does not
+#: reintroduce the outage. Anything unrecognised keeps ``max_tokens``, which is
+#: still correct for gpt-4o and the 3.5/4 families.
+_COMPLETION_TOKEN_MODELS = ("gpt-5", "o1", "o3", "o4")
+
+
+def _token_limit_parameter(model: str) -> str:
+    """Which spelling of the output-token cap *model* accepts."""
+    name = (model or "").lower().lstrip()
+    return (
+        "max_completion_tokens"
+        if name.startswith(_COMPLETION_TOKEN_MODELS)
+        else "max_tokens"
+    )
+
+
 class OpenAILlmService(LlmService):
     """OpenAI Chat Completions-backed LLM service.
 
@@ -107,14 +131,31 @@ class OpenAILlmService(LlmService):
         """
         payload = self._build_payload(request)
 
-        # Synchronous streaming iterator; iterate within async context.
-        stream = self._client.chat.completions.create(**payload, stream=True)
+        # `include_usage` makes the API append a final packet carrying the token
+        # counts. Without it a streamed call reports none at all, which is why
+        # cost could never be attributed to a chat answer.
+        stream = self._client.chat.completions.create(
+            **payload, stream=True, stream_options={"include_usage": True}
+        )
 
         # Builders for streamed tool-calls (index -> partial)
         tc_builders: Dict[int, Dict[str, Optional[str]]] = {}
         last_finish: Optional[str] = None
+        usage: Optional[Dict[str, int]] = None
+        model_name: Optional[str] = None
 
         for event in stream:
+            # The usage packet arrives with an empty `choices`, so it has to be
+            # read before the guard below skips it.
+            if getattr(event, "usage", None):
+                usage = {
+                    "prompt_tokens": int(getattr(event.usage, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(
+                        getattr(event.usage, "completion_tokens", 0) or 0
+                    ),
+                }
+            model_name = getattr(event, "model", None) or model_name
+
             if not getattr(event, "choices", None):
                 continue
 
@@ -171,11 +212,21 @@ class OpenAILlmService(LlmService):
                 )
             )
 
+        # Usage and model ride on the terminal chunk either way -- the agent
+        # reassembles the response from these, and a tool-call turn costs tokens
+        # just as a text turn does.
         if final_tool_calls:
-            yield LlmStreamChunk(tool_calls=final_tool_calls, finish_reason=last_finish)
+            yield LlmStreamChunk(
+                tool_calls=final_tool_calls,
+                finish_reason=last_finish,
+                usage=usage,
+                model=model_name,
+            )
         else:
             # Still emit a terminal chunk to signal completion
-            yield LlmStreamChunk(finish_reason=last_finish or "stop")
+            yield LlmStreamChunk(
+                finish_reason=last_finish or "stop", usage=usage, model=model_name
+            )
 
     async def validate_tools(self, tools: List[ToolSchema]) -> List[str]:
         """Validate tool schemas. Returns a list of error messages."""
@@ -234,7 +285,7 @@ class OpenAILlmService(LlmService):
             "messages": messages,
         }
         if request.max_tokens is not None:
-            payload["max_tokens"] = request.max_tokens
+            payload[_token_limit_parameter(self.model)] = request.max_tokens
         if tools_payload:
             payload["tools"] = tools_payload
             payload["tool_choice"] = "auto"

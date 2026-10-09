@@ -1,0 +1,52 @@
+DataLens — multi-tenant natural-language querying
+=================================================
+
+This distribution contains:
+
+1. The `vanna` library (`backend/vanna/`), derived from the upstream project at
+   https://github.com/vanna-ai/vanna, Copyright (c) Vanna.AI, MIT licensed.
+
+   Modified here. The substantive additions are the semantic layer
+   (`backend/vanna/semantic/`), the datasource registry
+   (`backend/vanna/core/datasource/`), the ranked retrieval index
+   (`backend/vanna/capabilities/index/`), the dashboards package
+   (`backend/vanna/dashboards/`), the billing plans
+   (`backend/vanna/core/billing/`), and the authentication primitives
+   (`backend/vanna/core/auth/`).
+
+   Two upstream surfaces have been removed, neither of them imported by anything
+   in this distribution:
+
+     - the `vanna.legacy` package -- the 0.x compatibility layer, roughly eleven
+       thousand lines covering twenty-five vendor integrations;
+     - the developer command line and its example gallery (`vanna.cli`,
+       `vanna.examples`, `vanna.skills`, and the Flask/MCP/CLI server runners),
+       along with the vector-store agent-memory backends that the multi-tenant
+       control plane replaces with its own.
+
+2. The DataLens application (`backend/vanna_app/`), which is a multi-tenant
+   deployment of that library: control plane, accounts, billing, and the HTTP
+   surface over them. Original to this repository, MIT licensed on the same terms.
+
+3. The database schema (`database/`): numbered migrations applied under an
+   advisory lock, and the generated schema dump and configuration seed.
+
+4. Front-end assets (`frontend/`): the workspace page, the operator console, and
+   the `<vanna-chat>` web component.
+
+   `backend/vanna/dashboards/vendor/tile-figure.js` is a deliberate copy of
+   `frontend/public/assets/shared/tile-figure.js` so that a server-rendered
+   dashboard export and the live page draw a tile identically. The copies are
+   asserted byte-identical by the test suite and synchronised by
+   `make plotly-bundle`.
+
+   `backend/vanna/dashboards/vendor/plotly-export.min.{js,css}` is a custom
+   Plotly build, Copyright (c) Plotly, Inc., MIT licensed, produced from
+   `backend/tools/plotly_export_bundle/`.
+
+See LICENSE for the terms, which apply to all of the above.
+
+Third-party Python dependencies are declared in `backend/requirements.in` and
+pinned in `backend/requirements.txt`; front-end dependencies are declared in
+`frontend/package.json` and pinned in `frontend/package-lock.json`. Each carries
+its own licence.

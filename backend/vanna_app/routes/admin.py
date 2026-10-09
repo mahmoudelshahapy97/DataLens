@@ -501,16 +501,27 @@ def register(app: Any, deps: Deps) -> None:
 
     @app.get("/api/vanna/v2/admin/access-log")
     async def admin_access_log(
-        request: Request, denied_only: bool = False, limit: int = 100
+        request: Request,
+        tenant_id: str = "",
+        denied_only: bool = False,
+        limit: int = 100,
     ) -> Dict[str, Any]:
-        """Agent-level tool invocations and access decisions, for one workspace."""
+        """Agent-level tool invocations and access decisions, for one workspace.
+
+        ``tenant_id`` is resolved the same way ``/admin/audit`` resolves it, and
+        defaults to the caller's own workspace. It used to be unconditionally
+        ``user.tenant_id``: a platform admin administering somebody else's
+        workspace was shown *their own* access log under that workspace's heading,
+        with nothing on the screen to say so.
+        """
         user = await deps.caller(request)
-        require_tenant_admin(user, user.tenant_id, settings)
+        scope = visible_tenant(user, tenant_id or None, settings)
+        require_tenant_admin(user, scope, settings)
         if deps.agent_audit is None:
             return {"events": []}
         return {
             "events": await deps.agent_audit.recent(
-                user.tenant_id, limit=limit, denied_only=denied_only
+                scope, limit=limit, denied_only=denied_only
             )
         }
 
@@ -761,7 +772,7 @@ def register(app: Any, deps: Deps) -> None:
 
             runner = probe(url)
             context = await deps.tool_context(user)
-            await runner.run_sql(RunSqlToolArgs(sql="SELECT 1"), context)
+            await runner.run_sql(RunSqlToolArgs(sql=getattr(runner, "health_check_sql", "SELECT 1")), context)
         except Exception as exc:
             error = VannaError.from_exception(exc, phase=ErrorPhase.PROFILE_RESOLUTION)
             logger.info("Datasource test failed for %s: %s", user.email, error)
@@ -912,7 +923,7 @@ def register(app: Any, deps: Deps) -> None:
             # included. The statement below is the actual test, and is the same one
             # `/admin/datasources/test` runs.
             runner = probe(url)
-            await runner.run_sql(RunSqlToolArgs(sql="SELECT 1"), await deps.tool_context(user))
+            await runner.run_sql(RunSqlToolArgs(sql=getattr(runner, "health_check_sql", "SELECT 1")), await deps.tool_context(user))
         except Exception as exc:
             # Sanitised: driver messages routinely echo the DSN, password included.
             raise HTTPException(

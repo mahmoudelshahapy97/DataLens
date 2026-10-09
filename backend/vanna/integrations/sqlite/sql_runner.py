@@ -102,6 +102,19 @@ class SqliteRunner(BaseSqlRunner):
         with self._lock:
             conn.execute(f"EXPLAIN {sql}")
 
+    def explain_sql(self, sql: str) -> str:
+        """``EXPLAIN QUERY PLAN``, not ``EXPLAIN``.
+
+        Plain ``EXPLAIN`` on SQLite returns virtual-machine bytecode, which
+        is accurate and useless to a reader. ``EXPLAIN QUERY PLAN`` returns
+        the access strategy -- which index was chosen, or "SCAN" where none
+        was -- which is the part worth reporting.
+        """
+        conn = self._connect()
+        with self._lock:
+            rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}").fetchall()
+        return "\n".join(" ".join(str(v) for v in row) for row in rows)
+
     def _execute_sync(self, sql: str, timeout_seconds: int) -> pd.DataFrame:
         """Execute *sql*. Runs on a worker thread."""
         conn = self._connect()

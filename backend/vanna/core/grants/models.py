@@ -36,6 +36,28 @@ AUTOFILL = "autofill"
 MACHINE_PREFIX = "system:"
 
 
+#: How a readable column is obscured, if at all.
+#:
+#: Masking is deliberately the *weakest* of the three things that can happen to a
+#: column, and the order below is the order of decreasing protection:
+#:
+#:   no grant / can_read=False   the column is dropped from the caller's world.
+#:                               Naming it is an unknown-column error. There is
+#:                               nothing to probe. This is the default and the
+#:                               recommendation.
+#:   "null"                      projected as NULL. Honest about hiding, and it
+#:                               corrupts AVG and SUM exactly as dropping avoids.
+#:   "partial"                   first two characters, then ***. Leaks a prefix by
+#:                               construction -- that is what it is for.
+#:   "hash"                      a stable pseudonym. Equality and distinct-counts
+#:                               still work, which is the use and also the leak.
+#:   "none"                      the column as itself.
+#:
+#: A mask is not a substitute for withholding a column. It exists because the
+#: alternative people reach for is granting the column outright and hoping.
+MASK_STRATEGIES = ("none", "hash", "partial", "null")
+
+
 def normalize_identifier(name: str) -> str:
     """The key form of a table or column name.
 
@@ -117,6 +139,11 @@ class ColumnGrant(BaseModel):
     can_aggregate: bool = False
     can_write: bool = False
 
+    mask: str = Field(
+        default="none",
+        description="How the value is obscured when it is read. See MASK_STRATEGIES.",
+    )
+
     granted_by: Optional[str] = Field(
         default=None,
         description="Who set this. A person's identity claims the row and takes "
@@ -179,6 +206,13 @@ class EffectiveColumn(BaseModel):
     can_filter: bool = True
     can_aggregate: bool = True
     can_write: bool = False
+    #: The *narrowest* mask across the caller's roles -- see the note in
+    #: `resolve.py`, where this is the one flag that does not simply OR.
+    mask: str = "none"
+
+    @property
+    def is_masked(self) -> bool:
+        return self.mask != "none"
 
 
 class EffectiveTable(BaseModel):

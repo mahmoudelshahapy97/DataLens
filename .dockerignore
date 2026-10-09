@@ -67,7 +67,8 @@ img/
 # Tests are not needed to run the image, and shipping them would put the test
 # fixtures' credentials -- real strings, even if only ever used against a
 # throwaway database -- into a layer anybody who can pull the image can read.
-tests/
+backend/tests/
+backend/tools/
 .github/
 Makefile
 .pre-commit-config.yaml
@@ -76,10 +77,19 @@ Makefile
 # backend build would ship the whole UI into a layer that never reads it.
 frontend/
 
+# Screenshots and video from the e2e run: ~76 MB, tracked deliberately, and read by
+# nobody at build time. The context is the repository root, so without this every
+# backend build uploads all of it to the daemon before the first layer is even
+# considered.
+artifacts/
+
+# The Q&A export, for the same reason: a build input to nothing.
+qa.json
+
 # Tooling configuration only, and the backend image runs no tooling.
 pyproject.toml
-setup.cfg
 
-# Query-result exports written by the CLI into the working directory.
+# Query-result exports. `vanna/tools/run_sql.py` writes these into the working
+# directory when a result is large enough to hand over as a file.
 query_results_*.csv
 

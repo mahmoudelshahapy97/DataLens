@@ -239,7 +239,9 @@ class LocalSchemaCatalog(SchemaCatalog):
         )
         out: List[RelationshipMetadata] = []
         for key in keys:
-            out.extend(self._relationships.get(key, {}).values())
+            # Rejected and low-confidence inferred joins are stored (so a rescan
+            # does not re-propose a rejected one as new) but never served.
+            out.extend(r for r in self._relationships.get(key, {}).values() if r.is_usable)
         return sorted(out, key=lambda r: r.name)
 
     async def upsert_relationships(

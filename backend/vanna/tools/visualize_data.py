@@ -14,7 +14,8 @@ from vanna.components import (
     SimpleTextComponent,
 )
 
-from .file_system import FileSystem, LocalFileSystem
+from ..capabilities.file_system import FileSystem
+from ..integrations.local.file_system import LocalFileSystem
 from vanna.integrations.plotly import PlotlyChartGenerator
 
 logger = logging.getLogger(__name__)
