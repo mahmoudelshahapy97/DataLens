@@ -31,7 +31,7 @@ for a role with no grants.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, cast
 
 from vanna.core.grants import normalize_identifier, normalize_table
 
@@ -259,12 +259,14 @@ class GrantFilteredCatalog:
     async def get_context(self, context: Any, question: str, **kwargs: Any) -> Any:
         from vanna.capabilities.schema_catalog import SchemaCatalog
 
-        return await SchemaCatalog.get_context(self, context, question, **kwargs)
+        return await SchemaCatalog.get_context(
+            cast(SchemaCatalog, self), context, question, **kwargs
+        )
 
     async def catalog_hash(self, context: Any, **kwargs: Any) -> str:
         from vanna.capabilities.schema_catalog import SchemaCatalog
 
-        return await SchemaCatalog.catalog_hash(self, context, **kwargs)
+        return await SchemaCatalog.catalog_hash(cast(SchemaCatalog, self), context, **kwargs)
 
     # -- pass-through --------------------------------------------------
     #

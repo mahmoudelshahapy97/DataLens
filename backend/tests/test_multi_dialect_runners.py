@@ -135,7 +135,10 @@ class TestLiveMultiDialectExecution:
             except pytest.skip.Exception:
                 continue
 
-            with pytest.raises(Exception):
+            # Deliberately broad: each driver raises its own type for a missing
+            # table (psycopg2, pymysql, oracledb, pyodbc), and the claim is only
+            # that *something* is raised rather than an empty frame returned.
+            with pytest.raises(Exception):  # noqa: B017
                 await runner.run_sql(
                     RunSqlToolArgs(sql="SELECT * FROM table_that_does_not_exist"),
                     _context(),

@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from fastapi import HTTPException, Request
 
@@ -37,7 +37,13 @@ logger = logging.getLogger("vanna.routes")
 class RuntimeProvider(Protocol):
     """``Platform.runtime_for`` -- resolves a workspace to its agent and runner."""
 
-    async def __call__(self, tenant_id: str, *, invalidate: bool = False) -> Any: ...
+    async def __call__(
+        self,
+        tenant_id: str,
+        *,
+        data_source_id: Optional[str] = None,
+        invalidate: bool = False,
+    ) -> Any: ...
 
 
 @dataclass

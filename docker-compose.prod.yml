@@ -8,13 +8,22 @@
 # commit SHA, so the running stack is always traceable to one commit and a rollback
 # is a matter of pointing these two variables at the previous tag.
 #
-# Everything else -- environment, volumes, networks, healthchecks -- comes from
+# Everything else -- environment, volumes, healthchecks -- comes from
 # docker-compose.yml unchanged. Secrets live in .env on the host and never pass
 # through CI.
+#
+# Networks are the one exception. Locally the backend also joins the sandbox's
+# external `multidb_network` to reach `db_postgres` and `qdrant` by name; a deploy
+# host has no sandbox, and Compose refuses to start a stack whose external network
+# does not exist. In production the backend stays on the project's `default`
+# network only, so the database URLs in the host's .env (VANNA_APP_DATABASE_URL,
+# VANNA_DATABASE_URL, VANNA_QDRANT_URL) must name a host or IP the container can
+# reach, not a sandbox container name. `!reset` needs Docker Compose 2.24+.
 
 services:
   backend:
     image: ${VANNA_BACKEND_IMAGE:?set in release.env by the deploy workflow}
+    networks: !reset [default]
 
   frontend:
     image: ${VANNA_FRONTEND_IMAGE:?set in release.env by the deploy workflow}

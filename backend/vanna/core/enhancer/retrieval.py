@@ -330,7 +330,7 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
 
         _LAST_RETRIEVAL.set(
             {
-                "strategy": (schema_info or {}).get("strategy"),
+                "strategy": (schema_info or {"strategy": None}).get("strategy"),
                 "table_names": list(schema_tables or []),
                 "example_ids": [
                     e.example_id for e in examples or [] if getattr(e, "example_id", None)
@@ -396,7 +396,7 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
                 hits,
                 key=lambda h: -overlap(tables_in_sql(h.example.sql), selected),
             )[: self.max_examples]
-        rendered = []
+        rendered: List[str] = []
         for hit in hits:
             item = _Example(f"Question: {hit.example.question}\nSQL:\n{hit.example.sql}")
             item.example_id = getattr(hit.example, "id", None)
@@ -406,7 +406,7 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
     async def _schema_section(self, context, question: str):
         if self.catalog is None:
             return "", [], {}
-        kwargs = {}
+        kwargs: Dict[str, Any] = {}
         if self.schema_threshold is not None:
             kwargs["threshold"] = self.schema_threshold
         if self.schema_search_limit is not None:

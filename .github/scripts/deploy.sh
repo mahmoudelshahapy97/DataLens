@@ -10,8 +10,13 @@
 # What the host must already have:
 #   - $DEPLOY_PATH/.env      every secret the stack needs (see .env.example). CI never
 #                            sees these; this script refuses to run without the file.
-#   - multidb_network        the sandbox network docker-compose.yml joins as external.
-#   - Docker Compose v2.17+  for repeated --env-file.
+#                            Its database URLs (VANNA_APP_DATABASE_URL,
+#                            VANNA_DATABASE_URL, VANNA_QDRANT_URL) must name a host
+#                            the container can reach: in production the backend is
+#                            on the project's default network only, with no sandbox
+#                            `db_postgres` to resolve (see docker-compose.prod.yml).
+#   - Docker Compose v2.24+  for repeated --env-file and the `!reset` tag the prod
+#                            override uses.
 #
 # The bundle carries the compose files and backend/projects, the one bind mount the
 # stack reads from the host. Images come from Docker Hub, pinned by commit SHA, so
@@ -45,10 +50,8 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-if ! docker network inspect multidb_network >/dev/null 2>&1; then
-  echo "ERROR: docker network multidb_network does not exist. Start the databases stack first." >&2
-  exit 1
-fi
+# No sandbox-network check: production runs on the project's default network
+# (docker-compose.prod.yml), so a missing multidb_network is expected here.
 
 # --------------------------------------------------------------------- pull ---
 #
