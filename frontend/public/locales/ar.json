@@ -211,6 +211,8 @@
   "ask.queryingDatabase": "استعلام من {name}",
   "thread.search": "بحث في المحادثات",
   "thread.loadMore": "تحميل المزيد",
+  "thread.export": "تصدير بصيغة Markdown",
+  "thread.sql": "SQL",
   "thread.rename": "إعادة تسمية",
   "thread.renameOne": "إعادة تسمية {title}",
   "thread.deleteOne": "حذف {title}",

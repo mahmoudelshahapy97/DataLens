@@ -103,9 +103,13 @@ def register(app: Any, deps: Deps) -> None:
     async def _store_and_requested_source(tenant_id: str, request: Request) -> tuple:
         """As :func:`_store_and_source`, for the database the screen is showing.
 
-        Inferred joins exist only on databases without declared foreign keys --
-        rarely a workspace's default -- so these routes follow the
-        ``X-Data-Source-Id`` the schema screen sends rather than the default.
+        Every curation route uses this: descriptions, core columns and inferred
+        joins all belong to one database, and a workspace can have several.
+        Resolving the default instead filed a description of the employees
+        database's `current_dept_emp` under the Chinook default -- or refused it
+        as "not in this workspace's catalog". The schema screen sends the
+        ``X-Data-Source-Id`` of the database it shows; no header means the
+        default, as before.
         The id is checked against the workspace's registry; an unknown one is a
         404, never a quiet fall back to another database.
         """
@@ -144,7 +148,7 @@ def register(app: Any, deps: Deps) -> None:
     ) -> Dict[str, Any]:
         """Which columns of this table were curated as the ones that matter."""
         await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         key = _key(table_key, what="table")
         return {"columns": await store.get_core_columns(tenant_id, data_source, key)}
 
@@ -153,7 +157,7 @@ def register(app: Any, deps: Deps) -> None:
         tenant_id: str, table_key: str, payload: CoreColumns, request: Request
     ) -> Dict[str, Any]:
         user = await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         table = _key(table_key, what="table")
 
         if not await store.table_exists(tenant_id, data_source, table):
@@ -254,7 +258,7 @@ def register(app: Any, deps: Deps) -> None:
         from what it already has.
         """
         await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         key = _key(table_key, what="table")
         return {
             "annotation": await store.get_table_annotation(tenant_id, data_source, key),
@@ -268,7 +272,7 @@ def register(app: Any, deps: Deps) -> None:
         tenant_id: str, table_key: str, payload: TableAnnotation, request: Request
     ) -> Dict[str, Any]:
         user = await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         key = _key(table_key, what="table")
 
         # Refuse a table the catalog does not have. There is no foreign key to
@@ -306,7 +310,7 @@ def register(app: Any, deps: Deps) -> None:
         request: Request,
     ) -> Dict[str, Any]:
         user = await _admin(request, tenant_id)
-        store, data_source = await _store_and_source(tenant_id)
+        store, data_source = await _store_and_requested_source(tenant_id, request)
         table = _key(table_key, what="table")
         column = _key(column_key, what="column")
 

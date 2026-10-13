@@ -881,6 +881,8 @@ const en: Record<string, string> = {
   "thread.none": "No conversations yet.",
   "thread.notPersisted": "Conversations are not saved in this deployment — there is no control-plane database.",
   "thread.recents": "Recents",
+  "thread.export": "Export as Markdown",
+  "thread.sql": "SQL",
   "thread.rename": "Rename",
   "thread.renameOne": "Rename {title}",
   "thread.search": "Search conversations",

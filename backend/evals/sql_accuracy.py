@@ -16,7 +16,7 @@ critic -- not a reconstruction of it that can drift from what ships.
         --tenant chinook --data-source chinook \\
         --app-db "$VANNA_APP_DATABASE_URL" \\
         --target-db postgresql://user:pass@localhost:5432/chinook \\
-        --dataset qa.json --label full
+        --dataset backend/evals/datasets/sql_accuracy/multi_hop_chinook.json --label full
 
 Datasets live in ``datasets/sql_accuracy/``, listed in ``suite.json``: multi-hop
 sets for Chinook, Northwind (no declared foreign keys -- it measures inferred
@@ -60,10 +60,11 @@ Two scores per question:
 
 Row order is ignored in both. Floats compare at two decimal places.
 
-**About the reference SQL.** ``qa.json`` is exported from chat history by
-``tools/export_qa.py``: it is what the agent answered once, not hand-verified
-ground truth. Scoring against it measures agreement with that run. Review the
-reference queries before treating a score as accuracy.
+**About the reference SQL.** Every reference query in ``datasets/sql_accuracy/``
+was written by hand against the real data and is checked by ``--check-gold``
+(it must run and return rows). Chat history exported by ``tools/export_qa.py``
+is *not* a benchmark: it is what the agent answered once, unreviewed -- the old
+``qa.json`` built that way was removed for exactly that reason.
 """
 
 from __future__ import annotations
@@ -71,6 +72,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import re
 import sys
 import time
 import uuid
@@ -179,8 +181,8 @@ def has_swallowed_comment(sql: str) -> bool:
     """True when a one-line statement carries a ``--`` comment.
 
     On a single line a line comment runs to the end of the statement, so
-    everything after it is silently dropped -- the defect ``qa.json`` exports
-    had before ``tools/export_qa.py`` learned to strip comments first. Executing
+    everything after it is silently dropped -- the defect exports from
+    ``tools/export_qa.py`` had before it learned to strip comments first. Executing
     such a statement "works" and scores against the wrong reference.
     """
     if "\n" in sql:
@@ -221,7 +223,7 @@ class Outcome:
     retrieval_strategy: Optional[str] = None
     mentions_suggest_joins: bool = False
     #: The agent stopped to ask which of several readings was meant. With
-    #: ``--answer-clarifications`` the first option was sent back and the
+    #: ``--answer-clarifications`` the closest option was sent back and the
     #: score is for the follow-up turn; without it the question scores 0.
     clarified: bool = False
     #: What the agent said, abbreviated -- the only clue when it ran no SQL
@@ -350,6 +352,70 @@ class Generation:
             return None
         return "no successful SQL" if self.rows else "agent ran no SQL"
 
+    @property
+    def scored_sql(self) -> Optional[str]:
+        """The final statement as scored: unpaged when it was one page of the answer.
+
+        The agent reads long results a page at a time (``LIMIT 30 OFFSET 30``),
+        and the last page is the last statement -- so scoring it as written
+        marked a correct 60-row answer wrong for showing rows 31-60.
+        """
+        final = self.final
+        if final is None:
+            return None
+        return unpaged(final["sql"]) or final["sql"]
+
+
+#: The paging clause at the end of a statement, whichever order it is written in.
+_PAGING = re.compile(
+    r"\b(?:LIMIT\s+\d+\s+OFFSET\s+\d+|OFFSET\s+\d+\s+LIMIT\s+\d+"
+    r"|OFFSET\s+\d+(?:\s+ROWS?)?(?:\s+FETCH\s+(?:FIRST|NEXT)\s+\d+\s+ROWS?\s+ONLY)?)",
+    re.IGNORECASE,
+)
+#: What may follow it: a semicolon, whitespace and line comments.
+_TAIL = re.compile(r"\s*;?\s*(?:--[^\n]*\s*)*$")
+
+
+def unpaged(sql: str) -> Optional[str]:
+    """*sql* without its page clause, or None when it is not a page.
+
+    Only an outer ``OFFSET`` makes a statement a page; a bare ``LIMIT`` is a
+    top-N answer and stays. sqlglot decides whether the outermost query is
+    paged; the clause is then cut from the original text rather than
+    re-rendered, because sqlglot's Postgres output is not always valid
+    Postgres (the toolkit run found it breaking ``ROUND``).
+    """
+    try:
+        import sqlglot
+
+        tree = sqlglot.parse_one(sql, read="postgres")
+    except Exception:
+        return None
+    if tree is None or tree.args.get("offset") is None:
+        return None
+    matches = list(_PAGING.finditer(sql))
+    if not matches:
+        return None
+    last = matches[-1]
+    if not _TAIL.fullmatch(sql[last.end():]):
+        return None  # something follows the clause; leave the statement alone
+    return sql[: last.start()].rstrip()
+
+
+def closest_option(question: str, options: Sequence[str]) -> str:
+    """The clarification option sharing the most words with the question.
+
+    Always taking the first option let the agent's ordering decide what was
+    scored -- twice its first option narrowed the question ('delivered orders
+    only') and the follow-up then answered something else. The closest reading
+    is what a user who meant the question as asked would click. Ties go to the
+    earliest option.
+    """
+    from vanna.capabilities.schema_graph.knowledge import words
+
+    asked = set(words(question))
+    return max(options, key=lambda o: (len(asked & set(words(o))), -options.index(o)))
+
 
 def generate(
     args: argparse.Namespace, workspace: Workspace, question: str, app_db: Any
@@ -359,10 +425,11 @@ def generate(
     options = clarification_options(body)
     notes: List[str] = []
     if options and args.answer_clarifications:
-        # What a user does: click the first reading offered. Same thread,
-        # so the follow-up turn sees the original question as history.
-        notes.append(f"clarification answered with: {options[0]}")
-        conversation_id, body = _ask(args, workspace, options[0], conversation_id)
+        # What a user does: click a reading. Same thread, so the follow-up
+        # turn sees the original question as history.
+        chosen = closest_option(question, options)
+        notes.append(f"clarification answered with: {chosen}")
+        conversation_id, body = _ask(args, workspace, chosen, conversation_id)
     rows = _generations(app_db, workspace.tenant, conversation_id)
     return Generation(conversation_id, body, bool(options), notes, rows)
 
@@ -411,8 +478,10 @@ def run_one(
         outcome.completion_tokens = rows[-1].get("completion_tokens")
         outcome.retrieval_strategy = final.get("retrieval_strategy")
 
+        if generation.scored_sql != final["sql"]:
+            outcome.notes.append(f"paged answer scored unpaged: {generation.scored_sql}")
         gold = _execute(engine, record["query"])
-        predicted = _execute(engine, final["sql"])
+        predicted = _execute(engine, generation.scored_sql)
         outcome.exact, outcome.relaxed = compare_results(gold, predicted)
         outcome.any_relaxed = outcome.relaxed
         for earlier in reversed(succeeded[:-1]):
@@ -527,7 +596,7 @@ def _parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Only execute the reference SQL and report errors and empty results. "
         "Needs nothing but the warehouse; run it on a new dataset before trusting it.",
     )
-    p.add_argument("--dataset", default=str(Path(__file__).resolve().parents[2] / "qa.json"))
+    p.add_argument("--dataset", default="", help="One dataset file (or use --suite)")
     p.add_argument(
         "--suite",
         default="",
@@ -551,7 +620,7 @@ def _parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--answer-clarifications",
         action="store_true",
-        help="When the agent asks which reading was meant, reply with its first option "
+        help="When the agent asks which reading was meant, reply with the option closest to the question "
         "and score the follow-up -- separates SQL ability from the decision to ask.",
     )
     p.add_argument("--label", default="run", help="Names the report, e.g. full / search")
@@ -628,8 +697,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.suite:
         return run_suite(args)
 
-    if not args.target_db:
-        print("--target-db is required (or use --suite with --target-host).", file=sys.stderr)
+    if not args.dataset or not args.target_db:
+        print(
+            "--dataset and --target-db are required (or use --suite with --target-host).",
+            file=sys.stderr,
+        )
         return 2
     records = _load_records(Path(args.dataset), args.limit)
     if _refuse_broken(records, Path(args.dataset).name):

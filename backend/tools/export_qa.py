@@ -190,11 +190,23 @@ def exchanges(client: Client, limit: int) -> List[Tuple[str, str, str]]:
 
 
 def build_one(
-    client: Client, *, limit: int, all_queries: bool
+    client: Client, *, limit: int, all_queries: bool, exclude_prefix: str = ""
 ) -> Tuple[List[Dict[str, str]], Dict[str, int]]:
     database = database_name(client)
     rows = generations(client, limit)
     pairs = exchanges(client, limit)
+    excluded = 0
+    if exclude_prefix:
+        # Eval harness threads (`sql_accuracy.py`, `toolkit_bridge.py` name them
+        # "eval-<uuid>") are test traffic: exporting them would turn a benchmark
+        # run into "history", and a re-export into a copy of the benchmark.
+        kept = [p for p in pairs if not p[0].startswith(exclude_prefix)]
+        excluded = len(pairs) - len(kept)
+        pairs = kept
+        rows = [
+            r for r in rows
+            if not str(r.get("conversation_id") or "").startswith(exclude_prefix)
+        ]
 
     # Index the SQL two ways. conversation_id is exact; question text is the
     # fallback for a generation recorded before its thread was persisted.
@@ -221,7 +233,12 @@ def build_one(
         return statements if all_queries else statements[-1:]
 
     records: List[Dict[str, str]] = []
-    counts = {"exchanges": len(pairs), "without_sql": 0, "generations": len(rows)}
+    counts = {
+        "exchanges": len(pairs),
+        "without_sql": 0,
+        "generations": len(rows),
+        "excluded": excluded,
+    }
 
     for thread_id, question, answer in pairs:
         statements = sql_for(thread_id, question)
@@ -326,6 +343,12 @@ def main() -> int:
     )
     parser.add_argument("--out", default="qa.json")
     parser.add_argument(
+        "--exclude-prefix",
+        default="eval-",
+        help="skip conversations whose id starts with this (default 'eval-', the "
+        "eval harness's threads); pass '' to keep everything",
+    )
+    parser.add_argument(
         "--limit", type=int, default=200, help="how much history to read per workspace"
     )
     parser.add_argument(
@@ -369,7 +392,10 @@ def main() -> int:
         client.sign_in(args.email, args.password)
         try:
             found, counts = build_one(
-                client, limit=args.limit, all_queries=args.all_queries
+                client,
+                limit=args.limit,
+                all_queries=args.all_queries,
+                exclude_prefix=args.exclude_prefix,
             )
         except SystemExit as exc:  # one unreadable workspace is not fatal
             print(f"  {tenant:<12} unavailable: {exc}")
@@ -379,7 +405,8 @@ def main() -> int:
         records.extend(found)
         database = found[0]["database"] if found else "?"
         per_database[tenant] = len(found)
-        print(f"  {tenant:<12} {len(found):>4} records  ({database})")
+        note = f", {counts['excluded']} eval threads skipped" if counts.get("excluded") else ""
+        print(f"  {tenant:<12} {len(found):>4} records  ({database}{note})")
 
     dropped = 0
     if not args.keep_duplicates:

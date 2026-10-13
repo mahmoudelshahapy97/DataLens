@@ -51,6 +51,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger("vanna.catalog")
 
 
+def _kind_metadata(row: Dict[str, Any]) -> Dict[str, Any]:
+    """``TableMetadata.metadata`` for a stored row: the view facts, if a view."""
+    if row.get("table_kind") != "view":
+        return {}
+    return {"kind": "view", "view_definition": row.get("view_definition")}
+
+
 class PostgresSchemaCatalog(SchemaCatalog):
     """Tenant-scoped schema catalog backed by the control plane.
 
@@ -110,6 +117,7 @@ class PostgresSchemaCatalog(SchemaCatalog):
             f"""
             SELECT t.data_source_id, t.table_key, t.schema_name, t.table_name,
                    t.row_count_estimate, t.status, t.error_message, t.last_seen_at,
+                   t.table_kind, t.view_definition,
                    a.description AS annotation_description
               FROM {SCHEMA}.catalog_tables t
               LEFT JOIN {SCHEMA}.table_annotations a
@@ -149,6 +157,7 @@ class PostgresSchemaCatalog(SchemaCatalog):
             f"""
             SELECT t.data_source_id, t.table_key, t.schema_name, t.table_name,
                    t.row_count_estimate, t.status, t.error_message, t.last_seen_at,
+                   t.table_kind, t.view_definition,
                    a.description AS annotation_description
               FROM {SCHEMA}.catalog_tables t
               LEFT JOIN {SCHEMA}.table_annotations a
@@ -382,6 +391,7 @@ class PostgresSchemaCatalog(SchemaCatalog):
             status=CatalogStatus(row["status"]),
             error_message=row["error_message"],
             last_synced_at=row["last_seen_at"],
+            metadata=_kind_metadata(row),
         )
 
     # ------------------------------------------------------------------
@@ -424,14 +434,17 @@ class PostgresSchemaCatalog(SchemaCatalog):
                     INSERT INTO {SCHEMA}.catalog_tables
                         (tenant_id, data_source_id, table_key, schema_name, table_name,
                          row_count_estimate, status, error_message,
+                         table_kind, view_definition,
                          lifecycle_status, last_seen_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'present', now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'present', now())
                     ON CONFLICT (tenant_id, data_source_id, table_key) DO UPDATE SET
                         schema_name        = EXCLUDED.schema_name,
                         table_name         = EXCLUDED.table_name,
                         row_count_estimate = EXCLUDED.row_count_estimate,
                         status             = EXCLUDED.status,
                         error_message      = EXCLUDED.error_message,
+                        table_kind         = EXCLUDED.table_kind,
+                        view_definition    = EXCLUDED.view_definition,
                         lifecycle_status   = 'present',
                         last_seen_at       = now()
                     """,
@@ -444,6 +457,8 @@ class PostgresSchemaCatalog(SchemaCatalog):
                         table.row_count_estimate,
                         str(getattr(table.status, "value", table.status)),
                         table.error_message,
+                        "view" if table.is_view else "table",
+                        (table.metadata or {}).get("view_definition"),
                     ),
                 )
 

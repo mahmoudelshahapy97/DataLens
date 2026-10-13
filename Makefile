@@ -15,6 +15,9 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 PYTHON ?= python
+# The operator scripts live in backend/tools; every target that runs one names it
+# through this, from the repository root.
+TOOLS := backend/tools
 COMPOSE ?= docker compose
 NPM ?= npm
 
@@ -77,7 +80,7 @@ test:  ## Unit tests (no database needed)
 .PHONY: plotly-bundle
 plotly-bundle:  ## Rebuild the Plotly bundle embedded in exported dashboards
 	@docker run --rm \
-	  -v "$(CURDIR)/tools/plotly_export_bundle:/src:ro" \
+	  -v "$(CURDIR)/$(TOOLS)/plotly_export_bundle:/src:ro" \
 	  -v "$(CURDIR)/backend/vanna/dashboards/vendor:/out" \
 	  -w /build node:20-alpine sh -c '\
 	    cp /src/package.json /src/entry.js . && \
@@ -93,11 +96,11 @@ plotly-bundle:  ## Rebuild the Plotly bundle embedded in exported dashboards
 
 .PHONY: seed-config
 seed-config:  ## Migrate, import backend/ into the config catalog, regenerate database/
-	VANNA_APP_DATABASE_URL=$(APP_DB_URL) $(PYTHON) tools/seed_database.py
+	VANNA_APP_DATABASE_URL=$(APP_DB_URL) $(PYTHON) $(TOOLS)/seed_database.py
 
 .PHONY: export-schema
 export-schema:  ## Regenerate database/sql_schema.sql and database/seed/
-	VANNA_APP_DATABASE_URL=$(APP_DB_URL) $(PYTHON) tools/export_sql_schema.py
+	VANNA_APP_DATABASE_URL=$(APP_DB_URL) $(PYTHON) $(TOOLS)/export_sql_schema.py
 
 .PHONY: test-integration
 test-integration:  ## Integration tests (needs PostgreSQL at DB_URL)
@@ -117,7 +120,7 @@ test-e2e:  ## Browser tests against a running stack (needs E2E_PASSWORD)
 .PHONY: role-accounts
 role-accounts:  ## Create the four QA accounts the role screenshots sign in as
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/provision_role_accounts.py --url $(E2E_URL) \
+	$(PYTHON) $(TOOLS)/provision_role_accounts.py --url $(E2E_URL) \
 		--admin-email $(E2E_EMAIL) --password $(E2E_PASSWORD)
 
 .PHONY: role-screenshots
@@ -128,7 +131,7 @@ role-screenshots:  ## Photograph the app as admin, analyst, viewer and an outsid
 .PHONY: demo-video
 demo-video:  ## Record a walkthrough of the running app into artifacts/video
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/record_demo.py --url $(E2E_URL) --email $(E2E_EMAIL) \n		--password $(E2E_PASSWORD)
+	$(PYTHON) $(TOOLS)/record_demo.py --url $(E2E_URL) --email $(E2E_EMAIL) \n		--password $(E2E_PASSWORD)
 	@echo "Clips in ./artifacts/video"
 
 .PHONY: screenshots
@@ -142,13 +145,13 @@ screenshots:  ## Photograph every screen into artifacts/ (needs E2E_PASSWORD)
 .PHONY: seed
 seed:  ## Fill a workspace with demo content, so no screen is empty
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/seed_demo_data.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/seed_demo_data.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(E2E_TENANT) --password $(E2E_PASSWORD) --clean
 
 .PHONY: seed-questions
 seed-questions:  ## Ask real questions through the chat, for real Q&A history (slow, costs LLM calls)
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/ask_demo_questions.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/ask_demo_questions.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(E2E_TENANT) --password $(E2E_PASSWORD)
 	@echo "Tip: E2E_TENANT=all asks every workspace. Budget an hour or two."
 
@@ -163,43 +166,43 @@ provision-list:  ## Show what domains.yml would provision, without applying it
 .PHONY: enable-packs
 enable-packs:  ## Opt each workspace into its starter-library pack
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/enable_domain_packs.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/enable_domain_packs.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--password $(E2E_PASSWORD)
 
 .PHONY: revoke-packs
 revoke-packs:  ## Remove those packs again, keeping any rule a workspace edited
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/enable_domain_packs.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/enable_domain_packs.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--password $(E2E_PASSWORD) --revoke
 
 .PHONY: retire-wrong-rules
 retire-wrong-rules:  ## Switch off the rules naming columns the databases do not have
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/retire_wrong_rules.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/retire_wrong_rules.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--password $(E2E_PASSWORD)
 
 .PHONY: seed-writes
 seed-writes:  ## Ask the write bank (propose_write/confirm_write). Refused unless grants exist
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/ask_demo_questions.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/ask_demo_questions.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(E2E_TENANT) --password $(E2E_PASSWORD) --writes
 
 .PHONY: grant-writes
 grant-writes:  ## Grant DML on genre, playlist and customer (undo with make revoke-writes)
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/grant_demo_writes.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/grant_demo_writes.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(E2E_TENANT) --password $(E2E_PASSWORD)
 
 .PHONY: revoke-writes
 revoke-writes:  ## Put those tables back to read-only
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/grant_demo_writes.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/grant_demo_writes.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(E2E_TENANT) --password $(E2E_PASSWORD) --revoke
 
 .PHONY: qa-json
 qa-json:  ## Export Q&A history across every workspace to qa.json
 	@test -n "$(E2E_PASSWORD)" || { echo "Set E2E_PASSWORD. 'make password' prints it."; exit 1; }
-	$(PYTHON) tools/export_qa.py --url $(E2E_URL) --email $(E2E_EMAIL) \
+	$(PYTHON) $(TOOLS)/export_qa.py --url $(E2E_URL) --email $(E2E_EMAIL) \
 		--tenant $(QA_TENANT) --password $(E2E_PASSWORD) --out qa.json
 
 # text2sql-eval-toolkit lives beside this repository and wants Python >= 3.11 in

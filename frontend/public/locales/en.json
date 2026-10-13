@@ -211,6 +211,8 @@
   "ask.queryingDatabase": "Querying {name}",
   "thread.search": "Search conversations",
   "thread.loadMore": "Load more",
+  "thread.export": "Export as Markdown",
+  "thread.sql": "SQL",
   "thread.rename": "Rename",
   "thread.renameOne": "Rename {title}",
   "thread.deleteOne": "Delete {title}",

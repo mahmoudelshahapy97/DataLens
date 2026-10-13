@@ -343,7 +343,9 @@ def prediction_entry(
         },
     }
     if generation.final is not None:
-        entry["predicted_sql"] = generation.final["sql"]
+        # Unpaged when the last statement was one page of the answer, so the
+        # toolkit scores the whole result rather than rows 31-60.
+        entry["predicted_sql"] = generation.scored_sql
     else:
         entry["inference_error"] = generation.failure
         if answer:
@@ -588,7 +590,7 @@ def _parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     asking.add_argument("--token", required=True, help="API token (Bearer) for an analyst")
     asking.add_argument("--app-db", required=True, help="Control-plane Postgres URL")
     asking.add_argument("--answer-clarifications", action="store_true",
-                        help="Reply to a clarification with its first option, as sql_accuracy does")
+                        help="Reply to a clarification with the option closest to the question, as sql_accuracy does")
     asking.add_argument("--with-evidence", action="store_true",
                         help="Append a record's evidence (BIRD hints) to the question")
     asking.add_argument("--workers", type=int, default=3)

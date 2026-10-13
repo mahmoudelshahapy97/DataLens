@@ -14,8 +14,9 @@
 #
 # Scope: this file checks **which tools the agent reaches for**, which is what
 # a trajectory dataset is good at. It deliberately does not check numeric
-# correctness -- `qa.json` at the repository root is the corpus for that, with
-# 40 questions carrying both an expected answer and reference SQL.
+# correctness -- `backend/evals/datasets/sql_accuracy/` is the corpus for that
+# (96 questions with hand-written, gold-checked reference SQL; see
+# `backend/evals/sql_accuracy.py`).
 #
 # Schema: Chinook, as seeded by `backend/tools/seed_database.py`. Tables are
 # `chinook.artist`, `album`, `track`, `genre`, `customer`, `invoice`,
@@ -25,7 +26,7 @@ dataset:
   name: "SQL Generation - Chinook"
   description: >
     Does the agent reach for the right tools on the Chinook demo warehouse?
-    Trajectory only; numeric correctness lives in qa.json.
+    Trajectory only; numeric correctness lives in datasets/sql_accuracy/.
 
   test_cases:
     # --- Baseline: a question needing nothing but a query -----------------

@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from ..authz import forbid_viewer
@@ -441,18 +441,67 @@ def register(app: Any, deps: Deps) -> None:
         return {
             "id": found.id,
             "title": (found.metadata or {}).get("title") or "",
-            "messages": [
-                {
-                    "role": message.role,
-                    "content": message.content,
-                    "timestamp": message.timestamp.isoformat(),
-                }
-                for message in found.messages
-                # Tool traffic is machinery, not transcript. Replaying it would show
-                # the reader a conversation they never had.
-                if message.role in ("user", "assistant") and message.content
-            ],
+            "messages": await _transcript(found, user),
         }
+
+    async def _transcript(found: Any, user: Any) -> List[Dict[str, Any]]:
+        """User and assistant messages, each reply carrying the SQL it produced."""
+        queries: List[Dict[str, Any]] = []
+        if deps.generation_store is not None:
+            try:
+                queries = await deps.generation_store.for_conversation(
+                    user.tenant_id, user.id, found.id
+                )
+            except Exception:  # history is a convenience; never block the transcript
+                queries = []
+
+        messages: List[Dict[str, Any]] = []
+        last_question = ""
+        for message in found.messages:
+            # Tool traffic is machinery, not transcript. Replaying it would show
+            # the reader a conversation they never had.
+            if message.role not in ("user", "assistant") or not message.content:
+                continue
+            entry: Dict[str, Any] = {
+                "role": message.role,
+                "content": message.content,
+                "timestamp": message.timestamp.isoformat(),
+            }
+            if message.role == "user":
+                last_question = (message.content or "").strip()
+            else:
+                for index, query in enumerate(queries):
+                    if (query.get("question") or "").strip() == last_question:
+                        entry["sql"] = query.get("sql") or ""
+                        entry["status"] = query.get("status")
+                        entry["row_count"] = query.get("row_count")
+                        del queries[index]
+                        break
+            messages.append(entry)
+        return messages
+
+    @app.get("/api/vanna/v2/conversations/{conversation_id}/export")
+    async def export_conversation(conversation_id: str, request: Request) -> Response:
+        """The thread as a Markdown file: every message and the SQL behind each answer."""
+        user = await deps.caller(request)
+        found = await deps.require_conversations().get_conversation(conversation_id, user)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        title = (found.metadata or {}).get("title") or found.id
+        lines = [f"# {title}", ""]
+        for message in await _transcript(found, user):
+            who = "User" if message["role"] == "user" else "Assistant"
+            lines += [f"## {who} ({message['timestamp']})", "", message["content"], ""]
+            if message.get("sql"):
+                lines += ["```sql", message["sql"], "```", ""]
+        return Response(
+            "\n".join(lines),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="conversation-{found.id}.md"'
+            },
+        )
 
     @app.patch("/api/vanna/v2/conversations/{conversation_id}")
     async def rename_conversation(

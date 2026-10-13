@@ -42,30 +42,38 @@ class TestChatSameWorkspaceWorks:
 
 class TestChatCrossWorkspaceAccess:
     """The same claim `test_tenant_isolation.py` makes for every other routed
-    endpoint, extended to chat -- with one difference worth calling out: chat
-    does not reject with an HTTP error status the way every other routed
-    endpoint in `test_tenant_isolation.py` does. `Agent.send_message` (used by
-    all three chat transports) catches every exception raised while resolving
-    the user or handling the message and turns it into an in-band error
-    component, so a permission failure comes back as HTTP 200 with an error
-    chunk in the body, not a 403/404. That is a real behavioural asymmetry
-    with the rest of the API, not a gap in this test -- callers relying on
-    status codes elsewhere in the app cannot rely on one here."""
+    endpoint, extended to chat.
 
-    @pytest.mark.parametrize("path", ["/api/vanna/v2/chat_poll", "/api/vanna/v2/chat_sse"])
-    async def test_a_forged_workspace_header_does_not_grant_a_chat_in_it(
-        self, world, path
-    ):
+    The caller is resolved by `TenantDispatchChatHandler` before any agent is
+    involved, so a refusal is a `PermissionError` raised out of the handler --
+    not an in-band error from `Agent.send_message`, as this docstring used to
+    claim. How it surfaces depends on the transport:
+
+    * `chat_poll` answers 403, like every other routed endpoint. It used to
+      answer 500, treating the refusal as a crash.
+    * `chat_sse` has already sent its 200 and headers when the handler runs,
+      so the refusal arrives as an error event inside the stream."""
+
+    async def test_a_forged_workspace_header_is_refused_by_poll(self, world):
         client = world["clients"]["acme.viewer"]
         response = await client.post(
-            path,
+            "/api/vanna/v2/chat_poll",
+            json={"message": "hello"},
+            headers={"X-Tenant-Id": "globex"},
+        )
+        assert response.status_code == 403
+        assert "not a member" in response.json()["detail"]
+
+    async def test_a_forged_workspace_header_is_refused_in_the_sse_stream(self, world):
+        client = world["clients"]["acme.viewer"]
+        response = await client.post(
+            "/api/vanna/v2/chat_sse",
             json={"message": "hello"},
             headers={"X-Tenant-Id": "globex"},
         )
         assert response.status_code == 200
-        # No real assistant content, no leak of globex's workspace -- just the
-        # generic failure surface `Agent.send_message` produces for an
-        # exception it did not expect (here, resolve_user's PermissionError).
+        # No assistant content and no leak of globex's workspace -- the
+        # stream's generic error event.
         assert "error" in response.text.lower()
 
     async def test_conversation_store_scopes_reads_by_user_not_just_id(

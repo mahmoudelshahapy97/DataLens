@@ -244,12 +244,10 @@ coverage.xml
 # see the evidence without running the suite. Worth moving to Git LFS if the
 # repository starts feeling slow to clone.
 
-# The Q&A export is tracked, by request. Its answers do quote query results
-# verbatim -- names and revenue figures -- which is why it was excluded before.
-# It is defensible here because every warehouse behind it is a public sample
-# database (chinook, northwind, pagila and friends), so the names are fictional.
-# Point this repository at a real warehouse and the export stops being safe to
-# commit: regenerate with `make qa-json` and re-add the `qa*.json` rule.
+# Q&A exports (`make qa-json`). Not tracked: they quote query results verbatim,
+# and they are unreviewed agent output, not a benchmark -- the tracked qa.json was
+# removed for that reason. The benchmark is backend/evals/datasets/sql_accuracy/.
+qa*.json
 
 # Execution-accuracy reports from backend/evals/sql_accuracy.py
 backend/evals/results/

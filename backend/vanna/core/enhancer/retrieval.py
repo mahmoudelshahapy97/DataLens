@@ -25,9 +25,10 @@ omitted rather than rendered as empty headings.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import uuid
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from .base import LlmContextEnhancer
 from .budget import AssemblyResult, BudgetPolicy, Section, assemble
@@ -45,6 +46,27 @@ logger = logging.getLogger(__name__)
 
 #: Examples fetched per example shown when re-ranking by table overlap.
 EXAMPLE_CANDIDATE_FACTOR = 3
+
+#: What the last retrieval pass in this request chose: the schema strategy, the
+#: tables shown and the examples used. Set here, read when a generation is
+#: recorded (``vanna_app.platform``), several LLM turns later -- the same
+#: hand-off ``current_question()`` uses. Without it every generation row had
+#: empty retrieval columns, so lineage and triage could not tell a retrieval
+#: miss from a reasoning error.
+_LAST_RETRIEVAL: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "vanna_last_retrieval", default=None
+)
+
+
+def last_retrieval() -> Optional[Dict[str, Any]]:
+    """``{"strategy", "table_names", "example_ids"}`` for this request, or None."""
+    return _LAST_RETRIEVAL.get()
+
+
+class _Example(str):
+    """A rendered example that remembers which stored example it came from."""
+
+    example_id: Optional[str] = None
 
 
 def _render_core_columns(core: dict, tables) -> str:
@@ -306,6 +328,16 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
                 )
             )
 
+        _LAST_RETRIEVAL.set(
+            {
+                "strategy": (schema_info or {}).get("strategy"),
+                "table_names": list(schema_tables or []),
+                "example_ids": [
+                    e.example_id for e in examples or [] if getattr(e, "example_id", None)
+                ],
+            }
+        )
+
         if not sections:
             return None
 
@@ -364,9 +396,12 @@ class RetrievalContextEnhancer(LlmContextEnhancer):
                 hits,
                 key=lambda h: -overlap(tables_in_sql(h.example.sql), selected),
             )[: self.max_examples]
-        return [
-            f"Question: {h.example.question}\nSQL:\n{h.example.sql}" for h in hits
-        ]
+        rendered = []
+        for hit in hits:
+            item = _Example(f"Question: {hit.example.question}\nSQL:\n{hit.example.sql}")
+            item.example_id = getattr(hit.example, "id", None)
+            rendered.append(item)
+        return rendered
 
     async def _schema_section(self, context, question: str):
         if self.catalog is None:

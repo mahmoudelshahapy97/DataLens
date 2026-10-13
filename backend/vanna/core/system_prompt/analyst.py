@@ -190,12 +190,25 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
         plan: List[str] = []
 
         if "request_clarification" in names:
+            # The defaults are the point. Without them the model treated every
+            # filter the question did not mention as an open choice: asked to
+            # sum order line totals per category, it asked whether cancelled
+            # orders should count -- 9 of 96 eval questions ended in a question
+            # back, each of which a stated default would have answered.
             plan.append(
                 "First decide whether the question has one reasonable "
-                "reading. If two readings are equally likely and would give "
-                "materially different answers, call request_clarification "
-                "instead of guessing. If one reading is clearly most likely, "
-                "answer it and say which you assumed."
+                "reading. Ask with request_clarification only when two readings "
+                "are equally likely AND would give materially different answers "
+                "-- for example 'top customers' with no measure. Otherwise "
+                "answer, and say in one line what you assumed. These defaults "
+                "are not ambiguities: a status or lifecycle filter the question "
+                "does not mention means include every row (do not ask whether "
+                "cancelled or pending records count); a period it does not "
+                "mention means all available data; a question that names its "
+                "measure ('sum of order line totals') has settled what to "
+                "measure. If the doubt is whether something can happen in the "
+                "data (a reservation with several rooms, a row with no match), "
+                "check with a query instead of asking."
             )
 
         if "get_relevant_tables" in names or "search_tables" in names:
@@ -251,6 +264,15 @@ class AnalystSystemPromptBuilder(SystemPromptBuilder):
             plan.append(
                 "Execute the query. If it errors, read the error, fix the "
                 "specific problem, and retry -- do not rewrite from scratch."
+            )
+            # A check run after the answer becomes the last statement of the
+            # turn -- the one history, the UI and every scorer treat as the
+            # answer. Paging through the answer's own rows is a different thing
+            # and stays allowed.
+            plan.append(
+                "Run any sanity checks (row counts, date ranges, NULL checks) "
+                "before the query that answers the question, not after it. "
+                "Paging through the answer's own rows is fine."
             )
             plan.append(
                 "Interpret the result for the user in a sentence or two."

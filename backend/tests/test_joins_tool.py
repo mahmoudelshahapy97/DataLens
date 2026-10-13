@@ -3,7 +3,7 @@
 The case that matters is the one `get_table_schema` cannot answer: `track` and
 `artist` have no edge between them, and a model left to guess joins on
 same-named columns and returns a plausible wrong number. These tests are shaped
-like Chinook because that is the demo warehouse `qa.json` is scored against.
+like Chinook because that is the demo warehouse the SQL accuracy suite scores.
 
 `LocalSchemaCatalog` backs this the same way `test_schema_tools.py` uses it --
 in-memory and dependency-free, so the graph logic is tested without a database.

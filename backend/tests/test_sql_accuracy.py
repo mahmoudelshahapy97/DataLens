@@ -197,3 +197,105 @@ class TestClarificationCards:
         from evals.sql_accuracy import clarification_options
 
         assert clarification_options({"chunks": [{"rich": {"type": "dataframe"}}]}) == []
+
+
+class TestPagedAnswers:
+    """Paging stays allowed; the scorer reads the whole answer instead of rows 31-60."""
+
+    def test_offset_page_is_unpaged(self):
+        from evals.sql_accuracy import unpaged
+
+        sql = "SELECT u.email FROM ecommerce.users AS u ORDER BY u.email LIMIT 30 OFFSET 30;"
+        assert unpaged(sql) == "SELECT u.email FROM ecommerce.users AS u ORDER BY u.email"
+
+    def test_offset_before_limit_and_trailing_comment(self):
+        from evals.sql_accuracy import unpaged
+
+        sql = "SELECT a FROM t ORDER BY a OFFSET 30 LIMIT 30 -- page 2"
+        assert unpaged(sql) == "SELECT a FROM t ORDER BY a"
+
+    def test_top_n_limit_is_an_answer_not_a_page(self):
+        from evals.sql_accuracy import unpaged
+
+        assert unpaged("SELECT a FROM t ORDER BY a DESC LIMIT 5") is None
+
+    def test_offset_inside_a_subquery_is_left_alone(self):
+        from evals.sql_accuracy import unpaged
+
+        sql = "SELECT * FROM (SELECT a FROM t ORDER BY a LIMIT 10 OFFSET 5) AS s"
+        assert unpaged(sql) is None
+
+    def test_unparseable_sql_falls_back(self):
+        from evals.sql_accuracy import unpaged
+
+        assert unpaged("SELEKT nonsense OFFSET 3") is None
+
+    def test_generation_scores_the_unpaged_statement(self):
+        from evals.sql_accuracy import Generation
+
+        generation = Generation("c", {}, rows=[
+            {"status": "valid", "sql": "SELECT a FROM t ORDER BY a LIMIT 30"},
+            {"status": "valid", "sql": "SELECT a FROM t ORDER BY a LIMIT 30 OFFSET 30"},
+        ])
+        assert generation.scored_sql == "SELECT a FROM t ORDER BY a"
+
+
+class TestClosestOption:
+    def test_the_reading_that_matches_the_question_wins(self):
+        from evals.sql_accuracy import closest_option
+
+        question = "What percentage of each category's net revenue came from discounted lines?"
+        options = [
+            "For delivered orders only, what percentage of revenue came from discounted lines?",
+            "What percentage of each category's net revenue came from discounted lines, all orders?",
+        ]
+        assert closest_option(question, options) == options[1]
+
+    def test_ties_go_to_the_first_option(self):
+        from evals.sql_accuracy import closest_option
+
+        assert closest_option("revenue", ["Revenue by A?", "Revenue by B?"]) == "Revenue by A?"
+
+
+class TestExporterSkipsEvalThreads:
+    """Eval runs post real chat turns; an export must not turn them into history."""
+
+    class _Client:
+        THREADS = {
+            "c-real": [("user", "Revenue by genre?"), ("assistant", "Rock leads.")],
+            "eval-1234": [("user", "Benchmark question?"), ("assistant", "An answer.")],
+        }
+
+        def call(self, method, path, body=None):
+            if path.startswith("/api/vanna/v2/schema"):
+                return 200, {"data_source": "chinook"}
+            if path.startswith("/api/vanna/v2/history"):
+                return 200, {"history": [
+                    {"conversation_id": "c-real", "question": "Revenue by genre?",
+                     "sql": "SELECT 1", "status": "valid"},
+                    {"conversation_id": "eval-1234", "question": "Benchmark question?",
+                     "sql": "SELECT 2", "status": "valid"},
+                ]}
+            if path.startswith("/api/vanna/v2/conversations/"):
+                thread = path.rsplit("/", 1)[-1]
+                return 200, {"messages": [
+                    {"role": r, "content": c} for r, c in self.THREADS[thread]
+                ]}
+            if path.startswith("/api/vanna/v2/conversations"):
+                return 200, {"conversations": [{"id": t} for t in self.THREADS]}
+            return 404, {}
+
+    def test_eval_threads_are_skipped_by_default_prefix(self):
+        from tools.export_qa import build_one
+
+        records, counts = build_one(
+            self._Client(), limit=10, all_queries=False, exclude_prefix="eval-"
+        )
+        assert [r["question"] for r in records] == ["Revenue by genre?"]
+        assert counts["excluded"] == 1
+
+    def test_an_empty_prefix_keeps_everything(self):
+        from tools.export_qa import build_one
+
+        records, _ = build_one(self._Client(), limit=10, all_queries=False, exclude_prefix="")
+        assert len(records) == 2

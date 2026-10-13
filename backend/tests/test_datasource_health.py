@@ -21,11 +21,34 @@ the connection string, password included, and this text is rendered in a browser
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 import pytest
 
 pytestmark = pytest.mark.integration
 
-WORKING = "postgresql://postgres:postgres123@127.0.0.1:5432/postgres"
+
+@pytest.fixture
+def working(database_url):
+    """A source that answers: the test server's own `postgres` database.
+
+    Derived from VANNA_TEST_DATABASE_URL rather than hard-coded. The constant
+    this replaces pointed at 127.0.0.1:5432 with one particular password, so on
+    any machine where that address is a different server -- a native Postgres
+    beside the Docker one -- the "working" source failed its health check and
+    both success tests failed for reasons that had nothing to do with the code.
+    """
+    parts = urlsplit(database_url)
+    return urlunsplit((parts.scheme, parts.netloc, "/postgres", "", ""))
+
+
+@pytest.fixture
+def broken(working):
+    """The same server with a password it will refuse."""
+    parts = urlsplit(working)
+    host = parts.hostname + (f":{parts.port}" if parts.port else "")
+    netloc = f"{parts.username or 'postgres'}:definitely-not-the-password@{host}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 @pytest.fixture
@@ -41,10 +64,10 @@ async def registry(app_db):
 
 
 class TestUnknownIsNotHealthy:
-    async def test_a_new_source_has_never_been_checked(self, registry):
+    async def test_a_new_source_has_never_been_checked(self, registry, working):
         """`None`, not False and not True. A source registered before this existed
         is honestly unknown, and the console has to say so differently."""
-        await registry.register("acme", WORKING, is_default=True)
+        await registry.register("acme", working, is_default=True)
 
         listed = await registry.list_sources("acme")
 
@@ -54,8 +77,8 @@ class TestUnknownIsNotHealthy:
 
 
 class TestTheResultIsRemembered:
-    async def test_a_successful_check_is_recorded(self, registry):
-        registered = await registry.register("acme", WORKING, is_default=True)
+    async def test_a_successful_check_is_recorded(self, registry, working):
+        registered = await registry.register("acme", working, is_default=True)
 
         result = await registry.check("acme", registered["data_source_id"])
 
@@ -65,12 +88,11 @@ class TestTheResultIsRemembered:
         assert listed[0]["last_checked_at"] is not None
         assert listed[0]["last_error"] is None
 
-    async def test_a_failing_check_is_recorded_with_its_reason(self, registry):
+    async def test_a_failing_check_is_recorded_with_its_reason(self, registry, broken):
         """The point of storing it: the next person to look does not have to
         reproduce the failure to find out what it was."""
         # `register` does not probe, so a bad password can be stored -- which is
         # exactly the state this feature exists to surface later.
-        broken = WORKING.replace("postgres123", "definitely-not-the-password")
         registered = await registry.register("acme", broken, is_default=True)
 
         result = await registry.check("acme", registered["data_source_id"])
@@ -81,8 +103,8 @@ class TestTheResultIsRemembered:
         assert listed[0]["last_ok"] is False
         assert listed[0]["last_error"]
 
-    async def test_recovery_clears_the_error(self, registry):
-        registered = await registry.register("acme", WORKING, is_default=True)
+    async def test_recovery_clears_the_error(self, registry, working):
+        registered = await registry.register("acme", working, is_default=True)
         await registry.record_health(
             "acme", registered["data_source_id"], ok=False, error="an old failure"
         )
@@ -93,10 +115,10 @@ class TestTheResultIsRemembered:
         assert listed[0]["last_ok"] is True
         assert listed[0]["last_error"] is None, "a stale error outlived its cause"
 
-    async def test_an_unregistered_source_is_not_found(self, registry):
+    async def test_an_unregistered_source_is_not_found(self, registry, working):
         from vanna_app.datasources import UnknownDataSource
 
-        await registry.register("acme", WORKING, is_default=True)
+        await registry.register("acme", working, is_default=True)
 
         with pytest.raises(UnknownDataSource):
             await registry.check("acme", "postgresql://nowhere/nothing")

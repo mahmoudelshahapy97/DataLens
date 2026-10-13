@@ -575,3 +575,20 @@ class TestInferredRelationships:
         )
         assert len(await catalog.get_relationships(acme, data_source_id="db1")) == 1
         assert await catalog.list_inferred_relationships("globex", "db1") == []
+
+
+class TestViewsAreStoredAsViews:
+    """Migration 0020: table_kind and view_definition survive the round trip."""
+
+    async def test_a_view_round_trips(self, catalog, acme):
+        view = table("current_orders", column("order_id"))
+        view.metadata = {"kind": "view", "view_definition": "SELECT order_id FROM sales.orders"}
+        await catalog.upsert_tables(acme, [table("orders", column("order_id")), view])
+
+        found = {t.table_name: t for t in await catalog.get_tables(acme, data_source_id="db1")}
+        assert found["current_orders"].is_view
+        assert found["current_orders"].metadata["view_definition"].startswith("SELECT")
+        assert not found["orders"].is_view
+
+        one = await catalog.get_table(acme, "sales.current_orders", data_source_id="db1")
+        assert one.is_view

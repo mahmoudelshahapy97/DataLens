@@ -196,3 +196,64 @@ Uncommitted at the time of writing:
 - `backend/tests/test_sql_accuracy.py`, `test_relationship_inference.py`, `test_schema_context_graph.py`
 - the scanner, catalog and retrieval changes listed above
 - `docker-compose.yml`, `.env.example`
+
+
+## Follow-up: issues fixed, and the re-run (2026-10-09, later)
+
+All 96 questions were run again after the fixes below, as asked (no clarification answering), with three workers against the rebuilt backend.
+
+| | Before | After |
+|---|---:|---:|
+| Correct, relaxed match | 82 / 96 (85%)¹ | **93 / 96 (97%)** |
+| Exact match | 68 | 74 |
+| Clarifying question instead of an answer | 11 | **0** |
+| Hard questions correct | 48 / 53 | **53 / 53** |
+| Mean time per question | 48 s | 26 s |
+| Mean prompt / completion tokens | 21.3k / 2.8k² | 27.0k / 1.2k |
+
+¹ 83/96 in the toolkit run. ² Completion tokens are from the toolkit run.
+
+Eight databases now score 100%. All three remaining failures are in `booking`:
+- **Two questions are a data ambiguity, not a SQL error.** "Not canceled" can be read as `is_canceled = 0` (the reference) or `reservation_status <> 'Canceled'` (what the agent used). No-show bookings have `is_canceled = 1`, so the second reading keeps 1,207 no-shows. A column description on `is_canceled` ("1 for canceled and no-show bookings") would settle it.
+- **One question hit a SQL-policy false positive** (see "New issues" below). Its query from a derived table was refused, and the turn ended on a check query.
+
+Two genuinely ambiguous questions were checked twice each:
+- "Show me our top customers" (no measure given) still asked both times.
+- "How many customers are there?" was answered directly both times.
+
+### What was fixed
+
+1. **Clarifying questions** (`vanna/core/system_prompt/analyst.py`, `vanna/tools/clarify.py`): the prompt now gives defaults. A status filter or period the question doesn't mention means all rows and all data. A named measure settles what to measure. When the doubt is about the data, check it with a query instead of asking.
+2. **Check queries after the answer:** the prompt now says sanity checks come before the answering query. Paging through the answer stays allowed.
+3. **Paged answers** (`evals/sql_accuracy.py`, shared with `toolkit_bridge.py`): when the final statement is a page (`OFFSET`), it's scored on the unpaged query. Paging behaviour itself is unchanged.
+4. **Views:**
+   - The scanner now records views and their definitions (migration `0020_catalog_table_kind.sql`).
+   - The prompt renders them as `### View:`, and shows the definition when nobody has written a description.
+   - `employees.current_dept_emp` is described in the `demo` workspace. The employees gender question now passes.
+5. **Retrieval history:** every generation row now records `retrieval_strategy`, `retrieved_table_names` and `retrieved_example_ids`. These were empty before.
+6. **Clarification follow-ups** pick the option closest to the question instead of the first one.
+7. **The 3 failing integration tests:**
+   - `chat_poll` now answers 403 (or 401 with no credential) instead of 500.
+   - `test_datasource_health` derives its database URL from the test database.
+   - The integration suite: **415 passed, 0 failed.**
+8. **Curation routes** (descriptions, core columns, inferred joins) now act on the database selected on screen. Before, they used the workspace default, which is how describing `current_dept_emp` was first refused.
+9. **Housekeeping:**
+   - Makefile tool targets point at `backend/tools`.
+   - `qa.json` is deleted: it was unreviewed agent output with 34 broken queries. Its references are updated, and `export_qa.py` skips eval threads.
+   - `database/sql_schema.sql` is regenerated (it now covers migrations 0015–0020).
+   - The sandbox `db_postgres` has `shm_size: 256mb` (in `../databases/docker-compose.yml`).
+10. **Checked, no change needed:** the judge's "wrong denominator" on complex_northwind-2. No shipped order lacks a `requireddate`, so the agent's extra filter changes nothing; the judge was wrong.
+
+The unit suite passes (1673 passed).
+
+### New issues found (not fixed)
+
+- **The SQL policy refuses every query that selects from a derived table** (`FROM (SELECT …) AS t`), with "Columns of 't' could not be resolved". It's in `vanna/core/sql_policy/validator.py`, in `_check_columns`.
+- **CTEs bypass column filter and aggregate permissions** (a security gap that predates this work). A role refused `WHERE total > 5` on the table can run `WITH x AS (SELECT id, total FROM orders) SELECT id FROM x WHERE total > 5`, because references to a CTE are skipped.
+- **One fix is needed for both:** trace each derived-table and CTE column back to the base columns it comes from, and check the outer query's use (filter, aggregate) against those columns' permissions. A quick fix that only skips derived tables was tried and reverted, because it would extend the CTE gap to subqueries; an existing test caught it.
+
+Still out of scope:
+- inline SQL comments (`analyst.py:55`);
+- rounding;
+- cost against a single-prompt baseline;
+- a BIRD run.

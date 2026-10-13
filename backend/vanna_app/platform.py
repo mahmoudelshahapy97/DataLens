@@ -100,6 +100,25 @@ def _usage_fields() -> Dict[str, Any]:
     }
 
 
+def _retrieval_fields() -> Dict[str, Any]:
+    """What retrieval chose for the request being recorded, or nothing.
+
+    Read from the ContextVar ``RetrievalContextEnhancer`` sets on every turn.
+    Empty (columns left at their defaults) when no retrieval ran -- a direct
+    ``/run-sql``, or a workspace without the enhancer.
+    """
+    from vanna.core.enhancer.retrieval import last_retrieval
+
+    chosen = last_retrieval()
+    if not chosen:
+        return {}
+    return {
+        "retrieval_strategy": chosen.get("strategy"),
+        "retrieved_table_names": list(chosen.get("table_names") or []),
+        "retrieved_example_ids": list(chosen.get("example_ids") or []),
+    }
+
+
 def question_capture_hook() -> Any:
     """Lifecycle hook that remembers the question being answered."""
     from vanna.core.lifecycle import LifecycleHook
@@ -210,6 +229,7 @@ def recording_run_sql_tool(
                     # calls this tool, so an UPDATE from there would run against
                     # a row that does not exist yet.
                     **_usage_fields(),
+                    **_retrieval_fields(),
                 ),
             )
 

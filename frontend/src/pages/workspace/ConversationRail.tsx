@@ -1,4 +1,4 @@
-import { MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
+import { Download, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { useConfirm } from '@/components/primitives/confirm';
@@ -6,7 +6,7 @@ import { SectionLabel } from '@/components/primitives/page';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useLocale } from '@/i18n';
-import { api, del, patch } from '@/lib/api';
+import { api, del, download, patch } from '@/lib/api';
 import { relative } from '@/lib/time';
 import { toastError } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -57,14 +57,22 @@ export function ConversationRail({
   const [filter, setFilter] = React.useState('');
   const [active, setActive] = React.useState<string | null>(null);
   const [persisted, setPersisted] = React.useState(true);
+  const restored = React.useRef(false);
 
   const load = React.useCallback(async () => {
     try {
       const body = await api<{ conversations: ConversationSummary[]; persisted: boolean }>(
         '/api/vanna/v2/conversations?limit=50',
       );
-      setRows(body.conversations ?? []);
+      const list = body.conversations ?? [];
+      setRows(list);
       setPersisted(body.persisted !== false);
+      // On first load, reopen the newest thread so coming back to the page shows
+      // the previous conversation instead of an empty one.
+      if (!restored.current && list.length > 0) {
+        restored.current = true;
+        void open(list[0]);
+      }
     } catch {
       // A missing history is not worth a banner over the chat itself; the rail
       // simply shows its empty state.
@@ -92,6 +100,17 @@ export function ConversationRail({
     const id = chat.current?.newConversation?.();
     setActive(id ?? null);
     // Not reloaded: an empty thread has nothing to list until it has a message.
+  }
+
+  async function exportThread(row: ConversationSummary) {
+    try {
+      await download(
+        `/api/vanna/v2/conversations/${encodeURIComponent(row.id)}/export`,
+        `conversation-${row.id}.md`,
+      );
+    } catch (caught) {
+      toastError((caught as Error).message);
+    }
   }
 
   async function rename(row: ConversationSummary) {
@@ -166,7 +185,7 @@ export function ConversationRail({
                   type="button"
                   onClick={() => void open(row)}
                   className={cn(
-                    'w-full rounded-md px-2 py-1.5 pe-14 text-start hover:bg-rail-hover',
+                    'w-full rounded-md px-2 py-1.5 pe-20 text-start hover:bg-rail-hover',
                     active === row.id ? 'bg-primary-soft text-primary-ink' : '',
                   )}
                 >
@@ -182,6 +201,14 @@ export function ConversationRail({
                 {/* Revealed on hover/focus rather than always shown: at rest the
                     rail is a list of titles, not a list of controls. */}
                 <span className="absolute end-1 top-1 hidden gap-0.5 group-hover:flex group-focus-within:flex">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t('thread.export')}
+                    onClick={() => void exportThread(row)}
+                  >
+                    <Download className="size-3.5" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

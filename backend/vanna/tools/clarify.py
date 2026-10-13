@@ -75,12 +75,14 @@ class RequestClarificationTool(Tool[RequestClarificationArgs]):
             "Ask the user which of two to four readings of their question they "
             "meant, as clickable options. Use this when a question is genuinely "
             "ambiguous in a way that changes the answer -- an unstated measure "
-            "('top' by what?), an unstated period, or a word matching several "
-            "columns. Prefer answering with a stated assumption when one "
-            "reading is clearly most likely; use this when two readings are "
-            "equally plausible and would give materially different answers. "
-            "Never use it to ask permission or to confirm something you can "
-            "already do."
+            "('top' by what?) or a word matching several columns. Prefer "
+            "answering with a stated assumption when one reading is clearly "
+            "most likely; use this when two readings are equally plausible and "
+            "would give materially different answers. A status filter or a "
+            "period the question does not mention is not an ambiguity: include "
+            "every row and all available data, and say so. Never use it to ask "
+            "permission or to confirm something you can already do, or about "
+            "something a query could check."
         )
 
     def get_args_schema(self) -> Type[RequestClarificationArgs]:

@@ -444,7 +444,9 @@ means real chat turns, at an LLM call each.
 
 `make qa-json` writes one record per exchange — `question`, `answer`, `query`,
 `database` — joining the generation store (which has the SQL) to the conversation
-store (which has the prose the user read). No single endpoint holds all four. Rows
+store (which has the prose the user read). It is an export of what the agent said,
+not a benchmark, and is git-ignored; accuracy is measured with the hand-checked
+suite in `backend/evals/datasets/sql_accuracy/` (`backend/evals/sql_accuracy.py`). No single endpoint holds all four. Rows
 with no question are skipped rather than exported blank: they came from `run-sql`,
 which never runs the hook that captures a question.
 

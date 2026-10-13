@@ -1,4 +1,4 @@
-"""Review routes for inferred joins: they follow the database on screen.
+"""Curation routes follow the database on screen, not the workspace default.
 
 Inferred joins exist only where foreign keys are not declared, which is rarely a
 workspace's default database -- in the demo workspace it is Northwind, beside a
@@ -25,8 +25,13 @@ class Store:
     def __init__(self):
         self.reviews = []
 
-    def annotate_table(self):  # presence marks the control-plane store
-        raise NotImplementedError
+    async def table_exists(self, tenant_id, data_source_id, table_key):
+        return data_source_id == "postgresql://wh/northwind" and table_key == "northwind.salesorder"
+
+    async def annotate_table(self, tenant_id, data_source_id, table_key, **fields):
+        self.annotations = getattr(self, "annotations", [])
+        self.annotations.append((data_source_id, table_key, fields["description"]))
+        return {"table_key": table_key, **fields}
 
     async def list_inferred_relationships(self, tenant_id, data_source_id):
         if data_source_id != "postgresql://wh/northwind":
@@ -125,3 +130,26 @@ def test_an_unknown_decision_is_rejected_by_validation(client):
               "to_column": "id", "decision": "maybe"},
     )
     assert response.status_code == 422
+
+
+def test_a_description_is_filed_under_the_requested_database(client):
+    """Found live: describing employees.current_dept_emp from the schema screen
+    resolved the Chinook default and answered 'Not in this workspace's catalog'."""
+    http, store = client
+    body = {"description": "Orders, one row per order."}
+
+    response = http.patch(
+        "/api/vanna/v2/admin/tenants/demo/catalog/tables/northwind.salesorder",
+        headers={"X-Data-Source-Id": "postgresql://wh/northwind"},
+        json=body,
+    )
+    assert response.status_code == 200
+    assert store.annotations == [
+        ("postgresql://wh/northwind", "northwind.salesorder", "Orders, one row per order.")
+    ]
+
+    # Without the header it is the default database, which has no such table.
+    default = http.patch(
+        "/api/vanna/v2/admin/tenants/demo/catalog/tables/northwind.salesorder", json=body
+    )
+    assert default.status_code == 404

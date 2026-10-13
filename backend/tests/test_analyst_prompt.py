@@ -111,3 +111,50 @@ class TestPersona:
         ).build_system_prompt(user, [_schema("run_sql")])
 
         assert prompt == "Only this."
+
+
+class TestClarifyDefaults:
+    """The clarify step used to fire on any filter the question left out: 9 of
+    96 eval questions ended in a question back, mostly 'should cancelled orders
+    count?' on questions that had defined their measure."""
+
+    @pytest.mark.asyncio
+    async def test_defaults_are_stated_when_the_tool_is_registered(self, user):
+        prompt = await AnalystSystemPromptBuilder().build_system_prompt(
+            user, [_schema("request_clarification"), _schema("run_sql")]
+        )
+
+        assert "request_clarification" in prompt
+        assert "status or lifecycle filter the question does not mention" in prompt
+        assert "means all available data" in prompt
+        assert "has settled what to measure" in prompt
+        assert "check with a query instead of asking" in prompt
+
+    @pytest.mark.asyncio
+    async def test_no_clarify_step_without_the_tool(self, user):
+        prompt = await AnalystSystemPromptBuilder().build_system_prompt(
+            user, [_schema("run_sql")]
+        )
+
+        assert "request_clarification" not in prompt.replace("Available tools", "")
+        assert "lifecycle filter" not in prompt
+
+
+class TestChecksComeBeforeTheAnswer:
+    """A check run after the answer becomes the turn's last statement, which is
+    what history, the UI and both scorers treat as the answer."""
+
+    @pytest.mark.asyncio
+    async def test_checks_before_answer_and_paging_allowed(self, user):
+        prompt = await AnalystSystemPromptBuilder().build_system_prompt(
+            user, [_schema("run_sql")]
+        )
+
+        assert "before the query that answers the question, not after it" in prompt
+        assert "Paging through the answer's own rows is fine" in prompt
+
+    @pytest.mark.asyncio
+    async def test_absent_without_a_sql_tool(self, user):
+        prompt = await AnalystSystemPromptBuilder().build_system_prompt(user, [])
+
+        assert "sanity checks" not in prompt

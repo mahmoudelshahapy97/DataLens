@@ -75,6 +75,10 @@ def _groups_for(role: str, platform_admin: bool) -> List[str]:
 class AuthenticationRequired(PermissionError):
     """No usable credential was presented."""
 
+    #: Read by routes that cannot import this class (the library's chat_poll
+    #: maps any PermissionError to its ``status_code``, else 403).
+    status_code = 401
+
 
 def build_user_resolver(settings: Any, directory: Any, accounts: Any = None) -> Any:
     """The ``UserResolver`` every route and the agent share.

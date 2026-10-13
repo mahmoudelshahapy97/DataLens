@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from ..sql_runner import RunSqlToolArgs, SqlRunner
 from .inference import containment_sql, infer_relationships, rescore
@@ -112,6 +112,21 @@ def is_free_text_column(name: str) -> bool:
 def is_sensitive_column(name: str) -> bool:
     """True if *name* looks like it holds sensitive data."""
     return bool(_SENSITIVE_RE.search(name))
+
+
+#: Characters of a view definition kept for the prompt. Enough to show which
+#: tables a view reads and how it filters them, not a full query to reread.
+VIEW_DEFINITION_CHARS = 400
+
+
+def _short(definition: Optional[str]) -> Optional[str]:
+    """A view definition collapsed onto one line and capped."""
+    if not definition:
+        return None
+    text = " ".join(str(definition).split())
+    if len(text) > VIEW_DEFINITION_CHARS:
+        text = text[: VIEW_DEFINITION_CHARS - 3].rstrip() + "..."
+    return text
 
 
 def _cell(row: Any, name: str) -> Any:
@@ -221,6 +236,7 @@ class SchemaScanner:
 
         collected: List[TableMetadata] = []
         relationships: List[RelationshipMetadata] = []
+        views = await self._list_views(context, schema=schema)
 
         for schema_name, table_name in discovered:
             try:
@@ -230,6 +246,12 @@ class SchemaScanner:
                     table_name,
                     data_source_id=data_source_id,
                 )
+                if (schema_name, table_name) in views:
+                    meta.metadata = {
+                        **(meta.metadata or {}),
+                        "kind": "view",
+                        "view_definition": views[(schema_name, table_name)],
+                    }
                 collected.append(meta)
                 report.tables_scanned += 1
                 report.columns_profiled += len(meta.columns)
@@ -297,6 +319,68 @@ class SchemaScanner:
             return []
         return df.to_dict("records")
 
+    async def _schema_filter(
+        self, context: "ToolContext", schema: Optional[str]
+    ) -> str:
+        """The ``AND table_schema ...`` clause scoping information_schema reads.
+
+        In MySQL a "schema" *is* a database, and one server routinely holds a
+        dozen unrelated ones. "Everything that is not a system schema" therefore
+        means every other customer's database on the same server: a scan of
+        `sakila` came back with 71 tables belonging to booking, chinook,
+        healthcare and northwind. Wrong, and a disclosure.
+
+        `DATABASE()` is the one the connection string named, which is exactly the
+        scope the workspace was pointed at. PostgreSQL is unaffected -- its
+        schemas live inside one database and the connection already bounds them.
+        """
+        if schema is None and self.dialect == "mysql":
+            current = await self._query(context, "SELECT DATABASE() AS db")
+            schema = _cell(current[0], "db") if current else None
+        return (
+            f"AND table_schema = '{schema}'"
+            if schema
+            else "AND table_schema NOT IN "
+            "('information_schema','pg_catalog','sys','performance_schema','mysql')"
+        )
+
+    async def _list_views(
+        self, context: "ToolContext", *, schema: Optional[str] = None
+    ) -> Dict[tuple, Optional[str]]:
+        """``(schema_name, view_name)`` -> definition, for the views in scope.
+
+        Best effort: a database that hides definitions from this user (Postgres
+        shows them only to a view's owner) still yields the names, and one that
+        cannot be asked at all yields nothing -- views are then recorded as
+        tables, which is what they were before.
+        """
+        try:
+            if self.dialect == "sqlite":
+                rows = await self._query(
+                    context,
+                    "SELECT name AS table_name, sql AS view_definition "
+                    "FROM sqlite_master WHERE type = 'view'",
+                )
+                return {
+                    (None, _cell(r, "table_name")): _short(_cell(r, "view_definition"))
+                    for r in rows
+                }
+            where = await self._schema_filter(context, schema)
+            rows = await self._query(
+                context,
+                "SELECT table_schema, table_name, view_definition "
+                f"FROM information_schema.views WHERE 1 = 1 {where}",
+            )
+        except Exception as e:
+            logger.debug("Could not list views: %s", e)
+            return {}
+        return {
+            (_cell(r, "table_schema"), _cell(r, "table_name")): _short(
+                _cell(r, "view_definition")
+            )
+            for r in rows
+        }
+
     async def _list_tables(
         self, context: "ToolContext", *, schema: Optional[str] = None
     ) -> List[tuple]:
@@ -310,27 +394,9 @@ class SchemaScanner:
             )
             return [(None, _cell(r, "name")) for r in rows]
 
-        # In MySQL a "schema" *is* a database, and one server routinely holds a
-        # dozen unrelated ones. "Everything that is not a system schema" therefore
-        # means every other customer's database on the same server: a scan of
-        # `sakila` came back with 71 tables belonging to booking, chinook,
-        # healthcare and northwind. Wrong, and a disclosure.
-        #
-        # `DATABASE()` is the one the connection string named, which is exactly the
-        # scope the workspace was pointed at. PostgreSQL is unaffected -- its
-        # schemas live inside one database and the connection already bounds them.
-        if schema is None and self.dialect == "mysql":
-            current = await self._query(context, "SELECT DATABASE() AS db")
-            schema = _cell(current[0], "db") if current else None
-
         # information_schema is supported by PostgreSQL, MySQL, Snowflake,
         # SQL Server, DuckDB, ClickHouse, and BigQuery (per-dataset).
-        where = (
-            f"AND table_schema = '{schema}'"
-            if schema
-            else "AND table_schema NOT IN "
-            "('information_schema','pg_catalog','sys','performance_schema','mysql')"
-        )
+        where = await self._schema_filter(context, schema)
         if self.dialect in ("postgres", "postgresql"):
             # Partitions are listed as base tables of their own. Pagila's
             # `payment` has 54 -- `payment_p2022_01` and on -- each with the

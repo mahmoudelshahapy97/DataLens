@@ -1,6 +1,6 @@
 """`vanna.capabilities.schema_graph` -- the weighted join graph.
 
-Shaped like Chinook, the warehouse `qa.json` is scored against:
+Shaped like Chinook, a warehouse the SQL accuracy suite scores:
 
     artist <- album <- track <- invoice_line -> invoice -> customer -> employee
                          |  ^

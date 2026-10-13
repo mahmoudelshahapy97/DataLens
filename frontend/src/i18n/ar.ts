@@ -881,6 +881,8 @@ const ar: Record<string, string> = {
   "thread.none": "لا توجد محادثات بعد.",
   "thread.notPersisted": "لا تُحفظ المحادثات في هذا النشر — لا توجد قاعدة بيانات لوحة التحكم.",
   "thread.recents": "الأحدث",
+  "thread.export": "تصدير بصيغة Markdown",
+  "thread.sql": "SQL",
   "thread.rename": "إعادة تسمية",
   "thread.renameOne": "إعادة تسمية {title}",
   "thread.search": "بحث في المحادثات",

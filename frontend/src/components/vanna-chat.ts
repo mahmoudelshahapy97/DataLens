@@ -1856,7 +1856,7 @@ export class VannaChat extends LitElement {
    */
   loadConversation(
     conversationId: string,
-    messages: Array<{ role: string; content: string }> = []
+    messages: Array<{ role: string; content: string; sql?: string }> = []
   ) {
     this.conversationId = conversationId;
     this.clearMessages();
@@ -1867,6 +1867,13 @@ export class VannaChat extends LitElement {
         message.content,
         message.role === 'user' ? 'user' : 'assistant'
       );
+      // The SQL behind an answer, so a reopened thread shows the queries too.
+      if (message.role !== 'user' && message.sql) {
+        this.appendRestoredMessage(
+          ['```sql', message.sql, '```'].join('\n'),
+          'assistant'
+        );
+      }
     }
 
     this.updateEmptyState();

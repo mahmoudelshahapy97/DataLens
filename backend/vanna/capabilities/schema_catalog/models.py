@@ -176,6 +176,11 @@ class TableMetadata(BaseModel):
     def primary_keys(self) -> List[str]:
         return [c.name for c in self.columns if c.is_primary_key]
 
+    @property
+    def is_view(self) -> bool:
+        """A view rather than a base table (``metadata["kind"] == "view"``)."""
+        return (self.metadata or {}).get("kind") == "view"
+
     def get_column(self, name: str) -> Optional[ColumnMetadata]:
         """Case-insensitive column lookup."""
         lowered = name.lower()
@@ -197,10 +202,19 @@ class TableMetadata(BaseModel):
         return age > max_age_hours
 
     def describe(self, *, include_columns: bool = True) -> str:
-        """Structured plain-text rendering for a prompt."""
-        lines = [f"### Table: {self.qualified_name}"]
+        """Structured plain-text rendering for a prompt.
+
+        A view says so, and -- unless somebody has described it -- shows its
+        definition. A view's name can misstate what it returns, and the model
+        takes names at their word: `current_dept_emp` reads as "current
+        employees" while it returns every employee's latest department.
+        """
+        kind = "View" if self.is_view else "Table"
+        lines = [f"### {kind}: {self.qualified_name}"]
         if self.description:
             lines.append(f"  {self.description}")
+        elif self.is_view and (self.metadata or {}).get("view_definition"):
+            lines.append(f"  Defined as: {self.metadata['view_definition']}")
         if self.row_count_estimate is not None:
             lines.append(f"  Approximate rows: {self.row_count_estimate:,}")
         if include_columns and self.columns:

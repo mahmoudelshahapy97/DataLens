@@ -276,6 +276,18 @@ def register_chat_routes(
         try:
             result = await chat_handler.handle_poll(chat_request)
             return result
+        except PermissionError as exc:
+            # Resolving the caller refused them (a workspace they are not a
+            # member of, or no credential at all). That is an answer, not a
+            # crash: 403, or whatever status the error declares -- the app's
+            # AuthenticationRequired says 401 -- exactly as every other routed
+            # endpoint maps it. It used to fall through to the 500 below.
+            logger.warning(
+                "chat_poll refused (request_id=%s): %s", chat_request.request_id, exc
+            )
+            raise HTTPException(
+                status_code=getattr(exc, "status_code", 403), detail=str(exc)
+            )
         except Exception:
             logger.exception(
                 "chat_poll failed (conversation_id=%s, request_id=%s)",

@@ -283,6 +283,19 @@ class PostgresGenerationStore:
 
     # -- portal helpers ------------------------------------------------
 
+    async def for_conversation(
+        self, tenant_id: str, user_id: str, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        """The SQL generated in one thread, oldest first, for replaying a transcript."""
+        rows = await self.db.fetch_all(
+            f"""SELECT question, sql, status, row_count, created_at
+                  FROM {SCHEMA}.generations
+                 WHERE tenant_id = %s AND user_id = %s AND conversation_id = %s
+                 ORDER BY created_at ASC""",
+            [tenant_id, user_id, conversation_id],
+        )
+        return [dict(row) for row in rows]
+
     async def history(
         self,
         tenant_id: str,
