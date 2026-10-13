@@ -150,7 +150,14 @@ def open_history(server, browser, api):
     page.goto(f"{server}/index.html")
     page.wait_for_selector("#app.ready", timeout=15_000)
     page.click('button[data-view="history"]')
-    page.wait_for_selector("#h-body .card, #h-body .empty", timeout=5_000)
+    # The "Loading..." placeholder is itself a .empty, so waiting for .empty alone
+    # returns before the first fetch has landed and races the assertions.
+    page.wait_for_function(
+        "() => { const b = document.querySelector('#h-body');"
+        " return !!b && !/Loading/i.test(b.innerText)"
+        " && !!b.querySelector('.card, .empty'); }",
+        timeout=10_000,
+    )
     return page, errors
 
 
