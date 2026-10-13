@@ -108,6 +108,11 @@ jobs:
         run: |
           pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 
+      - name: Install the browser
+        # pip installs the playwright driver, not the browser. The *_ui.py tests
+        # launch chromium headless and error at setup without it.
+        run: playwright install --with-deps chromium
+
       - name: Integration tests
         env:
           VANNA_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
